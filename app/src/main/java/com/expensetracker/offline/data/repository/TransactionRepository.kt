@@ -327,6 +327,17 @@ class TransactionRepository(
         return id
     }
 
+    suspend fun bulkApproveReviewItems(approvals: List<Pair<TransactionEntity, Long>>) {
+        if (approvals.isEmpty()) return
+        database.withTransaction {
+            approvals.forEach { (transaction, reviewItemId) ->
+                transactionDao.insertTransaction(transaction)
+                reviewItemDao.updateStatus(reviewItemId, ReviewStatus.RESOLVED)
+            }
+        }
+        refreshWidget()
+    }
+
     suspend fun discardReviewItem(itemId: Long) {
         reviewItemDao.updateStatus(itemId, ReviewStatus.DISCARDED)
     }

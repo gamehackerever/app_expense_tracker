@@ -47,7 +47,7 @@ object FinancialParser {
     )
     private val BALANCE_PATTERN = Pattern.compile("(?i)(?:final balance|available balance|avail bal|avl bal|bal(?:ance)?)\\s*(?:is|:|-)?\\s*(?:rs\\.?|inr|₹)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)")
 
-    private val BALANCE_SANITIZER_REGEX = Regex("(?i)(?:final balance|available balance|avail bal|avl bal|bal(?:ance)?)[^0-9\\n\\r]{0,20}?[0-9,]+(?:\\.[0-9]{1,2})?")
+    private val BALANCE_SANITIZER_REGEX = BALANCE_PATTERN.toRegex()
     private val QUOTED_NOTE_REGEX = Regex("""["“]([^"”\n\r]{2,80})["”]""")
     private val PREFIX_NOTE_REGEX = Regex("""(?i)(?:note\s*[:\-]\s*|for\s+["']?)([^"'\n\r,]+)(?:["']|\s*(?:using|via|upi|ref|$))""")
     private val SYSTEM_NOISE_REGEX = Regex("""(?i)(upi ref|transaction id|paid using|bank account|google pay|\d{10,16})""")

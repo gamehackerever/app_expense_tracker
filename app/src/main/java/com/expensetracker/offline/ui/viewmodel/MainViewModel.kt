@@ -51,22 +51,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val unsettledSplitsWithDebts = repository.unsettledSplitsWithDebts
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val startDayOfMonth = MutableStateFlow(
-        application.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-            .getInt("key_start_day_of_month", 1)
-    )
+    val startDayOfMonth = MutableStateFlow(1)
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            val prefs = application.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+            startDayOfMonth.value = prefs.getInt("key_start_day_of_month", 1)
+        }
+    }
 
     fun updateStartDayOfMonth(day: Int) {
-        getApplication<Application>().getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-            .edit()
-            .putInt("key_start_day_of_month", day)
-            .apply()
+        viewModelScope.launch(Dispatchers.IO) {
+            getApplication<Application>().getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .putInt("key_start_day_of_month", day)
+                .commit()
+        }
         startDayOfMonth.value = day
     }
 
     fun refreshSettings() {
-        val prefs = getApplication<Application>().getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-        startDayOfMonth.value = prefs.getInt("key_start_day_of_month", 1)
+        viewModelScope.launch(Dispatchers.IO) {
+            val prefs = getApplication<Application>().getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+            startDayOfMonth.value = prefs.getInt("key_start_day_of_month", 1)
+        }
     }
 
     val searchQuery = MutableStateFlow("")
@@ -111,7 +119,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val totalMoneyOwed = repository.totalMoneyOwed
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val searchedTransactions: StateFlow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> = combine(
@@ -222,14 +230,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _pendingDeleteIds.update { it - id }
     }
 
-    val necessityChunkLimit = MutableStateFlow(
-        application.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-            .getFloat("key_necessity_chunk", 0f).toLong()
-    )
+    val necessityChunkLimit = MutableStateFlow(0L)
+
+    // Load chunk limit asynchronously
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            val prefs = application.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+            necessityChunkLimit.value = prefs.getFloat("key_necessity_chunk", 0f).toLong()
+        }
+    }
 
     fun updateNecessityChunk(limit: Long) {
-        getApplication<Application>().getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-            .edit { putFloat("key_necessity_chunk", limit.toFloat()) }
+        viewModelScope.launch(Dispatchers.IO) {
+            getApplication<Application>().getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+                .edit { putFloat("key_necessity_chunk", limit.toFloat()) }
+        }
         necessityChunkLimit.value = limit
     }
 
@@ -410,6 +425,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             var approved = 0
             var skipped = 0
+            val approvals = mutableListOf<Pair<TransactionEntity, Long>>()
+            val context = getApplication<Application>().applicationContext
+            val prefs = BalanceCache.prefs(context)
+            
             // Oldest first, so the newest balance is written last (newer-wins also guards this).
             items.sortedBy { it.timestamp }.forEach { item ->
                 val needsParse = item.bankName == null && item.balance == null && item.referenceId == null && item.type == null
@@ -442,17 +461,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         receiptImageUri = null
                     )
 
-                    repository.approveReviewItem(newTransaction, item.id)
+                    approvals.add(newTransaction to item.id)
 
                     balance?.let {
-                        val context = getApplication<Application>().applicationContext
-                        BalanceCache.updateIfNewer(BalanceCache.prefs(context), bank, account, it, item.timestamp)
+                        BalanceCache.updateIfNewer(prefs, bank, account, it, item.timestamp)
                     }
                     approved++
                 } else {
                     skipped++
                 }
             }
+            
+            repository.bulkApproveReviewItems(approvals)
+            
             kotlinx.coroutines.withContext(Dispatchers.Main) { onDone(approved, skipped) }
         }
     }
@@ -481,9 +502,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun undoScan(transactionIds: List<Long>, reviewIds: List<Long>) {
         viewModelScope.launch(Dispatchers.IO) {
-            val db = getApplication<ExpenseTrackerApp>().database
-            if (transactionIds.isNotEmpty()) db.transactionDao().deleteTransactionsByIds(transactionIds)
-            if (reviewIds.isNotEmpty()) db.reviewItemDao().deleteReviewItemsByIds(reviewIds)
+            if (transactionIds.isNotEmpty()) repository.deleteTransactionsByIds(transactionIds)
+            if (reviewIds.isNotEmpty()) {
+                val db = getApplication<ExpenseTrackerApp>().database
+                db.reviewItemDao().deleteReviewItemsByIds(reviewIds)
+            }
         }
     }
 

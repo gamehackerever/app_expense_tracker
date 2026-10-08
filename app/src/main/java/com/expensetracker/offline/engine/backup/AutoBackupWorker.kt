@@ -48,6 +48,7 @@ class AutoBackupWorker(
             recordStatus(ok = false, reason = "Storage permission lost")
             notifyFailure("Storage permission lost. Please re-select your backup folder in Settings.")
             prefs.edit { putBoolean(KEY_ENABLED, false) }
+            WorkManager.getInstance(applicationContext).cancelUniqueWork(UNIQUE_WORK_NAME)
             return Result.failure()
         }
 
@@ -60,6 +61,8 @@ class AutoBackupWorker(
                 else "Gave up after repeated failures ($lastReason)"
             )
             notifyFailure("Auto-backup failed multiple times. Please run a manual backup.")
+            prefs.edit { putBoolean(KEY_ENABLED, false) }
+            WorkManager.getInstance(applicationContext).cancelUniqueWork(UNIQUE_WORK_NAME)
             return Result.failure()
         }
 

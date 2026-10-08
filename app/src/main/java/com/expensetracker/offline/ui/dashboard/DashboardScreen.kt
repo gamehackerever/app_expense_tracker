@@ -485,19 +485,25 @@ fun DashboardScreen(
     val chunkLimit by viewModel.necessityChunkLimit.collectAsState()
     var showNecessityBreakdownDialog by remember { mutableStateOf(false) }
 
-    var necessitiesList by remember { mutableStateOf(NecessityManager.loadNecessities(prefs)) }
-    LaunchedEffect(chunkLimit) {
+    var necessitiesList by remember { mutableStateOf(emptyList<NecessityItem>()) }
+    LaunchedEffect(Unit) {
+        necessitiesList = withContext(Dispatchers.IO) { NecessityManager.loadNecessities(prefs) }
+    }
+    
+    LaunchedEffect(chunkLimit, necessitiesList.isEmpty()) {
         if (necessitiesList.isEmpty() && chunkLimit > 0L && !prefs.getBoolean(KEY_NECESSITIES_MIGRATED, false)) {
             val migrated = listOf(NecessityItem(UUID.randomUUID().toString(), "Fixed costs", chunkLimit))
             necessitiesList = migrated
-            saveNecessities(prefs, migrated)
-            prefs.edit().putBoolean(KEY_NECESSITIES_MIGRATED, true).apply()
+            withContext(Dispatchers.IO) {
+                saveNecessities(prefs, migrated)
+                prefs.edit().putBoolean(KEY_NECESSITIES_MIGRATED, true).commit()
+            }
         }
     }
 
     fun updateNecessities(newList: List<NecessityItem>) {
         necessitiesList = newList
-        saveNecessities(prefs, newList)
+        scope.launch(Dispatchers.IO) { saveNecessities(prefs, newList) }
         viewModel.updateNecessityChunk(newList.sumOf { it.amount })
     }
 
@@ -826,7 +832,7 @@ fun DashboardScreen(
         }
     }
 
-    LaunchedEffect(pendingBalanceReveal, latestBalance) {
+    LaunchedEffect(pendingBalanceReveal) {
         if (pendingBalanceReveal) {
             val current = latestBalance ?: com.expensetracker.offline.util.BalanceCache.readLong(prefs, KEY_LATEST_BANK_BALANCE)
             if (current != null) {
@@ -973,7 +979,6 @@ fun DashboardScreen(
         DisposableEffect(selectedBillImageUri) {
             onDispose {
                 billBitmap?.recycle()
-                billBitmap = null
             }
         }
 
@@ -1687,13 +1692,11 @@ fun DashboardScreen(
             item {
                 Column {
                     val isSetupBudgetDone = isBudgetExplicitlySet
-                    val isSetupNecessitiesDone = necessitiesList.isNotEmpty()
                     val isSetupAutoDone = hasNotificationPermission
                     val isSetupFirstTxnDone = hasEverLoggedExpense
 
                     val completedSteps = listOf(
                         isSetupBudgetDone,
-                        isSetupNecessitiesDone,
                         isSetupAutoDone,
                         isSetupFirstTxnDone
                     ).count { it }
@@ -1806,13 +1809,12 @@ fun DashboardScreen(
                     }
 
                     AnimatedVisibility(
-                        visible = !isSetupDismissed && completedSteps < 4,
+                        visible = !isSetupDismissed && completedSteps < 3,
                         enter = expandVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
                         exit = shrinkVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) + fadeOut()
                     ) {
                         val tasks = remember(
                             isSetupBudgetDone,
-                            isSetupNecessitiesDone,
                             isSetupAutoDone,
                             isSetupFirstTxnDone
                         ) {
@@ -1822,13 +1824,6 @@ fun DashboardScreen(
                                     title = "Set monthly budget",
                                     isDone = isSetupBudgetDone,
                                     onClick = { showBudgetDialog = true }
-                                ),
-                                OnboardingTask(
-                                    icon = Icons.Default.Event,
-                                    title = "Add fixed costs & bills",
-                                    subtitle = "Rent, subscriptions, premiums. Keeps them out of Safe to Spend.",
-                                    isDone = isSetupNecessitiesDone,
-                                    onClick = { onNavigateToNecessities() }
                                 ),
                                 OnboardingTask(
                                     icon = Icons.Default.FlashOn,
@@ -2145,7 +2140,7 @@ fun DashboardScreen(
                                         color = if (isOverBudget) AppColors.negative else MaterialTheme.colorScheme.onSurface
                                     )
                                 }
-                            } else if (monthlyBudget <= 0) {
+                            } else if (monthlyBudget <= 0 && transactions.isNotEmpty()) {
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Surface(
                                     modifier = Modifier.fillMaxWidth(),
@@ -2175,12 +2170,13 @@ fun DashboardScreen(
                 }
             }
 
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    val hasOwed = moneyOwedToYou > 0L
+            if (necessitiesList.isNotEmpty() || moneyOwedToYou > 0L || linkedAccounts.isNotEmpty() || accountBalances.isNotEmpty() || latestBalance != null) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        val hasOwed = moneyOwedToYou > 0L
 
                     SafeToSpendCard(
                         modifier = if (hasOwed) Modifier.weight(1f).fillMaxHeight() else Modifier.fillMaxWidth().fillMaxHeight(),
@@ -2211,6 +2207,7 @@ fun DashboardScreen(
                         }
                     }
                 }
+            }
             }
 
             if (pendingReviewCount > 0) {
@@ -2425,18 +2422,31 @@ fun DashboardScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(32.dp))
-
                                 val isFiltering = transactions.isNotEmpty() &&
                                         (searchQuery.isNotBlank() || selectedFilterCategory != "All" ||
                                                 selectedTimeRange != TimeRange.ALL_TIME || selectedAccount != null)
 
-                                Text(
-                                    if (isFiltering) "Try a different search or clear your filters."
-                                    else "Tap Add expense to log cash or a UPI payment.",
-                                    fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center
-                                )
+                                if (isFiltering) {
+                                    Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(32.dp))
+                                    Text(
+                                        "Try a different search or clear your filters.",
+                                        fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = TextAlign.Center
+                                    )
+                                } else {
+                                    Text(
+                                        text = "✨", // Playful emoji instead of a gray icon
+                                        fontSize = 48.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Text(
+                                        "All clean! Add your first expense\nto get started.",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
 
                                 if (!isFiltering) {
                                     Spacer(modifier = Modifier.height(8.dp))

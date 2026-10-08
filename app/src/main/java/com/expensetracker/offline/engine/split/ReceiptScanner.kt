@@ -23,14 +23,22 @@ object ReceiptScanner {
     }
 
     private fun parseRegex(rawText: String): List<ScannedItem> {
-        // Looks for "Chicken Shawarma 120.00" or "Pasta Rs 350"
-        val regex = Regex("""^(.+?)(?:Rs\.?|₹|inr)?\s*(\d+[\.,]\d{2})\s*$""", RegexOption.MULTILINE)
+        // Looks for "Chicken Shawarma 120.00" or "Pasta Rs 350" or "1,200.50"
+        val regex = Regex("""^(.+?)(?:Rs\.?|₹|inr)?\s*(\d+(?:,\d{3})*[\.,]\d{2})\s*$""", RegexOption.MULTILINE)
         val results = mutableListOf<ScannedItem>()
 
         regex.findAll(rawText).forEach { match ->
             val name = match.groupValues[1].trim().takeIf { it.length > 2 && !it.contains("total", true) && !it.contains("tax", true) }
-            val priceStr = match.groupValues[2].replace(",", "")
-            val pricePaise = (priceStr.toDoubleOrNull()?.times(100))?.toLong()
+            val priceStrRaw = match.groupValues[2]
+            
+            // Normalize European comma-decimals (e.g. 100,50 -> 100.50) and strip thousands separators
+            val normalizedPrice = if (priceStrRaw.matches(Regex(""".*,\d{2}$"""))) {
+                priceStrRaw.replace(".", "").replace(",", ".")
+            } else {
+                priceStrRaw.replace(",", "")
+            }
+            
+            val pricePaise = (normalizedPrice.toDoubleOrNull()?.times(100))?.toLong()
 
             if (name != null && pricePaise != null && pricePaise > 0L) {
                 results.add(ScannedItem(java.util.UUID.randomUUID().toString(), name, pricePaise))
@@ -58,7 +66,13 @@ object ReceiptScanner {
 
         // 2. Distribute overhead proportionally
         return individualTotals.mapValues { (_, subtotal) ->
-            val shareRatio = if (itemSubtotal > 0L) subtotal / itemSubtotal.toDouble() else 1.0 / participants.size
+            val shareRatio = if (itemSubtotal > 0L) {
+                subtotal / itemSubtotal.toDouble()
+            } else if (participants.isNotEmpty()) {
+                1.0 / participants.size
+            } else {
+                0.0
+            }
             (subtotal + (overhead * shareRatio)).toLong()
         }
     }
