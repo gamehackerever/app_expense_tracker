@@ -366,8 +366,11 @@ object BackupManager {
             val journalFile = File(dbPath.path + "-journal")
 
             if (dbPath.exists()) dbPath.renameTo(backupDbFile)
-            walFile.delete()
-            shmFile.delete()
+            // FIXED: Rename WAL/SHM instead of deleting — needed for rollback if restore fails
+            val backupWalFile = File(dbPath.path + "-bak-wal")
+            val backupShmFile = File(dbPath.path + "-bak-shm")
+            if (walFile.exists()) walFile.renameTo(backupWalFile) else backupWalFile.delete()
+            if (shmFile.exists()) shmFile.renameTo(backupShmFile) else backupShmFile.delete()
             journalFile.delete()
 
             // 6. Swap new DB into place
@@ -404,11 +407,16 @@ object BackupManager {
             if (!isDbValid) {
                 dbPath.delete()
                 if (backupDbFile.exists()) backupDbFile.renameTo(dbPath)
+                // FIXED: Also restore WAL/SHM so uncheckpointed data isn't lost
+                if (backupWalFile.exists()) backupWalFile.renameTo(walFile)
+                if (backupShmFile.exists()) backupShmFile.renameTo(shmFile)
                 return@withContext RestoreResult.Error("Backup contains a corrupt database or is from a newer version of the app. Restored old database.")
             }
 
             // 8. Success. Clean up and apply settings
             backupDbFile.delete()
+            backupWalFile.delete()
+            backupShmFile.delete()
             if (settingsBytes != null) {
                 when (detectedVersion) {
                     4, 3 -> applySettingsV4(context, settingsBytes!!)

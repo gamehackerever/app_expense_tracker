@@ -485,14 +485,16 @@ fun DashboardScreen(
     val chunkLimit by viewModel.necessityChunkLimit.collectAsState()
     var showNecessityBreakdownDialog by remember { mutableStateOf(false) }
 
+    var isLoadingNecessities by remember { mutableStateOf(true) }
     var necessitiesList by remember { mutableStateOf(emptyList<NecessityItem>()) }
     LaunchedEffect(Unit) {
         necessitiesList = withContext(Dispatchers.IO) { NecessityManager.loadNecessities(prefs) }
+        isLoadingNecessities = false
     }
     
-    LaunchedEffect(chunkLimit, necessitiesList.isEmpty()) {
-        if (necessitiesList.isEmpty() && chunkLimit > 0L && !prefs.getBoolean(KEY_NECESSITIES_MIGRATED, false)) {
-            val migrated = listOf(NecessityItem(UUID.randomUUID().toString(), "Fixed costs", chunkLimit))
+    LaunchedEffect(chunkLimit, isLoadingNecessities) {
+        if (!isLoadingNecessities && necessitiesList.isEmpty() && chunkLimit > 0L && !prefs.getBoolean(KEY_NECESSITIES_MIGRATED, false)) {
+            val migrated = listOf(NecessityItem(java.util.UUID.randomUUID().toString(), "Fixed costs", chunkLimit))
             necessitiesList = migrated
             withContext(Dispatchers.IO) {
                 saveNecessities(prefs, migrated)

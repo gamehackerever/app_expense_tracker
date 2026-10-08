@@ -1,4 +1,4 @@
-package com.expensetracker.offline
+﻿package com.expensetracker.offline
 
 import android.Manifest
 import android.content.Context
@@ -55,7 +55,7 @@ import kotlinx.coroutines.launch
 
 // FIXED: Singleton state so rotation doesn't reset the lock (PO-F)
 object AppLockState {
-    var isLocked = false
+    var isLocked = true
 }
 
 class MainActivity : FragmentActivity() {
@@ -90,7 +90,7 @@ class MainActivity : FragmentActivity() {
                 }
 
                 // Read from singleton
-                var isAppLocked by remember { mutableStateOf(AppLockState.isLocked) }
+                var isAppLocked by remember { mutableStateOf(prefs.getBoolean("key_app_lock_enabled", false) && AppLockState.isLocked) }
 
                 val lifecycleOwner = LocalLifecycleOwner.current
                 DisposableEffect(lifecycleOwner) {
@@ -174,7 +174,8 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun AppLockScreen(onUnlock: () -> Unit) {
     val context = LocalContext.current
-    val activity = context as FragmentActivity
+    val activity = context.findFragmentActivity()
+        ?: return // context is not attached to a FragmentActivity — skip rendering
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val currentOnUnlock by rememberUpdatedState(onUnlock)
@@ -419,3 +420,15 @@ fun AppNavigation(viewModel: MainViewModel) {
         }
     }
 }
+
+/** Safely unwraps a [ContextWrapper] chain to find the [FragmentActivity], returning null
+ *  if the context is not backed by one (e.g. TintContextWrapper in Compose previews). */
+fun android.content.Context.findFragmentActivity(): FragmentActivity? {
+    var ctx = this
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is FragmentActivity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
+
