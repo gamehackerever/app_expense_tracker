@@ -646,7 +646,7 @@ fun DashboardScreen(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, context, activity, prefs) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
@@ -3317,16 +3317,19 @@ private fun NecessityBreakdownDialog(
     }
 }
 
+private val dayLabelFormat = SimpleDateFormat("EEE, d MMM yyyy", Locale.getDefault())
+
 private fun dayLabel(ts: Long): String {
-    val d = Calendar.getInstance().apply { timeInMillis = ts }
     val now = Calendar.getInstance()
-    val yesterday = (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
-    fun Calendar.same(o: Calendar) = get(Calendar.YEAR) == o.get(Calendar.YEAR) && get(Calendar.DAY_OF_YEAR) == o.get(Calendar.DAY_OF_YEAR)
+    val todayStart = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+    val yesterdayStart = todayStart - 86_400_000L
 
     return when {
-        d.same(now) -> "Today"
-        d.same(yesterday) -> "Yesterday"
-        else -> SimpleDateFormat("EEE, d MMM yyyy", Locale.getDefault()).format(d.time)
+        ts >= todayStart -> "Today"
+        ts in yesterdayStart until todayStart -> "Yesterday"
+        else -> dayLabelFormat.format(Date(ts))
     }
 }
 
