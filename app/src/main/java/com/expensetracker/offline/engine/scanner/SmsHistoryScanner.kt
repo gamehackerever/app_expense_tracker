@@ -190,8 +190,17 @@ class SmsHistoryScanner(
                     val isMissingPayee = payee.isNullOrBlank() || payee.equals("Unknown", ignoreCase = true) || payee.matches(NUMERIC_PAYEE_REGEX)
 
                     if (!skipScanReview && (isHighValue || isMissingPayee)) {
-                        val alreadyInReview = reviewItemDao.countMatchingReviewItems(amount, parsedType, date - DUPLICATE_MATCH_WINDOW_MS, date + DUPLICATE_MATCH_WINDOW_MS) > 0
-                        val inBatchReviewDuplicate = batchReviews.any { r -> r.extractedPartialAmount == amount && r.type == parsedType && abs(r.timestamp - date) <= DUPLICATE_MATCH_WINDOW_MS }
+                        val alreadyInReview = reviewItemDao.countMatchingReviewItems(
+                            amount, parsedType, date - DUPLICATE_MATCH_WINDOW_MS, date + DUPLICATE_MATCH_WINDOW_MS,
+                            parsed.referenceId, parsed.bankName, parsed.accountNumber
+                        ) > 0
+                        val inBatchReviewDuplicate = batchReviews.any { r ->
+                            r.extractedPartialAmount == amount && r.type == parsedType &&
+                                abs(r.timestamp - date) <= DUPLICATE_MATCH_WINDOW_MS &&
+                                (r.referenceId == null || parsed.referenceId == null || r.referenceId == parsed.referenceId) &&
+                                (r.bankName == null || parsed.bankName == null || r.bankName == parsed.bankName) &&
+                                (r.accountNumber == null || parsed.accountNumber == null || r.accountNumber == parsed.accountNumber)
+                        }
 
                         if (!alreadyInReview && !inBatchReviewDuplicate) {
                             batchReviews.add(
@@ -215,7 +224,8 @@ class SmsHistoryScanner(
                                 source = TransactionSource.SMS, referenceId = parsed.referenceId,
                                 rawContent = body, category = category, note = parsed.note,
                                 balance = parsed.balance,
-                                bankName = parsed.bankName, accountNumber = parsed.accountNumber
+                                bankName = parsed.bankName, accountNumber = parsed.accountNumber,
+                                excludeFromSpend = parsed.excludeFromSpend
                             )
                         )
                     }

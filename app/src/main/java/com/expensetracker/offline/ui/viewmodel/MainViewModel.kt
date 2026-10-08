@@ -5,8 +5,6 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.expensetracker.offline.ExpenseTrackerApp
-import com.expensetracker.offline.data.local.dao.CategoryInsight
-import com.expensetracker.offline.data.local.dao.PayeeInsight
 import com.expensetracker.offline.data.local.entity.ReviewItemEntity
 import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
@@ -19,6 +17,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.core.content.edit
 import com.expensetracker.offline.data.local.dao.AccountBalanceInsight
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,16 +48,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val pendingReviewCount: StateFlow<Int> = repository.pendingReviewCount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    val monthlyDebitTotal: StateFlow<Double?> = repository.getMonthlyDebitSum()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
-
     val unsettledSplitsWithDebts = repository.unsettledSplitsWithDebts
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val categoryInsights: StateFlow<List<CategoryInsight>> = repository.categoryInsights
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val payeeInsights: StateFlow<List<PayeeInsight>> = repository.payeeInsights
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val startDayOfMonth = MutableStateFlow(
@@ -473,11 +463,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun importTransactions(transactions: List<TransactionEntity>) {
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.insertTransactionsBulk(transactions)
-        }
-    }
+    /** Returns how many rows were actually added (rows already in the app are skipped). */
+    suspend fun importTransactions(transactions: List<TransactionEntity>): Int =
+        withContext(Dispatchers.IO) { repository.insertTransactionsBulk(transactions) }
 
     fun triggerMockIncoming(
         rawText: String,

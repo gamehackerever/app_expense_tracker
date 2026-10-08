@@ -72,7 +72,15 @@ class AutoBackupWorker(
     private suspend fun pruneOldBackups(context: Context, folderUri: String, maxKeep: Int) = withContext(Dispatchers.IO) {
         try {
             val dir = DocumentFile.fromTreeUri(context, Uri.parse(folderUri)) ?: return@withContext
-            val backups = dir.listFiles()
+            val files = dir.listFiles()
+            // Leftovers from a backup that failed halfway (older than an hour, so a running one is safe).
+            val staleCutoff = System.currentTimeMillis() - 60 * 60 * 1000L
+            files.filter {
+                it.name?.startsWith("ExpenseBackup_") == true && it.name?.endsWith(".enc.tmp") == true &&
+                    it.lastModified() < staleCutoff
+            }.forEach { it.delete() }
+
+            val backups = files
                 .filter { it.name?.startsWith("ExpenseBackup_") == true && it.name?.endsWith(".enc") == true }
                 .sortedByDescending { it.lastModified() }
 

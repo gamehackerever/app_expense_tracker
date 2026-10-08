@@ -31,6 +31,10 @@ Kotlin, Jetpack Compose (Material 3), Room (KSP), WorkManager, Glance, Navigatio
 
 SMS and notification content is processed locally and is not sent anywhere.
 
+## Install (APK)
+
+Download the APK from the [Releases](../../releases) page. Because it isn't on the Play Store and uses SMS and notification access, Android will show warnings and restrict those permissions until you allow them. The step-by-step guide, with Play Protect, restricted settings, notification access and battery settings, is in **[INSTALL.md](INSTALL.md)**.
+
 ## Build
 
 Requirements: Android Studio (recent stable) and JDK 17.

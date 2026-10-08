@@ -21,9 +21,14 @@ object FinancialParser {
 
     // FIXED: Added reject list for OTPs, limits, failed transactions, and mandates
     private val REJECT_PATTERNS = listOf(
-        "\\botp\\b", "\\bdeclined\\b", "\\bfailed\\b", "\\breversed\\b",
+        "\\botp\\b", "\\bdeclined\\b", "\\bfailed\\b",
         "\\bavl lmt\\b", "\\btotal due\\b", "\\bwill be debited\\b", "\\bcollect request\\b"
     ).map { Pattern.compile("(?i)$it") }
+
+    // A reversal puts money back into the account. Dropping it leaves the balance unexplained (the next
+    // alert then shows a false "missing transaction"), so it is kept as a CREDIT. Messages that are
+    // both failed and reversed ("payment failed, amount reversed") are still rejected by REJECT_PATTERNS.
+    private val REVERSAL_PATTERN = Pattern.compile("(?i)\\breversed\\b")
 
     // FIXED: Removed "cr." and "dr." from generic matchers to fix the "Dr. Sharma" bug. Prefer verbs.
     private val CREDIT_PATTERN = Pattern.compile("(?i)\\b(credit|credited|received|refunded|deposited|added|sent you|paid you|transfer(?:red)? from)\\b")
@@ -138,7 +143,8 @@ object FinancialParser {
 
         val lowerText = combinedText.lowercase()
         val hasTransactionVerb = FINANCIAL_KEYWORDS.any { it.matcher(lowerText).find() }
-        val type = detectTransactionType(combinedText)
+        val isReversal = REVERSAL_PATTERN.matcher(combinedText).find()
+        val type = if (isReversal) TransactionType.CREDIT else detectTransactionType(combinedText)
 
         if (!hasTransactionVerb && type == null) {
             return createRejected(rawText, "No financial keywords found")

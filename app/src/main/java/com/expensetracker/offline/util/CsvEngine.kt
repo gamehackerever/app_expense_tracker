@@ -80,7 +80,7 @@ object CsvEngine {
         }
     }
 
-    suspend fun importFromCsv(context: Context, uri: Uri, onImported: suspend (List<TransactionEntity>) -> Unit): CsvResult = withContext(Dispatchers.IO) {
+    suspend fun importFromCsv(context: Context, uri: Uri, onImported: suspend (List<TransactionEntity>) -> Int): CsvResult = withContext(Dispatchers.IO) {
         try {
             val text = context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
                 ?: return@withContext CsvResult.Error("Could not open the selected file.")
@@ -160,9 +160,19 @@ object CsvEngine {
                 return@withContext CsvResult.Error(if (skipped > 0) "No valid rows found ($skipped skipped)." else "No transactions found.")
             }
 
-            onImported(transactions)
-            if (skipped > 0) CsvResult.PartialSuccess("Imported ${transactions.size} transactions, skipped $skipped invalid rows.", transactions)
-            else CsvResult.Success("SUCCESS", transactions)
+            // The callback returns how many rows were new; rows already in the app are not added again.
+            val inserted = onImported(transactions)
+            val duplicates = transactions.size - inserted
+            if (inserted == 0) {
+                return@withContext CsvResult.Error("Nothing imported: all ${transactions.size} rows are already in the app.")
+            }
+            if (skipped > 0 || duplicates > 0) {
+                val notes = buildList {
+                    if (duplicates > 0) add("skipped $duplicates already in the app")
+                    if (skipped > 0) add("skipped $skipped invalid rows")
+                }
+                CsvResult.PartialSuccess("Imported $inserted transactions, ${notes.joinToString(", ")}.", transactions)
+            } else CsvResult.Success("SUCCESS", transactions)
 
         } catch (e: Exception) {
             CsvResult.Error("Import failed: ${e.localizedMessage}")

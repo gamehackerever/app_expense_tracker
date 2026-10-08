@@ -1810,7 +1810,7 @@ fun SettingsScreen(
             title = "Set Backup Passphrase",
             onDismiss = { showBackupPassphraseDialog = false; tempPassphrase = ""; tempConfirmPassphrase = ""; showPassphrase = false },
             confirmText = "Encrypt",
-            confirmEnabled = tempPassphrase.length >= 4 && tempPassphrase == tempConfirmPassphrase,
+            confirmEnabled = tempPassphrase.isNotBlank() && tempPassphrase.length >= 4 && tempPassphrase == tempConfirmPassphrase,
             onConfirm = {
                 val finalPassphrase = tempPassphrase
                 showBackupPassphraseDialog = false

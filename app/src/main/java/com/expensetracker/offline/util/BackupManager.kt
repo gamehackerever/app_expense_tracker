@@ -141,9 +141,19 @@ object BackupManager {
     }
 
     suspend fun createBackup(context: Context, targetTreeUri: String, passphrase: String): BackupResult = withContext(Dispatchers.IO) {
+        val tmpDbFile = File(context.cacheDir, "vacuum_temp.db")
+        var createdFileUri: Uri? = null
+
+        // A half-written ".tmp" file must not stay in the person's folder (it is never pruned and looks like a backup).
+        fun discardPartialFile() {
+            createdFileUri?.let { runCatching { DocumentsContract.deleteDocument(context.contentResolver, it) } }
+            createdFileUri = null
+        }
+
         try {
+            if (passphrase.isBlank()) return@withContext BackupResult.Error("The backup passphrase can't be blank.")
+
             val app = context.applicationContext as ExpenseTrackerApp
-            val tmpDbFile = File(context.cacheDir, "vacuum_temp.db")
             if (tmpDbFile.exists()) tmpDbFile.delete()
 
             // FIXED: Use atomic VACUUM INTO for Android 11+, otherwise fallback to TRUNCATE (PO-E)
@@ -171,31 +181,59 @@ object BackupManager {
 
             val newFileUri = DocumentsContract.createDocument(context.contentResolver, docUri, "application/octet-stream", "$fileName.tmp")
                 ?: return@withContext BackupResult.Error("Could not create file.")
+            createdFileUri = newFileUri
 
             val outputStream = context.contentResolver.openOutputStream(newFileUri)
-                ?: return@withContext BackupResult.Error("Could not open file for writing.")
+                ?: run {
+                    discardPartialFile()
+                    return@withContext BackupResult.Error("Could not open file for writing.")
+                }
 
+            // Build the payload once and read the database straight into it (one in-memory copy fewer than before).
             val settingsBytes = serializeSettings(context)
-            val dbBytes = tmpDbFile.readBytes()
-            tmpDbFile.delete()
-
+            val dbSize = tmpDbFile.length()
+            if (dbSize > Int.MAX_VALUE / 2) {
+                outputStream.close()
+                discardPartialFile()
+                return@withContext BackupResult.Error("The database is too large to back up on this device.")
+            }
             val lengthHeader = ByteBuffer.allocate(4).putInt(settingsBytes.size).array()
-
-            val payload = ByteArray(MAGIC_V4.size + 4 + settingsBytes.size + dbBytes.size)
+            val dbOffset = MAGIC_V4.size + 4 + settingsBytes.size
+            val payload = ByteArray(dbOffset + dbSize.toInt())
             System.arraycopy(MAGIC_V4, 0, payload, 0, MAGIC_V4.size)
             System.arraycopy(lengthHeader, 0, payload, MAGIC_V4.size, 4)
             System.arraycopy(settingsBytes, 0, payload, MAGIC_V4.size + 4, settingsBytes.size)
-            System.arraycopy(dbBytes, 0, payload, MAGIC_V4.size + 4 + settingsBytes.size, dbBytes.size)
+            tmpDbFile.inputStream().use { input ->
+                var read = 0
+                while (read < dbSize.toInt()) {
+                    val n = input.read(payload, dbOffset + read, dbSize.toInt() - read)
+                    if (n < 0) break
+                    read += n
+                }
+                check(read == dbSize.toInt()) { "Could not read the whole database snapshot." }
+            }
+            tmpDbFile.delete()
 
             outputStream.use { os ->
                 BackupEngine.encryptPayload(os, passphrase, payload)
             }
 
-            DocumentsContract.renameDocument(context.contentResolver, newFileUri, fileName)
+            // A backup that could not be renamed is still called ".tmp", so do not report it as done.
+            if (DocumentsContract.renameDocument(context.contentResolver, newFileUri, fileName) == null) {
+                discardPartialFile()
+                return@withContext BackupResult.Error("Could not finish writing the backup file.")
+            }
+            createdFileUri = null
 
             BackupResult.Success
+        } catch (e: OutOfMemoryError) {
+            discardPartialFile()
+            BackupResult.Error("Not enough memory to back up the database on this device.")
         } catch (e: Exception) {
+            discardPartialFile()
             BackupResult.Error("Backup failed: ${e.localizedMessage}")
+        } finally {
+            tmpDbFile.delete()
         }
     }
 
@@ -389,7 +427,8 @@ object BackupEngine {
     private const val TAG_LENGTH_BIT = 128
 
     private fun getSecretKey(passphrase: String, salt: ByteArray): SecretKeySpec {
-        // Prevent Keystore crash if an empty password slips through
+        // Kept ONLY so old backups made with a blank passphrase can still be restored.
+        // New backups are refused by encryptPayload() when the passphrase is blank.
         val safePassphrase = if (passphrase.isBlank()) "Default_ExpenseTracker_Secure_Key" else passphrase
 
         val algorithm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -404,6 +443,8 @@ object BackupEngine {
     }
 
     fun encryptPayload(outputStream: OutputStream, passphrase: String, payload: ByteArray) {
+        // A blank passphrase would silently fall back to a key that is public in the source code.
+        require(passphrase.isNotBlank()) { "Passphrase can't be blank" }
         val secureRandom = SecureRandom()
         val salt = ByteArray(SALT_SIZE).apply { secureRandom.nextBytes(this) }
 

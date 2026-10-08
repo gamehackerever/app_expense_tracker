@@ -48,14 +48,23 @@ interface ReviewItemDao {
     suspend fun deleteReviewItemsByIds(ids: List<Long>)
 
     // FIXED: Deduplicate on amount and a 10-minute window rather than exact timestamp/rawText (PO-A)
+    // Two pending items are the same payment only if nothing tells them apart: references, bank and
+    // account must agree whenever both sides know them. Same amount alone is not enough (two different
+    // Rs 1,500 payments within minutes are two payments).
     @Query("""
-        SELECT COUNT(*) FROM review_items 
-        WHERE extractedPartialAmount = :amount 
-          AND timestamp BETWEEN :startTime AND :endTime 
+        SELECT COUNT(*) FROM review_items
+        WHERE extractedPartialAmount = :amount
+          AND timestamp BETWEEN :startTime AND :endTime
           AND (:type IS NULL OR type = :type)
           AND status = 'PENDING'
+          AND (referenceId IS NULL OR :referenceId IS NULL OR referenceId = :referenceId)
+          AND (bankName IS NULL OR :bankName IS NULL OR bankName = :bankName)
+          AND (accountNumber IS NULL OR :accountNumber IS NULL OR accountNumber = :accountNumber)
     """)
-    suspend fun countMatchingReviewItems(amount: Long, type: TransactionType?, startTime: Long, endTime: Long): Int
+    suspend fun countMatchingReviewItems(
+        amount: Long, type: TransactionType?, startTime: Long, endTime: Long,
+        referenceId: String?, bankName: String?, accountNumber: String?
+    ): Int
 
     // Pending review items for ONE account between two timestamps (exclusive start, inclusive end),
     // signed: debits negative, credits positive. Used by the ghost-transaction check so it only

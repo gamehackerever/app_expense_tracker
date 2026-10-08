@@ -4,8 +4,6 @@ import android.content.Context
 import androidx.room.withTransaction
 import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.AppDatabase
-import com.expensetracker.offline.data.local.dao.CategoryInsight
-import com.expensetracker.offline.data.local.dao.PayeeInsight
 import com.expensetracker.offline.data.local.entity.CategoryRuleEntity
 import com.expensetracker.offline.data.local.entity.ReviewItemEntity
 import com.expensetracker.offline.data.local.entity.ReviewStatus
@@ -24,7 +22,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import java.util.Calendar
 
 class TransactionRepository(
     private val database: AppDatabase,
@@ -44,8 +41,6 @@ class TransactionRepository(
     val unsettledSplitsWithDebts: Flow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> =
         splitDebtDao.getUnsettledTransactionsWithDebtsFlow()
 
-    val categoryInsights: Flow<List<CategoryInsight>> = transactionDao.getCategoryInsightsFlow()
-    val payeeInsights: Flow<List<PayeeInsight>> = transactionDao.getPayeeInsightsFlow()
 
     // ── Split debts ──────────────────────────────────────────────────────────
 
@@ -211,13 +206,6 @@ class TransactionRepository(
         }
     }
 
-    fun getMonthlyDebitSum(
-        startOfMonth: Long = getCurrentMonthStart(),
-        endOfMonth: Long = getCurrentMonthEnd()
-    ): Flow<Double?> {
-        return transactionDao.getMonthlyDebitSumFlow(startOfMonth, endOfMonth)
-    }
-
     suspend fun updatePayeeAndCategoryBulk(oldPayee: String, newPayee: String, newCategory: String) {
         database.transactionDao().updatePayeeAndCategoryBulk(oldPayee, newPayee, newCategory)
 
@@ -350,10 +338,22 @@ class TransactionRepository(
         }
     }
 
-    suspend fun insertTransactionsBulk(transactions: List<TransactionEntity>) {
-        database.withTransaction {
-            transactions.forEach { transactionDao.insertTransaction(it) }
+    /**
+     * Inserts imported rows and returns how many were new. Rows already in the app (same second,
+     * amount, type and payee) are skipped, so importing the same file twice changes nothing. All checks
+     * run before any insert, so two identical rows inside ONE file (two Rs 20 chai) both count.
+     */
+    suspend fun insertTransactionsBulk(transactions: List<TransactionEntity>): Int {
+        val inserted = database.withTransaction {
+            val fresh = transactions.filter { t ->
+                val secondStart = t.timestamp - Math.floorMod(t.timestamp, 1000L)
+                transactionDao.countSameTransaction(secondStart, secondStart + 999L, t.amount, t.type, t.payee) == 0
+            }
+            fresh.forEach { transactionDao.insertTransaction(it) }
+            fresh.size
         }
+        if (inserted > 0) refreshWidget()
+        return inserted
     }
 
     suspend fun renameAllPayees(oldPayee: String, newPayee: String) {
@@ -384,7 +384,8 @@ class TransactionRepository(
         // Same debit often arrives twice (SMS + notification, or a repost with another timestamp).
         if (amount != null && amount > 0L) {
             val dup = reviewItemDao.countMatchingReviewItems(
-                amount, parsed.type, timestamp - DEDUPE_WINDOW_MS, timestamp + DEDUPE_WINDOW_MS
+                amount, parsed.type, timestamp - DEDUPE_WINDOW_MS, timestamp + DEDUPE_WINDOW_MS,
+                parsed.referenceId, parsed.bankName, parsed.accountNumber
             )
             if (dup > 0) return IngestResult.Duplicate
         } else if (reviewItemDao.countExactReviewItems(parsed.rawText, timestamp) > 0) {
@@ -486,7 +487,7 @@ class TransactionRepository(
                     amount = amount, payee = aliasedPayee, timestamp = timestamp, type = type,
                     source = source, referenceId = parsed.referenceId, rawContent = parsed.rawText,
                     category = category, balance = parsed.balance, bankName = parsed.bankName,
-                    accountNumber = parsed.accountNumber
+                    accountNumber = parsed.accountNumber, excludeFromSpend = parsed.excludeFromSpend
                 )
             )
             IngestResult.Inserted(id)
@@ -499,26 +500,5 @@ class TransactionRepository(
         /** Debits above Rs 1,000 (amounts are stored in PAISE) go to the review queue. */
         const val REVIEW_THRESHOLD_PAISE = 100_000L
         private const val DEDUPE_WINDOW_MS = 300_000L
-
-        private fun getCurrentMonthStart(): Long {
-            return Calendar.getInstance().apply {
-                set(Calendar.DAY_OF_MONTH, 1)
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }.timeInMillis
-        }
-
-        private fun getCurrentMonthEnd(): Long {
-            return Calendar.getInstance().apply {
-                set(Calendar.DAY_OF_MONTH, 1)
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-                add(Calendar.MONTH, 1)
-            }.timeInMillis
-        }
     }
 }

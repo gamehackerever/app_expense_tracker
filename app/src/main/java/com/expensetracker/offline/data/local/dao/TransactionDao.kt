@@ -63,6 +63,13 @@ interface TransactionDao {
     @Update
     suspend fun updateTransaction(transaction: TransactionEntity)
 
+    /**
+     * CSV import uses this to skip rows already in the app. A CSV keeps time to the second while the
+     * database keeps milliseconds, so the caller passes the whole second as [fromTs]..[toTs].
+     */
+    @Query("SELECT COUNT(*) FROM transactions WHERE timestamp BETWEEN :fromTs AND :toTs AND amount = :amount AND type = :type AND payee = :payee")
+    suspend fun countSameTransaction(fromTs: Long, toTs: Long, amount: Long, type: TransactionType, payee: String): Int
+
     @Query("DELETE FROM transactions WHERE id = :id")
     suspend fun deleteTransactionById(id: Long)
 
@@ -98,11 +105,16 @@ interface TransactionDao {
         WHERE amount = :amount 
           AND type = :type 
           AND timestamp BETWEEN :startTime AND :endTime 
-          AND (bankName = :bankName OR :bankName IS NULL)
-          AND (accountNumber = :accountNumber OR :accountNumber IS NULL)
+          AND (bankName = :bankName OR :bankName IS NULL OR bankName IS NULL)
+          AND (accountNumber = :accountNumber OR :accountNumber IS NULL OR accountNumber IS NULL)
         ORDER BY ABS(timestamp - :targetTime) 
         LIMIT 1
     """)
+    /**
+     * Finds the stored row for the same payment. A row whose bank/account is still unknown (a UPI
+     * notification arrives before the bank SMS) must match too: in SQL `NULL = 'HDFC Bank'` is never
+     * true, so without the `IS NULL` branches the later SMS would be saved as a second transaction.
+     */
     suspend fun findMatchingTransaction(
         amount: Double,
         type: TransactionType,
@@ -116,10 +128,6 @@ interface TransactionDao {
     @Query("UPDATE transactions SET payee = :newPayee, category = :newCategory WHERE payee = :oldPayee")
     suspend fun updatePayeeAndCategoryBulk(oldPayee: String, newPayee: String, newCategory: String)
 
-    // Monthly spend = your share only (bill minus what others owe)
-    @Query("SELECT SUM(MAX(0, amount - COALESCE((SELECT SUM(amountOwed) FROM split_debts WHERE transactionId = transactions.id), 0))) FROM transactions WHERE type = 'DEBIT' AND timestamp >= :startOfMonth AND timestamp < :endOfMonth")
-    fun getMonthlyDebitSumFlow(startOfMonth: Long, endOfMonth: Long): Flow<Double?>
-
     // Sum of every unsettled debt minus its own repayments
     @Query("""
         SELECT SUM(
@@ -128,9 +136,6 @@ interface TransactionDao {
         FROM split_debts sd WHERE sd.settledAt IS NULL
     """)
     fun getTotalMoneyOwedToYouFlow(): Flow<Double?>
-
-    @Query("SELECT SUM(MAX(0, amount - COALESCE((SELECT SUM(amountOwed) FROM split_debts WHERE transactionId = transactions.id), 0))) FROM transactions WHERE type = 'DEBIT' AND timestamp >= :startOfDay AND timestamp < :endOfDay")
-    suspend fun getDailyDebitSum(startOfDay: Long, endOfDay: Long): Double?
 
     @Query("SELECT COUNT(*) FROM transactions WHERE type = 'DEBIT' AND category != 'Split Settlement' AND timestamp >= :startOfDay AND timestamp < :endOfDay")
     suspend fun getDailyDebitCount(startOfDay: Long, endOfDay: Long): Int
@@ -141,26 +146,10 @@ interface TransactionDao {
     @Query("UPDATE transactions SET payee = :newPayee WHERE payee = :oldPayee")
     suspend fun renameAllPayees(oldPayee: String, newPayee: String)
 
-    @Query("""
-        SELECT payee, 
-               SUM(MAX(0, amount - COALESCE((SELECT SUM(amountOwed) FROM split_debts WHERE transactionId = transactions.id), 0))) AS totalSpent, 
-               COUNT(*) AS transactionCount, MAX(timestamp) AS lastSpentTimestamp
-        FROM transactions WHERE type = 'DEBIT' GROUP BY payee ORDER BY totalSpent DESC
-    """)
-    fun getPayeeInsightsFlow(): Flow<List<PayeeInsight>>
-
     data class DebitPoint(val id: Long, val payee: String, val amount: Double, val timestamp: Long, val category: String)
 
     @Query("SELECT id, payee, amount, timestamp, category FROM transactions WHERE type = 'DEBIT' AND timestamp >= :since")
     fun getDebitsSinceFlow(since: Long): Flow<List<DebitPoint>>
-
-    @Query("""
-        SELECT category, 
-               SUM(MAX(0, amount - COALESCE((SELECT SUM(amountOwed) FROM split_debts WHERE transactionId = transactions.id), 0))) AS totalSpent, 
-               COUNT(*) AS transactionCount
-        FROM transactions WHERE type = 'DEBIT' GROUP BY category ORDER BY totalSpent DESC
-    """)
-    fun getCategoryInsightsFlow(): Flow<List<CategoryInsight>>
 
     @Query("UPDATE transactions SET payee = :newPayee WHERE payee = :oldPayee")
     suspend fun renamePayeeForAll(oldPayee: String, newPayee: String): Int

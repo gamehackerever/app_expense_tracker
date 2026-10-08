@@ -215,7 +215,10 @@ fun SettleDebtDialog(
                                 debts = debtInfos.map { it.debt }
                             )
                         }
-                        DebtSimplification.simplifyTripDebts(txnsWithDebts)
+                        DebtSimplification.simplifyTripDebts(
+                            txnsWithDebts,
+                            outstandingByDebtId = activeDebts.associate { it.debt.id to it.outstanding }
+                        )
                     }
 
                     LazyColumn(
