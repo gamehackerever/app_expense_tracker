@@ -49,7 +49,14 @@ object BackupManager {
     private val MAGIC_V3 = "ETBK_V3_".toByteArray(Charsets.UTF_8)
     private val MAGIC_V4 = "ETBK_V4_".toByteArray(Charsets.UTF_8) // You already have this one
     private val PREF_FILES = listOf(PREFS_NAME)
-    private val EXCLUDED_PREF_KEYS = setOf("key_backup_folder_uri", "key_last_backup_timestamp")
+    private val EXCLUDED_PREF_KEYS = setOf(
+        "key_backup_folder_uri", "key_last_backup_timestamp", "key_auto_backup_enabled",
+        // Undo-scan IDs point at rows of one specific database, so they must never cross a backup/restore.
+        "key_last_scan_txns", "key_last_scan_reviews",
+        // Auto-backup run status and the stored passphrase are per-device state, never part of a backup.
+        "key_last_auto_backup_ok", "key_last_auto_backup_run_time", "key_last_auto_backup_reason",
+        "key_auto_backup_passphrase_enc", "key_auto_backup_passphrase"
+    )
 
     private val BACKED_UP_PREF_KEYS = listOf(
         "key_monthly_budget_v2", "key_budget_explicitly_set", "key_necessities_json",
@@ -133,8 +140,14 @@ object BackupManager {
         for (name in files.keys()) {
             val values = files.getJSONObject(name)
             val editor = context.getSharedPreferences(name, Context.MODE_PRIVATE).edit()
-            // FIXED: Merge instead of clearing so we don't wipe excluded keys (like auto-backup state)
-            for (key in values.keys()) putEntry(editor, key, values.getJSONObject(key))
+            // The restored database has different rows, so a stale "Undo Last Scan" batch could delete the wrong ones.
+            editor.remove("key_last_scan_txns").remove("key_last_scan_reviews")
+            // FIXED: Merge instead of clearing so we don't wipe excluded keys (like auto-backup state).
+            // Older backups still contain per-device keys, so never apply those on restore.
+            for (key in values.keys()) {
+                if (key in EXCLUDED_PREF_KEYS) continue
+                putEntry(editor, key, values.getJSONObject(key))
+            }
             editor.commit()
         }
         SettingsRepository(context).monthlyBudget

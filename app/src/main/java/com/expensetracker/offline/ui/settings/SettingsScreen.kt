@@ -279,6 +279,10 @@ fun SettingsScreen(
     var backupFrequency by remember { mutableStateOf(settingsRepo.backupFrequency) }
     var backupFolderUri by remember { mutableStateOf(settingsRepo.backupFolderUri) }
     var lastBackupTimestamp by remember { mutableLongStateOf(prefs.getLong("key_last_backup_timestamp", 0L)) }
+    var autoBackupStatus by remember { mutableStateOf(AutoBackupWorker.lastRunSummary(context)) }
+    var autoBackupStatusFailed by remember {
+        mutableStateOf(prefs.contains(AutoBackupWorker.KEY_LAST_RUN_OK) && !prefs.getBoolean(AutoBackupWorker.KEY_LAST_RUN_OK, true))
+    }
     var isAppLockEnabled by remember { mutableStateOf(settingsRepo.appLockEnabled) }
     var currentThemeMode by remember { mutableStateOf(settingsRepo.appThemeMode) }
     var myUpiInput by remember { mutableStateOf(settingsRepo.myUpiVpa) }
@@ -341,6 +345,7 @@ fun SettingsScreen(
                     remove("key_backup_folder_uri")
                     putBoolean("key_auto_backup_enabled", false)
                 }
+                AutoBackupWorker.schedule(context) // cancels the periodic work now that it's off
                 if (wasAutoBackupOn) showSnack("Backup folder access was lost. Please choose a folder again.")
             }
         }
@@ -376,6 +381,11 @@ fun SettingsScreen(
                 hasNotificationPermission = isNotificationPermissionGranted(context)
                 // The auto-backup worker may have run while we were away.
                 lastBackupTimestamp = prefs.getLong("key_last_backup_timestamp", 0L)
+                // The worker also switches itself off when folder access is lost, so re-read both.
+                autoBackupEnabled = prefs.getBoolean("key_auto_backup_enabled", false)
+                autoBackupStatus = AutoBackupWorker.lastRunSummary(context)
+                autoBackupStatusFailed = prefs.contains(AutoBackupWorker.KEY_LAST_RUN_OK) &&
+                        !prefs.getBoolean(AutoBackupWorker.KEY_LAST_RUN_OK, true)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -383,6 +393,36 @@ fun SettingsScreen(
     }
 
     var pendingAutoBackupEnable by remember { mutableStateOf(false) }
+    // True while the passphrase dialog was opened by the Auto Backup switch (not by "Backup Now").
+    var pendingEnableAfterPassphrase by remember { mutableStateOf(false) }
+
+    fun turnOnAutoBackup() {
+        pendingEnableAfterPassphrase = false
+        autoBackupEnabled = true
+        prefs.edit {
+            putBoolean("key_auto_backup_enabled", true)
+            // Drop the previous run's result so an old failure isn't shown for the new setup.
+            remove(AutoBackupWorker.KEY_LAST_RUN_OK)
+            remove(AutoBackupWorker.KEY_LAST_RUN_TIME)
+            remove(AutoBackupWorker.KEY_LAST_RUN_REASON)
+        }
+        autoBackupStatus = null
+        autoBackupStatusFailed = false
+        AutoBackupWorker.schedule(context)
+    }
+
+    // Auto-backup can't run without a stored passphrase, so ask for it before switching on.
+    fun requestAutoBackupOn() {
+        if (SecurePassphraseStore.load(context).isNullOrBlank()) {
+            pendingEnableAfterPassphrase = true
+            tempPassphrase = ""
+            tempConfirmPassphrase = ""
+            showPassphrase = false
+            showBackupPassphraseDialog = true
+        } else {
+            turnOnAutoBackup()
+        }
+    }
     var isBackingUp by remember { mutableStateOf(false) }
     var isCsvBusy by remember { mutableStateOf(false) }
 
@@ -415,10 +455,7 @@ fun SettingsScreen(
             }
             backupFolderUri = uri.toString()
             prefs.edit { putString("key_backup_folder_uri", uri.toString()) }
-            if (shouldEnableAutoBackup) {
-                autoBackupEnabled = true
-                prefs.edit { putBoolean("key_auto_backup_enabled", true) }
-            }
+            if (shouldEnableAutoBackup) requestAutoBackupOn()
             showSnack("Backup folder selected successfully")
             AutoBackupWorker.schedule(context)
         }
@@ -1280,15 +1317,26 @@ fun SettingsScreen(
                                     showSnack("Please select a backup folder first")
                                     pendingAutoBackupEnable = true
                                     folderPickerLauncher.launch(null)
+                                } else if (enabled) {
+                                    requestAutoBackupOn()
                                 } else {
-                                    autoBackupEnabled = enabled
-                                    prefs.edit { putBoolean("key_auto_backup_enabled", enabled) }
+                                    autoBackupEnabled = false
+                                    prefs.edit { putBoolean("key_auto_backup_enabled", false) }
                                     AutoBackupWorker.schedule(context)
                                 }
                             },
                             colors = settingsSwitchColors()
                         )
                     }
+                }
+
+                if (autoBackupEnabled || autoBackupStatus != null) {
+                    Text(
+                        autoBackupStatus ?: "No auto-backup has run yet",
+                        fontSize = 12.sp,
+                        color = if (autoBackupStatusFailed) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
                 if (autoBackupEnabled) {
@@ -1808,14 +1856,21 @@ fun SettingsScreen(
     if (showBackupPassphraseDialog) {
         AppDialog(
             title = "Set Backup Passphrase",
-            onDismiss = { showBackupPassphraseDialog = false; tempPassphrase = ""; tempConfirmPassphrase = ""; showPassphrase = false },
+            onDismiss = {
+                showBackupPassphraseDialog = false
+                pendingEnableAfterPassphrase = false // switch stays off
+                tempPassphrase = ""; tempConfirmPassphrase = ""; showPassphrase = false
+            },
             confirmText = "Encrypt",
             confirmEnabled = tempPassphrase.isNotBlank() && tempPassphrase.length >= 4 && tempPassphrase == tempConfirmPassphrase,
             onConfirm = {
                 val finalPassphrase = tempPassphrase
                 showBackupPassphraseDialog = false
-                if (!SecurePassphraseStore.save(context, finalPassphrase)) {
-                    showSnack("Couldn't store the passphrase securely, so auto-backup won't run until it's saved.")
+                val passphraseStored = SecurePassphraseStore.save(context, finalPassphrase)
+                if (!passphraseStored) {
+                    pendingEnableAfterPassphrase = false
+                } else if (pendingEnableAfterPassphrase) {
+                    turnOnAutoBackup()
                 }
 
                 coroutineScope.launch {
@@ -1829,9 +1884,16 @@ fun SettingsScreen(
                                 val now = System.currentTimeMillis()
                                 lastBackupTimestamp = now
                                 prefs.edit { putLong("key_last_backup_timestamp", now) }
-                                showSnack("Backup encrypted and saved securely!")
+                                // One message only: a second snackbar would dismiss the first.
+                                showSnack(
+                                    if (passphraseStored) "Backup encrypted and saved securely!"
+                                    else "Backup saved, but the passphrase couldn't be stored securely, so auto-backup won't run."
+                                )
                             }
-                            is BackupResult.Error -> showSnack(result.message)
+                            is BackupResult.Error -> showSnack(
+                                if (passphraseStored) result.message
+                                else "${result.message} The passphrase also couldn't be stored securely."
+                            )
                         }
                     } finally {
                         isBackingUp = false
