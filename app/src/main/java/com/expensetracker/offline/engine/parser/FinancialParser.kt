@@ -38,12 +38,12 @@ object FinancialParser {
     private val PROMO_PATTERNS = Pattern.compile("(?i)\\b(upgrade\\s+today|recharge\\s+(?:now|with|for)|plan|validity|per\\s+day|days\\b|pre-approved|apply\\s+now|congrats|congratulations|exclusive\\s+offer|special\\s+offer|discount|flat\\s+(?:rs|inr|₹)|free\\s+trial|win\\b|hurry|coupon|gift\\s+card|promo\\s+code|valid\\s+till|dial\\s+\\*|unlimited\\s+data|calls\\s+for\\s+just|bonus)\\b")
     private val BANK_INDICATORS = Pattern.compile("(?i)\\b(a/c|acct|account|vpa|upi\\s*ref|rrn|txn|card\\s+xx|avl\\s+bal|avail\\s+bal|balance|bank)\\b")
 
-    private val DISCLAIMER_PATTERN = Pattern.compile("(?is)\\b(?:block\\s*(?:a/c|card|upi)|if\\s+not\\s+(?:done|you)|call\\s*\\d+|sms\\s+blk|not\\s+you\\s*\\?).*$")
+    private val DISCLAIMER_PATTERN = Pattern.compile("(?is)\\b(?:block\\s*(?:a/c|card|upi)|if\\s+not\\s+(?:done|you|u)|call\\s*[-:]?\\s*\\d+|sms\\s+blk|not\\s+(?:you|u)\\s*\\?).*$")
 
     private val AMOUNT_PATTERNS = listOf(
         Pattern.compile("(?i)(?:inr|rs\\.?|₹)\\s*([0-9,]+(?:\\.[0-9]{1,2})?)"),
         Pattern.compile("(?i)([0-9,]+(?:\\.[0-9]{1,2})?)\\s*(?:inr|rs\\.?|₹)"),
-        Pattern.compile("(?i)(?:amount|amt|spent|paid|for|of)\\s*(?:of)?\\s*(?:inr|rs\\.?|₹)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)")
+        Pattern.compile("(?i)(?:amount|amt|spent|paid|for|of|by)\\s*(?:of)?\\s*(?:inr|rs\\.?|₹)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)")
     )
     private val BALANCE_PATTERN = Pattern.compile("(?i)(?:final balance|available balance|avail bal|avl bal|bal(?:ance)?)\\s*(?:is|:|-)?\\s*(?:rs\\.?|inr|₹)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)")
 
