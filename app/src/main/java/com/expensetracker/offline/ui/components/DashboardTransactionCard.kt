@@ -1,4 +1,4 @@
-package com.expensetracker.offline.ui.components
+﻿package com.expensetracker.offline.ui.components
 
 import android.text.format.DateFormat
 import androidx.compose.animation.AnimatedVisibility
@@ -84,6 +84,20 @@ import java.util.Date
 import java.util.Locale
 
 // FIXED: Centralized CurrencyFormat using safe BigDecimal math over Long (Paise)
+object TimeFormatCache {
+    private var cachedTimeFormat: java.text.DateFormat? = null
+    private val cachedDateFormat by lazy { java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()) }
+
+    fun get(context: android.content.Context): java.text.DateFormat {
+        if (cachedTimeFormat == null) {
+            cachedTimeFormat = android.text.format.DateFormat.getTimeFormat(context.applicationContext)
+        }
+        return cachedTimeFormat!!
+    }
+
+    fun getDate(): java.text.DateFormat = cachedDateFormat
+}
+
 object CurrencyFormat {
     private val inLocale: Locale = Locale.forLanguageTag("en-IN")
 
@@ -219,11 +233,10 @@ fun DashboardTransactionCard(
         transaction.payee.trim().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()
     }
 
-    val timeFormat = remember(context) { DateFormat.getTimeFormat(context) }
-    val timeText = remember(transaction.timestamp, timeFormat, showDate) {
-        val time = timeFormat.format(Date(transaction.timestamp))
+    val timeText = remember(transaction.timestamp, showDate) {
+        val time = TimeFormatCache.get(context).format(java.util.Date(transaction.timestamp))
         if (showDate) {
-            SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(transaction.timestamp)) + " · " + time
+            TimeFormatCache.getDate().format(java.util.Date(transaction.timestamp)) + " \u2022 " + time
         } else time
     }
 
@@ -707,3 +720,4 @@ private fun shortBankCode(bankName: String): String = when {
     else -> bankName.trim().split(" ").firstOrNull { it.isNotBlank() }?.take(5)?.uppercase()
         ?: bankName.take(5).uppercase()
 }
+

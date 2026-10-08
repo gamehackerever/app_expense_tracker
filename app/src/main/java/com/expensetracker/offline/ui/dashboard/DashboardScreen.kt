@@ -674,20 +674,25 @@ fun DashboardScreen(
     }
 
     val currentMonthName = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date()) }
-    val allAvailableCategories = remember(customCategories, transactions) {
-        val standard = listOf("Food & Dining", "Groceries", "Shopping", "Travel", "Bills & Utilities", "Entertainment", "Health")
-        val fromTxns = transactions.map { it.category }.filter { it.isNotBlank() }
-        val allDistinct = (standard + customCategories + fromTxns).distinct()
+    val allAvailableCategories by produceState(
+        initialValue = listOf("Food & Dining", "Groceries", "Shopping", "Travel", "Bills & Utilities", "Entertainment", "Health") + customCategories,
+        customCategories, transactions
+    ) {
+        value = withContext(Dispatchers.Default) {
+            val standard = listOf("Food & Dining", "Groceries", "Shopping", "Travel", "Bills & Utilities", "Entertainment", "Health")
+            val fromTxns = transactions.map { it.category }.filter { it.isNotBlank() }
+            val allDistinct = (standard + customCategories + fromTxns).distinct()
 
-        val lastUsedMap = mutableMapOf<String, Long>()
-        for (txn in transactions) {
-            val cat = txn.category
-            if (cat.isNotBlank()) {
-                val currentMax = lastUsedMap[cat] ?: 0L
-                if (txn.timestamp > currentMax) lastUsedMap[cat] = txn.timestamp
+            val lastUsedMap = mutableMapOf<String, Long>()
+            for (txn in transactions) {
+                val cat = txn.category
+                if (cat.isNotBlank()) {
+                    val currentMax = lastUsedMap[cat] ?: 0L
+                    if (txn.timestamp > currentMax) lastUsedMap[cat] = txn.timestamp
+                }
             }
+            allDistinct.sortedWith(compareByDescending<String> { lastUsedMap[it] ?: 0L }.thenBy { it.lowercase() })
         }
-        allDistinct.sortedWith(compareByDescending<String> { lastUsedMap[it] ?: 0L }.thenBy { it.lowercase() })
     }
 
     val timeBoundaries = remember(selectedTimeRange, startDayOfMonth) {
@@ -789,8 +794,34 @@ fun DashboardScreen(
         }
     }
 
-    val safeToSpendBreakdown = remember(effectiveBalance, transactionsWithDebts, necessitiesList, startDayOfMonth) {
-        computeSafeToSpend(effectiveBalance, transactionsWithDebts, necessitiesList, startDayOfMonth)
+    val safeToSpendBreakdown by produceState(
+        initialValue = SafeToSpendBreakdown(
+            balance = effectiveBalance, reservedTotal = 0L, paidTowardNecessities = 0L, 
+            remainingReserve = 0L, safeToSpend = effectiveBalance ?: 0L, isShortOnReserve = false, 
+            hasBalanceData = effectiveBalance != null, itemStatuses = emptyList(), upcomingNextMonth = emptyList()
+        ),
+        effectiveBalance, transactionsWithDebts, necessitiesList, startDayOfMonth
+    ) {
+        value = withContext(Dispatchers.Default) {
+            computeSafeToSpend(effectiveBalance, transactionsWithDebts, necessitiesList, startDayOfMonth)
+        }
+    }
+
+    // Pre-build a txn.id -> necessityName map so each card does O(1) lookup, not O(N) firstOrNull per-card
+    val billLabelMap by produceState(initialValue = emptyMap<Long, String>(), safeToSpendBreakdown, visibleTransactions, startDayOfMonth) {
+        value = withContext(Dispatchers.Default) {
+            val cycleStart = startOfCurrentMonthMillis(startDayOfMonth)
+            val statuses = safeToSpendBreakdown.itemStatuses
+            buildMap {
+                visibleTransactions.forEach { txnWithDebts ->
+                    val txn = txnWithDebts.transaction
+                    if (txn.type == TransactionType.DEBIT && txn.timestamp >= cycleStart) {
+                        val match = statuses.firstOrNull { NecessityManager.matches(it.item, txn.payee, txn.category) }
+                        if (match != null) put(txn.id, match.item.name)
+                    }
+                }
+            }
+        }
     }
 
     var activeTransactionForSplitId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -1383,8 +1414,21 @@ fun DashboardScreen(
         }
     }
 
-    val grouped = remember(visibleTransactions) {
-        visibleTransactions.groupBy { dayLabel(it.transaction.timestamp) }
+    data class DayGroup(val label: String, val rows: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>, val daySpentPaise: Long)
+
+    val grouped by produceState(initialValue = emptyList<DayGroup>(), visibleTransactions, pendingDeleteIds) {
+        value = withContext(Dispatchers.Default) {
+            val order = linkedMapOf<String, MutableList<com.expensetracker.offline.data.local.dao.TransactionWithDebts>>()
+            visibleTransactions.forEach { txn ->
+                order.getOrPut(dayLabel(txn.transaction.timestamp)) { mutableListOf() }.add(txn)
+            }
+            order.map { (label, rows) ->
+                val daySpent = rows
+                    .filter { it.transaction.type == TransactionType.DEBIT && it.transaction.id !in pendingDeleteIds }
+                    .sumOf { r -> (r.transaction.amount - r.debts.sumOf { d -> d.amountOwed.toLong() }).coerceAtLeast(0L) }
+                DayGroup(label, rows, daySpent)
+            }
+        }
     }
 
     if (transactionPendingDelete != null) {
@@ -2480,10 +2524,10 @@ fun DashboardScreen(
                     }
                 }
             } else {
-                grouped.forEach { (label, rows) ->
-                    val daySpent = rows
-                        .filter { it.transaction.type == TransactionType.DEBIT && it.transaction.id !in pendingDeleteIds }
-                        .sumOf { r -> (r.transaction.amount - r.debts.sumOf { d -> d.amountOwed.toLong() }).coerceAtLeast(0L) }
+                grouped.forEach { dayGroup ->
+                    val label = dayGroup.label
+                    val rows = dayGroup.rows
+                    val daySpent = dayGroup.daySpentPaise
                     stickyHeader(key = "hdr_$label", contentType = "day_header") {
                         DayHeader(label, if (daySpent > 0) "Spent ${CurrencyFormat.smart(daySpent)}" else null)
                     }
@@ -2517,10 +2561,7 @@ fun DashboardScreen(
                                             }
                                         }
 
-                                        val billLabel = remember(txn, safeToSpendBreakdown) {
-                                            if (txn.type != TransactionType.DEBIT || txn.timestamp < startOfCurrentMonthMillis(startDayOfMonth)) null
-                                            else safeToSpendBreakdown.itemStatuses.firstOrNull { NecessityManager.matches(it.item, txn.payee, txn.category) }?.item?.name
-                                        }
+                                        val billLabel = billLabelMap[txn.id]
 
                                         val isSelected = selectedTxnIds.contains(txn.id)
 

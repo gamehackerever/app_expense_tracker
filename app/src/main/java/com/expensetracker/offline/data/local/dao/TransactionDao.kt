@@ -42,6 +42,9 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE bankName = :bankName AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL)) ORDER BY timestamp DESC")
     fun getTransactionsByAccountFlow(bankName: String, accountNumber: String?): Flow<List<TransactionEntity>>
 
+    @Query("SELECT * FROM transactions WHERE timestamp BETWEEN :startTime AND :endTime")
+    suspend fun getTransactionsInRangeSync(startTime: Long, endTime: Long): List<TransactionEntity>
+
     @Query("UPDATE transactions SET bankName = :bankName, accountNumber = :accountNumber WHERE id = :transactionId AND bankName IS NULL")
     suspend fun updateBankDetails(transactionId: Long, bankName: String, accountNumber: String?)
 

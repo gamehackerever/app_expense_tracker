@@ -1,4 +1,4 @@
-package com.expensetracker.offline.ui.insights
+﻿package com.expensetracker.offline.ui.insights
 
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
@@ -189,11 +189,13 @@ fun InsightsScreen(
     val daysLeft = if (isCurrent) ceil((cycleEndMillis - now).toDouble() / DAY_MS).toInt().coerceAtLeast(0) else 0
 
 // Filter by account AND the viewed cycle (with an end bound for past cycles)
-    val filteredTransactions = remember(allTransactions, accountFilter, cycleStartMillis, cycleEndMillis, isCurrent) {
-        allTransactions.filter { item ->
-            val t = item.transaction.timestamp
-            matchesAccount(item.transaction, accountFilter) &&
-                    t >= cycleStartMillis && (isCurrent || t < cycleEndMillis)
+    val filteredTransactions by produceState(initialValue = emptyList<com.expensetracker.offline.data.local.dao.TransactionWithDebts>(), allTransactions, accountFilter, cycleStartMillis, cycleEndMillis, isCurrent) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            allTransactions.filter { item ->
+                val t = item.transaction.timestamp
+                matchesAccount(item.transaction, accountFilter) &&
+                        t >= cycleStartMillis && (isCurrent || t < cycleEndMillis)
+            }
         }
     }
 
@@ -1408,3 +1410,4 @@ private fun rememberEntered(delayMs: Long = 0L): Boolean {
     }
     return entered
 }
+

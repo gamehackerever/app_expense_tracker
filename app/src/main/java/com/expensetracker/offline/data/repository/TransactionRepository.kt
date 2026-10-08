@@ -355,10 +355,21 @@ class TransactionRepository(
      * run before any insert, so two identical rows inside ONE file (two Rs 20 chai) both count.
      */
     suspend fun insertTransactionsBulk(transactions: List<TransactionEntity>): Int {
+        if (transactions.isEmpty()) return 0
+        
+        val minTime = transactions.minOf { it.timestamp } - 1000L
+        val maxTime = transactions.maxOf { it.timestamp } + 1000L
+        
         val inserted = database.withTransaction {
+            val existing = transactionDao.getTransactionsInRangeSync(minTime, maxTime)
+            
             val fresh = transactions.filter { t ->
                 val secondStart = t.timestamp - Math.floorMod(t.timestamp, 1000L)
-                transactionDao.countSameTransaction(secondStart, secondStart + 999L, t.amount, t.type, t.payee) == 0
+                val secondEnd = secondStart + 999L
+                val isDuplicate = existing.any { e ->
+                    e.timestamp in secondStart..secondEnd && e.amount == t.amount && e.type == t.type && e.payee == t.payee
+                }
+                !isDuplicate
             }
             fresh.forEach { transactionDao.insertTransaction(it) }
             fresh.size
