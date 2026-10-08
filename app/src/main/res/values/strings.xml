@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">Expense Tracker</string>
+    <string name="accessibility_service_description">Reads transaction amounts and payees from payment completion screens 100% offline without manual entry.</string>
+    <string name="add_expense_short">Add</string>
+    <string name="add_expense_long">Add Expense</string>
+</resources>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="add_expense"
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_foreground"
+        android:shortcutShortLabel="@string/add_expense_short"
+        android:shortcutLongLabel="@string/add_expense_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.expensetracker.offline"
+            android:targetClass="com.expensetracker.offline.MainActivity">
+            <extra android:name="OPEN_ADD_EXPENSE" android:value="true" />
+        </intent>
+    </shortcut>
+</shortcuts>
