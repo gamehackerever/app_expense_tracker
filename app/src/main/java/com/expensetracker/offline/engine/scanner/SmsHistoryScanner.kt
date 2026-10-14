@@ -9,19 +9,20 @@ import com.expensetracker.offline.data.local.entity.ReviewItemEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.data.repository.TransactionRepository
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
+import com.expensetracker.offline.engine.interceptor.CaptureDispatcher
 import com.expensetracker.offline.engine.parser.FinancialParser
+import com.expensetracker.offline.util.SenderFilter
+import com.expensetracker.offline.widget.ExpenseWidget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
-import com.expensetracker.offline.engine.interceptor.CaptureDispatcher
-import com.expensetracker.offline.util.SenderFilter
-import com.expensetracker.offline.widget.ExpenseWidget
-import kotlinx.coroutines.sync.withLock
 
 data class ScanResult(
     val scannedCount: Int,
@@ -53,14 +54,11 @@ class SmsHistoryScanner(
     private val transactionDao = database.transactionDao()
     private val reviewItemDao = database.reviewItemDao()
     private val categoryRuleDao = database.categoryRuleDao()
+    private val settingsRepo = SettingsRepository(context)
 
     suspend fun scanSmsSince(sinceTimestampMillis: Long): ScanResponse = withContext(Dispatchers.IO) {
-        val prefs = context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-        val skipScanReview = prefs.getBoolean("key_skip_scan_review", false)
-
-        val fallbackPayee = prefs.getString("key_scan_fallback_payee", null)?.ifBlank { null }
-            ?: prefs.getString("key_fallback_payee", "Bank Transfer")?.ifBlank { "Bank Transfer" }
-            ?: "Bank Transfer"
+        val skipScanReview = settingsRepo.skipScanReview
+        val fallbackPayee = settingsRepo.scanFallbackPayee
 
         val projection = arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE)
         val selection = "${Telephony.Sms.DATE} >= ?"
@@ -78,16 +76,18 @@ class SmsHistoryScanner(
         // Helper to flush batched entities to the database in one quick transaction
         suspend fun flushBatch() {
             if (batchTxns.isEmpty() && batchReviews.isEmpty()) return
-            CaptureDispatcher.ingestMutex.withLock { database.withTransaction {
-                batchTxns.forEach { t ->
-                    val id = transactionDao.insertTransaction(t)
-                    if (id > 0) newTransactionIds.add(id)
+            CaptureDispatcher.ingestMutex.withLock {
+                database.withTransaction {
+                    batchTxns.forEach { t ->
+                        val id = transactionDao.insertTransaction(t)
+                        if (id > 0) newTransactionIds.add(id)
+                    }
+                    batchReviews.forEach { r ->
+                        val id = reviewItemDao.insertReviewItem(r)
+                        if (id > 0) newReviewIds.add(id)
+                    }
                 }
-                batchReviews.forEach { r ->
-                    val id = reviewItemDao.insertReviewItem(r)
-                    if (id > 0) newReviewIds.add(id)
-                }
-            } }
+            }
             batchTxns.clear()
             batchReviews.clear()
         }
@@ -156,7 +156,7 @@ class SmsHistoryScanner(
                     if (inBatchDuplicate) continue
 
                     val existing: TransactionEntity? = transactionDao.findMatchingTransaction(
-                        amount = amount.toDouble(), type = parsedType,
+                        amount = amount, type = parsedType,
                         startTime = date - DUPLICATE_MATCH_WINDOW_MS, endTime = date + DUPLICATE_MATCH_WINDOW_MS,
                         targetTime = date, bankName = parsed.bankName, accountNumber = parsed.accountNumber
                     )
@@ -214,7 +214,7 @@ class SmsHistoryScanner(
                         }
                     } else {
                         val resolvedPayee = if (isMissingPayee || payee == null) fallbackPayee else payee
-                        val aliasedPayee = prefs.getString("merchant_alias_${resolvedPayee.trim().lowercase()}", null) ?: resolvedPayee
+                        val aliasedPayee = settingsRepo.getMerchantAlias(resolvedPayee) ?: resolvedPayee
                         val category = CategoryClassifier.classify(aliasedPayee, body, categoryRuleDao)
 
                         batchTxns.add(

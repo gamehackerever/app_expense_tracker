@@ -56,7 +56,7 @@ private object RecurringColors {
     val negative @Composable get() = if (isSystemInDarkTheme()) Color(0xFFEF4444) else Color(0xFFDC2626)
 }
 
-private fun HapticFeedback.tap() = performHapticFeedback(HapticFeedbackType.TextHandleMove)
+// Uses internal HapticFeedback.tap() from InsightsComponents.kt
 
 private fun rupees(value: Long): String =
     "₹" + String.format(Locale.getDefault(), "%,.0f", value / 100.0)
@@ -631,19 +631,7 @@ private fun RecurringPaymentCard(
 // ─────────────────────────────── Shared bits ───────────────────────────────
 
 /** Click handler with no ripple; presses fade the element slightly instead. */
-@Composable
-private fun Modifier.quietClickable(
-    enabled: Boolean = true,
-    pressedAlpha: Float = 0.6f,
-    onClick: () -> Unit
-): Modifier {
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    val alpha by animateFloatAsState(if (pressed && enabled) pressedAlpha else 1f, tween(100), label = "quietPress")
-    return this
-        .graphicsLayer { this.alpha = alpha }
-        .clickable(enabled = enabled, interactionSource = source, indication = null, onClick = onClick)
-}
+// Uses internal Modifier.quietClickable() from InsightsComponents.kt
 
 // Same look as the Dashboard's StatusBadge
 @Composable

@@ -4,26 +4,34 @@ import android.content.Context
 import android.content.SharedPreferences
 
 class SettingsRepository(context: Context) {
-    private val prefs: SharedPreferences = context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+    val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     var lowBalanceAlertEnabled: Boolean
-        get() = prefs.getBoolean("key_low_balance_alert_enabled", true)
-        set(value) = prefs.edit().putBoolean("key_low_balance_alert_enabled", value).apply()
+        get() = prefs.getBoolean(KEY_LOW_BALANCE_ALERT_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_LOW_BALANCE_ALERT_ENABLED, value).apply()
 
     var lowBalanceThreshold: Float
-        get() = prefs.getFloat("key_low_balance_threshold", 1000f)
-        set(value) = prefs.edit().putFloat("key_low_balance_threshold", value).apply()
+        get() = try {
+            prefs.getFloat(KEY_LOW_BALANCE_THRESHOLD, 1000f)
+        } catch (_: ClassCastException) {
+            try {
+                prefs.getLong(KEY_LOW_BALANCE_THRESHOLD, 1000L).toFloat()
+            } catch (_: ClassCastException) {
+                1000f
+            }
+        }
+        set(value) = prefs.edit().putFloat(KEY_LOW_BALANCE_THRESHOLD, value).apply()
 
     var monthlyBudget: Long
         get() {
             val raw = try {
-                prefs.getString("key_monthly_budget_v2", null)
+                prefs.getString(KEY_MONTHLY_BUDGET_V2, null)
             } catch (_: ClassCastException) {
                 try {
-                    prefs.getLong("key_monthly_budget_v2", -1L).takeIf { it > 0 }?.toString()
+                    prefs.getLong(KEY_MONTHLY_BUDGET_V2, -1L).takeIf { it > 0 }?.toString()
                 } catch (_: ClassCastException) {
                     try {
-                        prefs.getFloat("key_monthly_budget_v2", -1f).takeIf { it > 0 }?.toLong()?.toString()
+                        prefs.getFloat(KEY_MONTHLY_BUDGET_V2, -1f).takeIf { it > 0 }?.toLong()?.toString()
                     } catch (_: ClassCastException) {
                         null
                     }
@@ -35,88 +43,161 @@ class SettingsRepository(context: Context) {
             }
 
             val legacyValue = try {
-                prefs.getFloat("key_monthly_budget", 15000f).toLong()
+                prefs.getFloat(KEY_MONTHLY_BUDGET_LEGACY, 15000f).toLong()
             } catch (_: ClassCastException) {
                 try {
-                    prefs.getLong("key_monthly_budget", 15000L)
+                    prefs.getLong(KEY_MONTHLY_BUDGET_LEGACY, 15000L)
                 } catch (_: ClassCastException) {
                     15000L
                 }
             }
-            prefs.edit().putString("key_monthly_budget_v2", legacyValue.toString()).apply()
-            if (!prefs.contains("key_budget_explicitly_set")) {
+            prefs.edit().putString(KEY_MONTHLY_BUDGET_V2, legacyValue.toString()).apply()
+            if (!prefs.contains(KEY_BUDGET_EXPLICITLY_SET)) {
                 isBudgetExplicitlySet = (legacyValue != 15000L)
             }
             return legacyValue
         }
         set(value) {
-            prefs.edit().putString("key_monthly_budget_v2", value.toString()).apply()
+            prefs.edit().putString(KEY_MONTHLY_BUDGET_V2, value.toString()).apply()
             isBudgetExplicitlySet = true
         }
 
     var isBudgetExplicitlySet: Boolean
-        get() = prefs.getBoolean("key_budget_explicitly_set", false)
-        private set(value) = prefs.edit().putBoolean("key_budget_explicitly_set", value).apply()
+        get() = prefs.getBoolean(KEY_BUDGET_EXPLICITLY_SET, false)
+        private set(value) = prefs.edit().putBoolean(KEY_BUDGET_EXPLICITLY_SET, value).apply()
 
     var startDayOfMonth: Int
-        get() = prefs.getInt("key_start_day_of_month", 1)
-        set(value) = prefs.edit().putInt("key_start_day_of_month", value).apply()
+        get() = prefs.getInt(KEY_START_DAY_OF_MONTH, 1)
+        set(value) = prefs.edit().putInt(KEY_START_DAY_OF_MONTH, value).apply()
+
+    // FIXED: Stored as Long (paise) to avoid Float precision loss above Rs 1,67,772,
+    // while reading legacy Float values gracefully on upgrade or V3 backup restore.
+    var necessityChunkLimit: Long
+        get() {
+            if (!prefs.contains(KEY_NECESSITY_CHUNK)) return 0L
+            return try {
+                prefs.getLong(KEY_NECESSITY_CHUNK, 0L)
+            } catch (_: ClassCastException) {
+                try {
+                    val legacyFloat = prefs.getFloat(KEY_NECESSITY_CHUNK, 0f).toLong()
+                    prefs.edit().putLong(KEY_NECESSITY_CHUNK, legacyFloat).apply()
+                    legacyFloat
+                } catch (_: ClassCastException) {
+                    0L
+                }
+            }
+        }
+        set(value) = prefs.edit().putLong(KEY_NECESSITY_CHUNK, value).apply()
 
     var skipReviewQueue: Boolean
-        get() = prefs.getBoolean("key_skip_review_queue", false)
-        set(value) = prefs.edit().putBoolean("key_skip_review_queue", value).apply()
+        get() = prefs.getBoolean(KEY_SKIP_REVIEW_QUEUE, false)
+        set(value) = prefs.edit().putBoolean(KEY_SKIP_REVIEW_QUEUE, value).apply()
 
     var fallbackPayee: String
-        get() = prefs.getString("key_fallback_payee", "UPI Payment") ?: "UPI Payment"
-        set(value) = prefs.edit().putString("key_fallback_payee", value).apply()
+        get() = prefs.getString(KEY_FALLBACK_PAYEE, "UPI Payment")?.ifBlank { "UPI Payment" } ?: "UPI Payment"
+        set(value) = prefs.edit().putString(KEY_FALLBACK_PAYEE, value).apply()
 
     var autoSaveUnknownDeductions: Boolean
-        get() = prefs.getBoolean("key_autosave_unknown_deductions", false)
-        set(value) = prefs.edit().putBoolean("key_autosave_unknown_deductions", value).apply()
+        get() = prefs.getBoolean(KEY_AUTOSAVE_UNKNOWN_DEDUCTIONS, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUTOSAVE_UNKNOWN_DEDUCTIONS, value).apply()
 
     var skipScanReview: Boolean
-        get() = prefs.getBoolean("key_skip_scan_review", false)
-        set(value) = prefs.edit().putBoolean("key_skip_scan_review", value).apply()
+        get() = prefs.getBoolean(KEY_SKIP_SCAN_REVIEW, false)
+        set(value) = prefs.edit().putBoolean(KEY_SKIP_SCAN_REVIEW, value).apply()
 
     var scanFallbackPayee: String
-        get() = prefs.getString("key_scan_fallback_payee", "Bank Transfer") ?: "Bank Transfer"
-        set(value) = prefs.edit().putString("key_scan_fallback_payee", value).apply()
+        get() = prefs.getString(KEY_SCAN_FALLBACK_PAYEE, null)?.ifBlank { null }
+            ?: prefs.getString(KEY_FALLBACK_PAYEE, "Bank Transfer")?.ifBlank { "Bank Transfer" }
+            ?: "Bank Transfer"
+        set(value) = prefs.edit().putString(KEY_SCAN_FALLBACK_PAYEE, value).apply()
 
     var autoBackupEnabled: Boolean
-        get() = prefs.getBoolean("key_auto_backup_enabled", false)
-        set(value) = prefs.edit().putBoolean("key_auto_backup_enabled", value).apply()
+        get() = prefs.getBoolean(KEY_AUTO_BACKUP_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_BACKUP_ENABLED, value).apply()
 
     var backupFrequency: String
-        get() = prefs.getString("key_backup_frequency", "Weekly") ?: "Weekly"
-        set(value) = prefs.edit().putString("key_backup_frequency", value).apply()
+        get() = prefs.getString(KEY_BACKUP_FREQUENCY, "Weekly") ?: "Weekly"
+        set(value) = prefs.edit().putString(KEY_BACKUP_FREQUENCY, value).apply()
 
     var backupFolderUri: String
-        get() = prefs.getString("key_backup_folder_uri", "") ?: ""
-        set(value) = prefs.edit().putString("key_backup_folder_uri", value).apply()
+        get() = prefs.getString(KEY_BACKUP_FOLDER_URI, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_BACKUP_FOLDER_URI, value).apply()
 
     var appLockEnabled: Boolean
-        get() = prefs.getBoolean("key_app_lock_enabled", false)
-        set(value) = prefs.edit().putBoolean("key_app_lock_enabled", value).apply()
+        get() = prefs.getBoolean(KEY_APP_LOCK_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_APP_LOCK_ENABLED, value).apply()
+
+    var hideWidgetAmounts: Boolean
+        get() = prefs.getBoolean(KEY_HIDE_WIDGET_AMOUNTS, appLockEnabled)
+        set(value) = prefs.edit().putBoolean(KEY_HIDE_WIDGET_AMOUNTS, value).apply()
+
+    var dailyDigestEnabled: Boolean
+        get() = prefs.getBoolean(KEY_DAILY_DIGEST_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_DAILY_DIGEST_ENABLED, value).apply()
+
+    var disclosureAccepted: Boolean
+        get() = prefs.getBoolean(KEY_DISCLOSURE_ACCEPTED, false)
+        set(value) = prefs.edit().putBoolean(KEY_DISCLOSURE_ACCEPTED, value).apply()
 
     var appThemeMode: String
-        get() = prefs.getString("key_app_theme_mode", "SYSTEM") ?: "SYSTEM"
-        set(value) = prefs.edit().putString("key_app_theme_mode", value).apply()
+        get() = prefs.getString(KEY_APP_THEME_MODE, "SYSTEM") ?: "SYSTEM"
+        set(value) = prefs.edit().putString(KEY_APP_THEME_MODE, value).apply()
 
     var myUpiVpa: String
-        get() = prefs.getString("key_my_upi_vpa", "") ?: ""
-        set(value) = prefs.edit().putString("key_my_upi_vpa", value).apply()
+        get() = prefs.getString(KEY_MY_UPI_VPA, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_MY_UPI_VPA, value).apply()
+
+    var customCategories: Set<String>
+        get() = prefs.getStringSet(KEY_CUSTOM_CATEGORIES, emptySet()) ?: emptySet()
+        set(value) = prefs.edit().putStringSet(KEY_CUSTOM_CATEGORIES, value).apply()
+
+    fun getMerchantAlias(payee: String): String? =
+        prefs.getString("$MERCHANT_ALIAS_PREFIX${payee.trim().lowercase()}", null)
+
+    fun setMerchantAlias(oldPayee: String, newPayee: String) {
+        prefs.edit().putString("$MERCHANT_ALIAS_PREFIX${oldPayee.trim().lowercase()}", newPayee.trim()).apply()
+    }
 
     // FIXED: Persist scan batches so the Undo button survives rotation (P1)
     var lastImportedTxnIds: List<Long>
-        get() = prefs.getString("key_last_scan_txns", "")?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
-        set(value) = prefs.edit().putString("key_last_scan_txns", value.joinToString(",")).apply()
+        get() = prefs.getString(KEY_LAST_SCAN_TXNS, "")?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
+        set(value) = prefs.edit().putString(KEY_LAST_SCAN_TXNS, value.joinToString(",")).apply()
 
     var lastImportedReviewIds: List<Long>
-        get() = prefs.getString("key_last_scan_reviews", "")?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
-        set(value) = prefs.edit().putString("key_last_scan_reviews", value.joinToString(",")).apply()
+        get() = prefs.getString(KEY_LAST_SCAN_REVIEWS, "")?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
+        set(value) = prefs.edit().putString(KEY_LAST_SCAN_REVIEWS, value.joinToString(",")).apply()
 
     fun clearLastScanBatch() {
-        prefs.edit().remove("key_last_scan_txns").remove("key_last_scan_reviews").apply()
+        prefs.edit().remove(KEY_LAST_SCAN_TXNS).remove(KEY_LAST_SCAN_REVIEWS).apply()
+    }
+
+    companion object {
+        const val PREFS_NAME = "expense_tracker_prefs"
+        const val KEY_LOW_BALANCE_ALERT_ENABLED = "key_low_balance_alert_enabled"
+        const val KEY_LOW_BALANCE_THRESHOLD = "key_low_balance_threshold"
+        const val KEY_MONTHLY_BUDGET_V2 = "key_monthly_budget_v2"
+        const val KEY_MONTHLY_BUDGET_LEGACY = "key_monthly_budget"
+        const val KEY_BUDGET_EXPLICITLY_SET = "key_budget_explicitly_set"
+        const val KEY_START_DAY_OF_MONTH = "key_start_day_of_month"
+        const val KEY_NECESSITY_CHUNK = "key_necessity_chunk"
+        const val KEY_SKIP_REVIEW_QUEUE = "key_skip_review_queue"
+        const val KEY_FALLBACK_PAYEE = "key_fallback_payee"
+        const val KEY_AUTOSAVE_UNKNOWN_DEDUCTIONS = "key_autosave_unknown_deductions"
+        const val KEY_SKIP_SCAN_REVIEW = "key_skip_scan_review"
+        const val KEY_SCAN_FALLBACK_PAYEE = "key_scan_fallback_payee"
+        const val KEY_AUTO_BACKUP_ENABLED = "key_auto_backup_enabled"
+        const val KEY_BACKUP_FREQUENCY = "key_backup_frequency"
+        const val KEY_BACKUP_FOLDER_URI = "key_backup_folder_uri"
+        const val KEY_APP_LOCK_ENABLED = "key_app_lock_enabled"
+        const val KEY_HIDE_WIDGET_AMOUNTS = "key_hide_widget_amounts"
+        const val KEY_DAILY_DIGEST_ENABLED = "key_daily_digest_enabled"
+        const val KEY_DISCLOSURE_ACCEPTED = "key_disclosure_accepted"
+        const val KEY_APP_THEME_MODE = "key_app_theme_mode"
+        const val KEY_MY_UPI_VPA = "key_my_upi_vpa"
+        const val KEY_CUSTOM_CATEGORIES = "key_custom_categories"
+        const val KEY_LAST_SCAN_TXNS = "key_last_scan_txns"
+        const val KEY_LAST_SCAN_REVIEWS = "key_last_scan_reviews"
+        private const val MERCHANT_ALIAS_PREFIX = "merchant_alias_"
     }
 }
 

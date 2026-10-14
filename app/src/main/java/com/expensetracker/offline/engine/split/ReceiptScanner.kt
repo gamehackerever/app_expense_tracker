@@ -12,7 +12,12 @@ object ReceiptScanner {
     data class ScannedItem(val id: String, val name: String, val pricePaise: Long, var assignedTo: MutableSet<String> = mutableSetOf())
 
     suspend fun extractItems(context: Context, uri: Uri): List<ScannedItem> = suspendCoroutine { cont ->
-        val image = InputImage.fromFilePath(context, uri)
+        val image = try {
+            InputImage.fromFilePath(context, uri)
+        } catch (e: Exception) {
+            cont.resume(emptyList())
+            return@suspendCoroutine
+        }
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
         recognizer.process(image)
@@ -20,6 +25,7 @@ object ReceiptScanner {
                 cont.resume(parseRegex(visionText.text))
             }
             .addOnFailureListener { cont.resume(emptyList()) }
+            .addOnCompleteListener { recognizer.close() }
     }
 
     private fun parseRegex(rawText: String): List<ScannedItem> {

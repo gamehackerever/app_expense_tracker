@@ -14,7 +14,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.ByteBuffer
@@ -43,11 +45,11 @@ sealed class RestoreResult {
 object BackupManager {
 
     private const val DATABASE_NAME = "expense_tracker.db"
-    private const val PREFS_NAME = "expense_tracker_prefs"
+    private const val PREFS_NAME = SettingsRepository.PREFS_NAME
 
     private val MAGIC_V2 = "ETBK_V2_".toByteArray(Charsets.UTF_8)
     private val MAGIC_V3 = "ETBK_V3_".toByteArray(Charsets.UTF_8)
-    private val MAGIC_V4 = "ETBK_V4_".toByteArray(Charsets.UTF_8) // You already have this one
+    private val MAGIC_V4 = "ETBK_V4_".toByteArray(Charsets.UTF_8)
     private val PREF_FILES = listOf(PREFS_NAME)
     private val EXCLUDED_PREF_KEYS = setOf(
         "key_backup_folder_uri", "key_last_backup_timestamp", "key_auto_backup_enabled",
@@ -170,7 +172,7 @@ object BackupManager {
             if (tmpDbFile.exists()) tmpDbFile.delete()
 
             // FIXED: Use atomic VACUUM INTO for Android 11+, otherwise fallback to TRUNCATE (PO-E)
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 app.database.query(SimpleSQLiteQuery("VACUUM INTO '${tmpDbFile.absolutePath}'")).use { it.moveToFirst() }
             } else {
                 var attempts = 0
@@ -202,34 +204,25 @@ object BackupManager {
                     return@withContext BackupResult.Error("Could not open file for writing.")
                 }
 
-            // Build the payload once and read the database straight into it (one in-memory copy fewer than before).
             val settingsBytes = serializeSettings(context)
             val dbSize = tmpDbFile.length()
-            if (dbSize > Int.MAX_VALUE / 2) {
+            if (dbSize <= 0L) {
                 outputStream.close()
                 discardPartialFile()
-                return@withContext BackupResult.Error("The database is too large to back up on this device.")
+                return@withContext BackupResult.Error("Could not read the database snapshot.")
             }
-            val lengthHeader = ByteBuffer.allocate(4).putInt(settingsBytes.size).array()
-            val dbOffset = MAGIC_V4.size + 4 + settingsBytes.size
-            val payload = ByteArray(dbOffset + dbSize.toInt())
-            System.arraycopy(MAGIC_V4, 0, payload, 0, MAGIC_V4.size)
-            System.arraycopy(lengthHeader, 0, payload, MAGIC_V4.size, 4)
-            System.arraycopy(settingsBytes, 0, payload, MAGIC_V4.size + 4, settingsBytes.size)
-            tmpDbFile.inputStream().use { input ->
-                var read = 0
-                while (read < dbSize.toInt()) {
-                    val n = input.read(payload, dbOffset + read, dbSize.toInt() - read)
-                    if (n < 0) break
-                    read += n
-                }
-                check(read == dbSize.toInt()) { "Could not read the whole database snapshot." }
+
+            // FIXED: Stream encryption directly from tmpDbFile in 64 KB chunks so memory usage stays flat
+            outputStream.use { os ->
+                BackupEngine.encryptBackupStream(
+                    outputStream = os,
+                    passphrase = passphrase,
+                    magicHeader = MAGIC_V4,
+                    settingsBytes = settingsBytes,
+                    dbFile = tmpDbFile
+                )
             }
             tmpDbFile.delete()
-
-            outputStream.use { os ->
-                BackupEngine.encryptPayload(os, passphrase, payload)
-            }
 
             // A backup that could not be renamed is still called ".tmp", so do not report it as done.
             if (DocumentsContract.renameDocument(context.contentResolver, newFileUri, fileName) == null) {
@@ -263,44 +256,30 @@ object BackupManager {
             var legacyDecryptedBytes: ByteArray? = null
             var detectedVersion = 4
 
-            // 1. Try New Secure Decryption First (V4 Stream)
+            // 1. Try New Secure Streaming Decryption First (V4 Stream)
             try {
-                val decryptedPayload = context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                    BackupEngine.decryptPayload(inputStream, passphrase)
-                }
+                val streamResult = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    BackupEngine.decryptBackupStream(inputStream, passphrase, MAGIC_V4, tmpDbFile)
+                } ?: return@withContext RestoreResult.Error("Backup file is unreadable.")
 
-                if (decryptedPayload != null && startsWith(decryptedPayload, MAGIC_V4)) {
-                    val magicSize = MAGIC_V4.size
-                    if (decryptedPayload.size < magicSize + 4) {
+                when (streamResult) {
+                    is BackupEngine.StreamDecryptResult.V4Success -> {
+                        settingsBytes = streamResult.settingsBytes
+                        if (tmpDbFile.length() <= 16L) {
+                            tmpDbFile.delete()
+                            return@withContext RestoreResult.Error("This backup doesn't contain a valid database.")
+                        }
+                    }
+                    is BackupEngine.StreamDecryptResult.LegacyPayload -> {
+                        legacyDecryptedBytes = streamResult.payload
+                    }
+                    is BackupEngine.StreamDecryptResult.FormatError -> {
                         tmpDbFile.delete()
-                        return@withContext RestoreResult.Error("Backup file is truncated.")
+                        return@withContext RestoreResult.Error(streamResult.message)
                     }
-
-                    val buffer = ByteBuffer.wrap(decryptedPayload, magicSize, decryptedPayload.size - magicSize)
-                    val settingsLength = buffer.int
-
-                    if (settingsLength in 1..499999 && decryptedPayload.size >= magicSize + 4 + settingsLength) {
-                        settingsBytes = ByteArray(settingsLength)
-                        buffer.get(settingsBytes)
-                    }
-
-                    val dbStartIndex = magicSize + 4 + (settingsLength.takeIf { it in 1..499999 } ?: 0)
-                    if (dbStartIndex >= decryptedPayload.size) {
-                        tmpDbFile.delete()
-                        return@withContext RestoreResult.Error("Backup database payload is missing.")
-                    }
-
-                    val dbBytes = decryptedPayload.copyOfRange(dbStartIndex, decryptedPayload.size)
-                    if (dbBytes.size <= 16) {
-                        tmpDbFile.delete()
-                        return@withContext RestoreResult.Error("This backup doesn't contain a valid database.")
-                    }
-
-                    tmpDbFile.writeBytes(dbBytes)
-                } else if (decryptedPayload != null) {
-                    legacyDecryptedBytes = decryptedPayload
                 }
             } catch (e: GeneralSecurityException) {
+                tmpDbFile.delete()
                 // 2. FALLBACK: Attempt Legacy Decryption if V4 fails
                 try {
                     val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -327,7 +306,6 @@ object BackupManager {
 
                 val dbBytes: ByteArray = if (detectedVersion >= 2) {
                     val magicSize = MAGIC_V4.size
-                    // Make sure we have enough bytes to read settings length
                     if (legacyDecryptedBytes.size < magicSize + 4) {
                         tmpDbFile.delete()
                         return@withContext RestoreResult.Error("Legacy backup file is truncated.")
@@ -428,24 +406,32 @@ object BackupManager {
             RestoreResult.SuccessRestart
         } catch (e: Exception) {
             e.printStackTrace()
+            tmpDbFile.delete()
             if (!dbPath.exists() && backupDbFile.exists()) backupDbFile.renameTo(dbPath)
             RestoreResult.Error("Restore failed: ${e.localizedMessage}")
         }
     }
 
-    private fun startsWith(data: ByteArray, prefix: ByteArray): Boolean {
+    internal fun startsWith(data: ByteArray, prefix: ByteArray): Boolean {
         if (data.size < prefix.size) return false
         for (i in prefix.indices) if (data[i] != prefix[i]) return false
         return true
     }
 }
 
-// FIXED: Real Encryption Engine (PO-E)
+// FIXED: Real Streaming Encryption Engine (PO-E)
 object BackupEngine {
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private const val IV_SIZE = 12
     private const val SALT_SIZE = 16
     private const val TAG_LENGTH_BIT = 128
+    private const val CHUNK_SIZE = 64 * 1024
+
+    sealed class StreamDecryptResult {
+        data class V4Success(val settingsBytes: ByteArray?) : StreamDecryptResult()
+        data class LegacyPayload(val payload: ByteArray) : StreamDecryptResult()
+        data class FormatError(val message: String) : StreamDecryptResult()
+    }
 
     private fun getSecretKey(passphrase: String, salt: ByteArray): SecretKeySpec {
         // Kept ONLY so old backups made with a blank passphrase can still be restored.
@@ -461,6 +447,204 @@ object BackupEngine {
         val factory = SecretKeyFactory.getInstance(algorithm)
         val spec = PBEKeySpec(safePassphrase.toCharArray(), salt, 100_000, 256)
         return SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+    }
+
+    /**
+     * Streams the V4 header, settings JSON, and SQLite database file through AES-GCM in 64 KB chunks.
+     * Produces the exact same wire format as [encryptPayload] without allocating the entire DB in RAM.
+     */
+    fun encryptBackupStream(
+        outputStream: OutputStream,
+        passphrase: String,
+        magicHeader: ByteArray,
+        settingsBytes: ByteArray,
+        dbFile: File
+    ) {
+        require(passphrase.isNotBlank()) { "Passphrase can't be blank" }
+        val secureRandom = SecureRandom()
+        val salt = ByteArray(SALT_SIZE).apply { secureRandom.nextBytes(this) }
+
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, getSecretKey(passphrase, salt))
+        val iv = cipher.iv
+
+        outputStream.write(byteArrayOf(1)) // Version byte
+        outputStream.write(salt)
+        outputStream.write(iv)
+
+        fun updateAndWrite(data: ByteArray, offset: Int = 0, length: Int = data.size) {
+            if (length <= 0) return
+            val out = cipher.update(data, offset, length)
+            if (out != null && out.isNotEmpty()) {
+                outputStream.write(out)
+            }
+        }
+
+        val lengthHeader = ByteBuffer.allocate(4).putInt(settingsBytes.size).array()
+        updateAndWrite(magicHeader)
+        updateAndWrite(lengthHeader)
+        updateAndWrite(settingsBytes)
+
+        val buffer = ByteArray(CHUNK_SIZE)
+        dbFile.inputStream().use { input ->
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                updateAndWrite(buffer, 0, read)
+            }
+        }
+
+        val finalBytes = cipher.doFinal()
+        if (finalBytes != null && finalBytes.isNotEmpty()) {
+            outputStream.write(finalBytes)
+        }
+        outputStream.flush()
+    }
+
+    /**
+     * Streams decryption of a version-1 AES-GCM backup directly into [targetDbFile] for V4 backups,
+     * keeping peak memory usage bounded while still verifying the GCM authentication tag before commit.
+     */
+    fun decryptBackupStream(
+        inputStream: InputStream,
+        passphrase: String,
+        magicV4: ByteArray,
+        targetDbFile: File
+    ): StreamDecryptResult {
+        val version = inputStream.read()
+        if (version != 1) throw GeneralSecurityException("Unsupported encryption version")
+
+        val salt = ByteArray(SALT_SIZE)
+        var totalRead = 0
+        while (totalRead < SALT_SIZE) {
+            val count = inputStream.read(salt, totalRead, SALT_SIZE - totalRead)
+            if (count == -1) throw GeneralSecurityException("Invalid backup file: salt truncated")
+            totalRead += count
+        }
+
+        val iv = ByteArray(IV_SIZE)
+        totalRead = 0
+        while (totalRead < IV_SIZE) {
+            val count = inputStream.read(iv, totalRead, IV_SIZE - totalRead)
+            if (count == -1) throw GeneralSecurityException("Invalid backup file: IV truncated")
+            totalRead += count
+        }
+
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        val spec = GCMParameterSpec(TAG_LENGTH_BIT, iv)
+        cipher.init(Cipher.DECRYPT_MODE, getSecretKey(passphrase, salt), spec)
+
+        if (targetDbFile.exists()) targetDbFile.delete()
+
+        val headerBuf = ByteArrayOutputStream()
+        var isV4Resolved: Boolean? = null
+        var headerParsed = false
+        var expectedHeaderTotal = -1
+        var settingsBytes: ByteArray? = null
+        var legacySink: ByteArrayOutputStream? = null
+
+        var hasCiphertext = false
+        val inBuffer = ByteArray(CHUNK_SIZE)
+
+        try {
+            FileOutputStream(targetDbFile).use { dbOut ->
+                fun processPlaintext(plain: ByteArray?) {
+                    if (plain == null || plain.isEmpty()) return
+                    var offset = 0
+
+                    if (isV4Resolved == null) {
+                        val needed = (magicV4.size + 4) - headerBuf.size()
+                        val take = minOf(needed, plain.size)
+                        headerBuf.write(plain, 0, take)
+                        offset += take
+
+                        if (headerBuf.size() == magicV4.size + 4) {
+                            val hdr = headerBuf.toByteArray()
+                            if (BackupManager.startsWith(hdr, magicV4)) {
+                                isV4Resolved = true
+                                val sLen = ByteBuffer.wrap(hdr, magicV4.size, 4).int
+                                val validSLen = if (sLen in 1..499999) sLen else 0
+                                expectedHeaderTotal = magicV4.size + 4 + validSLen
+                                if (validSLen == 0) {
+                                    headerParsed = true
+                                    headerBuf.reset()
+                                }
+                            } else {
+                                isV4Resolved = false
+                                legacySink = ByteArrayOutputStream().apply {
+                                    write(hdr)
+                                }
+                            }
+                        } else {
+                            return
+                        }
+                    }
+
+                    if (isV4Resolved == true) {
+                        if (!headerParsed && headerBuf.size() < expectedHeaderTotal) {
+                            val needed = expectedHeaderTotal - headerBuf.size()
+                            val take = minOf(needed, plain.size - offset)
+                            headerBuf.write(plain, offset, take)
+                            offset += take
+                            if (headerBuf.size() == expectedHeaderTotal) {
+                                val fullHdr = headerBuf.toByteArray()
+                                val sLen = expectedHeaderTotal - (magicV4.size + 4)
+                                if (sLen > 0) {
+                                    settingsBytes = fullHdr.copyOfRange(magicV4.size + 4, expectedHeaderTotal)
+                                }
+                                headerParsed = true
+                                headerBuf.reset()
+                            }
+                        }
+                        val remaining = plain.size - offset
+                        if (remaining > 0) {
+                            dbOut.write(plain, offset, remaining)
+                        }
+                    } else if (isV4Resolved == false) {
+                        val remaining = plain.size - offset
+                        if (remaining > 0) {
+                            legacySink?.write(plain, offset, remaining)
+                        }
+                    }
+                }
+
+                while (true) {
+                    val read = inputStream.read(inBuffer)
+                    if (read <= 0) break
+                    hasCiphertext = true
+                    processPlaintext(cipher.update(inBuffer, 0, read))
+                }
+
+                if (!hasCiphertext) throw GeneralSecurityException("Invalid backup file: empty payload")
+                processPlaintext(cipher.doFinal())
+                dbOut.flush()
+            }
+        } catch (e: Exception) {
+            targetDbFile.delete()
+            throw e
+        }
+
+        return when (isV4Resolved) {
+            true -> {
+                if (!headerParsed) {
+                    targetDbFile.delete()
+                    StreamDecryptResult.FormatError("Backup file is truncated.")
+                } else if (targetDbFile.length() == 0L) {
+                    targetDbFile.delete()
+                    StreamDecryptResult.FormatError("Backup database payload is missing.")
+                } else {
+                    StreamDecryptResult.V4Success(settingsBytes)
+                }
+            }
+            false -> {
+                targetDbFile.delete()
+                StreamDecryptResult.LegacyPayload(legacySink?.toByteArray() ?: ByteArray(0))
+            }
+            null -> {
+                targetDbFile.delete()
+                StreamDecryptResult.FormatError("Backup file is truncated.")
+            }
+        }
     }
 
     fun encryptPayload(outputStream: OutputStream, passphrase: String, payload: ByteArray) {

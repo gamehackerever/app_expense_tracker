@@ -5,8 +5,8 @@ import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionType
 import kotlinx.coroutines.flow.Flow
 
-data class PayeeInsight(val payee: String, val totalSpent: Double, val transactionCount: Int, val lastSpentTimestamp: Long)
-data class CategoryInsight(val category: String, val totalSpent: Double, val transactionCount: Int)
+data class PayeeInsight(val payee: String, val totalSpent: Long, val transactionCount: Int, val lastSpentTimestamp: Long)
+data class CategoryInsight(val category: String, val totalSpent: Long, val transactionCount: Int)
 data class AccountInfo(val bankName: String, val accountNumber: String?)
 data class AccountBalanceInsight(val bankName: String, val accountNumber: String?, val latestBalance: Long?, val lastUpdated: Long)
 
@@ -16,9 +16,9 @@ interface TransactionDao {
     @Query("SELECT DISTINCT bankName, accountNumber FROM transactions WHERE bankName IS NOT NULL")
     fun getLinkedAccountsFlow(): Flow<List<AccountInfo>>
 
-    // FIXED: Filter by both bankName AND accountNumber to isolate spend correctly (PO-B)
+    // FIXED: Filter by both bankName AND accountNumber and return Long paise (PO-B)
     @Query("""
-    SELECT COALESCE(SUM(CASE WHEN type = 'DEBIT' THEN -amount ELSE amount END), 0.0) 
+    SELECT COALESCE(SUM(CASE WHEN type = 'DEBIT' THEN -amount ELSE amount END), 0) 
     FROM transactions 
     WHERE timestamp > :lastBalanceTime AND timestamp <= :currentTime 
     AND (bankName = :bankName OR (:bankName IS NULL AND bankName IS NULL))
@@ -29,7 +29,7 @@ interface TransactionDao {
         currentTime: Long,
         bankName: String?,
         accountNumber: String?
-    ): Double
+    ): Long
 
     @Query("""
     SELECT balance FROM transactions 
@@ -39,6 +39,7 @@ interface TransactionDao {
     ORDER BY timestamp DESC LIMIT 1
 """)
     fun getLatestBalanceForAccountFlow(bankName: String, accountNumber: String?): Flow<Long?>
+
     @Query("SELECT * FROM transactions WHERE bankName = :bankName AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL)) ORDER BY timestamp DESC")
     fun getTransactionsByAccountFlow(bankName: String, accountNumber: String?): Flow<List<TransactionEntity>>
 
@@ -103,6 +104,11 @@ interface TransactionDao {
     @Query("SELECT balance FROM transactions WHERE balance IS NOT NULL ORDER BY timestamp DESC LIMIT 1")
     fun getLatestBalanceFlow(): Flow<Long?>
 
+    /**
+     * Finds the stored row for the same payment. A row whose bank/account is still unknown (a UPI
+     * notification arrives before the bank SMS) must match too: in SQL `NULL = 'HDFC Bank'` is never
+     * true, so without the `IS NULL` branches the later SMS would be saved as a second transaction.
+     */
     @Query("""
         SELECT * FROM transactions 
         WHERE amount = :amount 
@@ -113,13 +119,8 @@ interface TransactionDao {
         ORDER BY ABS(timestamp - :targetTime) 
         LIMIT 1
     """)
-    /**
-     * Finds the stored row for the same payment. A row whose bank/account is still unknown (a UPI
-     * notification arrives before the bank SMS) must match too: in SQL `NULL = 'HDFC Bank'` is never
-     * true, so without the `IS NULL` branches the later SMS would be saved as a second transaction.
-     */
     suspend fun findMatchingTransaction(
-        amount: Double,
+        amount: Long,
         type: TransactionType,
         startTime: Long,
         endTime: Long,
@@ -131,14 +132,14 @@ interface TransactionDao {
     @Query("UPDATE transactions SET payee = :newPayee, category = :newCategory WHERE payee = :oldPayee")
     suspend fun updatePayeeAndCategoryBulk(oldPayee: String, newPayee: String, newCategory: String)
 
-    // Sum of every unsettled debt minus its own repayments
+    // Sum of every unsettled debt minus its own repayments (in Long paise)
     @Query("""
         SELECT SUM(
-            MAX(0.0, sd.amountOwed - COALESCE((SELECT SUM(amount) FROM transactions t2 WHERE t2.linkedDebtId = sd.id), 0))
+            MAX(0, sd.amountOwed - COALESCE((SELECT SUM(amount) FROM transactions t2 WHERE t2.linkedDebtId = sd.id), 0))
         ) 
         FROM split_debts sd WHERE sd.settledAt IS NULL
     """)
-    fun getTotalMoneyOwedToYouFlow(): Flow<Double?>
+    fun getTotalMoneyOwedToYouFlow(): Flow<Long?>
 
     @Query("SELECT COUNT(*) FROM transactions WHERE type = 'DEBIT' AND category != 'Split Settlement' AND timestamp >= :startOfDay AND timestamp < :endOfDay")
     suspend fun getDailyDebitCount(startOfDay: Long, endOfDay: Long): Int
@@ -149,7 +150,7 @@ interface TransactionDao {
     @Query("UPDATE transactions SET payee = :newPayee WHERE payee = :oldPayee")
     suspend fun renameAllPayees(oldPayee: String, newPayee: String)
 
-    data class DebitPoint(val id: Long, val payee: String, val amount: Double, val timestamp: Long, val category: String)
+    data class DebitPoint(val id: Long, val payee: String, val amount: Long, val timestamp: Long, val category: String)
 
     @Query("SELECT id, payee, amount, timestamp, category FROM transactions WHERE type = 'DEBIT' AND timestamp >= :since")
     fun getDebitsSinceFlow(since: Long): Flow<List<DebitPoint>>
@@ -175,20 +176,20 @@ interface TransactionDao {
         ORDER BY t.timestamp DESC
         LIMIT :limit
     """)
-
     fun searchAndFilterTransactionsFlow(search: String, filterCategory: String, startTime: Long, limit: Int): Flow<List<TransactionWithDebts>>
-    // ONE SHARED DEFINITION OF SPEND (PO-H)
+
+    // ONE SHARED DEFINITION OF SPEND IN PAISE (PO-H)
     @Query("""
         SELECT COALESCE(SUM(
-            MAX(0.0, amount - COALESCE((SELECT SUM(amountOwed) FROM split_debts WHERE transactionId = t.id), 0.0))
-        ), 0.0)
+            MAX(0, amount - COALESCE((SELECT SUM(amountOwed) FROM split_debts WHERE transactionId = t.id), 0))
+        ), 0)
         FROM transactions t
         WHERE type = 'DEBIT' 
           AND category != 'Split Settlement' 
           AND excludeFromSpend = 0
           AND timestamp >= :startMillis AND timestamp <= :endMillis
     """)
-    suspend fun getMySpendBetween(startMillis: Long, endMillis: Long): Double
+    suspend fun getMySpendBetween(startMillis: Long, endMillis: Long): Long
 
     @Query("""
         SELECT COUNT(*)
@@ -202,7 +203,4 @@ interface TransactionDao {
 
     @Query("SELECT * FROM transactions WHERE category != 'Split Settlement' ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentTransactions(limit: Int): List<TransactionEntity>
-
 }
-
-

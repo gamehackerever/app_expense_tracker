@@ -23,7 +23,7 @@ interface ReviewItemDao {
     @Query("SELECT * FROM review_items WHERE status = 'PENDING' ORDER BY timestamp DESC")
     fun getPendingReviewItemsFlow(): Flow<List<ReviewItemEntity>>
 
-    // FIXED: Now uses the `type` column to sum debits and credits correctly (PO-B)
+    // FIXED: Uses the `type` column to sum debits and credits in Long paise (PO-B)
     @Query("""
         SELECT SUM(CASE 
             WHEN type = 'DEBIT' THEN -extractedPartialAmount 
@@ -33,7 +33,7 @@ interface ReviewItemDao {
         FROM review_items 
         WHERE status = 'PENDING' AND extractedPartialAmount IS NOT NULL
     """)
-    suspend fun getPendingDebitsSum(): Double?
+    suspend fun getPendingDebitsSum(): Long?
 
     @Query("SELECT COUNT(*) FROM review_items WHERE status = 'PENDING'")
     fun getPendingReviewCountFlow(): Flow<Int>

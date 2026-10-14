@@ -1,38 +1,35 @@
 package com.expensetracker.offline.ui.viewmodel
 
 import android.app.Application
-import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.expensetracker.offline.ExpenseTrackerApp
+import com.expensetracker.offline.data.local.dao.AccountBalanceInsight
+import com.expensetracker.offline.data.local.dao.AccountInfo
 import com.expensetracker.offline.data.local.entity.ReviewItemEntity
 import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.data.repository.TransactionRepository
 import com.expensetracker.offline.engine.parser.FinancialParser
+import com.expensetracker.offline.engine.recurring.RecurringPayment
+import com.expensetracker.offline.util.BalanceCache
+import com.expensetracker.offline.util.NecessityItem
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import androidx.core.content.edit
-import com.expensetracker.offline.data.local.dao.AccountBalanceInsight
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
-import com.expensetracker.offline.data.local.dao.AccountInfo
-import com.expensetracker.offline.engine.categorizer.CategoryClassifier
-import com.expensetracker.offline.engine.recurring.RecurringPayment
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import com.expensetracker.offline.util.BalanceCache
-import com.expensetracker.offline.util.BalanceCacheKeys
-import com.expensetracker.offline.util.NecessityItem
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.round
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -41,6 +38,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         database = (application as ExpenseTrackerApp).database,
         context = application.applicationContext
     )
+    private val settingsRepo = SettingsRepository(application.applicationContext)
 
     val pendingReviewItems: StateFlow<List<ReviewItemEntity>> = repository.pendingReviewItems
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -52,28 +50,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val startDayOfMonth = MutableStateFlow(1)
+    val necessityChunkLimit = MutableStateFlow(0L)
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            val prefs = application.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-            startDayOfMonth.value = prefs.getInt("key_start_day_of_month", 1)
+            startDayOfMonth.value = settingsRepo.startDayOfMonth
+            necessityChunkLimit.value = settingsRepo.necessityChunkLimit
         }
     }
 
     fun updateStartDayOfMonth(day: Int) {
         viewModelScope.launch(Dispatchers.IO) {
-            getApplication<Application>().getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-                .edit()
-                .putInt("key_start_day_of_month", day)
-                .commit()
+            settingsRepo.startDayOfMonth = day
         }
         startDayOfMonth.value = day
     }
 
     fun refreshSettings() {
         viewModelScope.launch(Dispatchers.IO) {
-            val prefs = getApplication<Application>().getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-            startDayOfMonth.value = prefs.getInt("key_start_day_of_month", 1)
+            startDayOfMonth.value = settingsRepo.startDayOfMonth
+            necessityChunkLimit.value = settingsRepo.necessityChunkLimit
         }
     }
 
@@ -118,8 +114,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .map { list -> list.map { it.transaction } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val totalMoneyOwed = repository.totalMoneyOwed
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+    val totalMoneyOwed: StateFlow<Long?> = repository.totalMoneyOwed
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val searchedTransactions: StateFlow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> = combine(
@@ -127,7 +123,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) { q, c, s, l -> Triple(q, c, Pair(s, l)) }
         .flatMapLatest { (q, c, sl) -> repository.searchAndFilterTransactionsFlow(q, c, sl.first, sl.second) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
 
     fun syncLatestBalanceFromSms() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -182,6 +177,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val recurringPayments: StateFlow<List<RecurringPayment>?> =
         repository.recurringPaymentsFlow()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     fun resetManualSync() {
         _manualSyncBalance.value = null
     }
@@ -230,20 +226,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _pendingDeleteIds.update { it - id }
     }
 
-    val necessityChunkLimit = MutableStateFlow(0L)
-
-    // Load chunk limit asynchronously
-    init {
-        viewModelScope.launch(Dispatchers.IO) {
-            val prefs = application.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-            necessityChunkLimit.value = prefs.getFloat("key_necessity_chunk", 0f).toLong()
-        }
-    }
-
+    // FIXED: Persist necessityChunkLimit as Long (paise) via SettingsRepository
     fun updateNecessityChunk(limit: Long) {
         viewModelScope.launch(Dispatchers.IO) {
-            getApplication<Application>().getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-                .edit { putFloat("key_necessity_chunk", limit.toFloat()) }
+            settingsRepo.necessityChunkLimit = limit
         }
         necessityChunkLimit.value = limit
     }

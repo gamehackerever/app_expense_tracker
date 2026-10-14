@@ -31,6 +31,7 @@ import androidx.glance.unit.ColorProvider
 import com.expensetracker.offline.ExpenseTrackerApp
 import com.expensetracker.offline.MainActivity
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.util.BillingCycleHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -75,8 +76,8 @@ class ExpenseWidget : GlanceAppWidget() {
     }
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        var spentToday = 0.0
-        var spentMonth = 0.0
+        var spentTodayPaise = 0L
+        var spentMonthPaise = 0L
         val recentTxns = mutableListOf<WidgetTxn>()
         var hideAmounts = false
 
@@ -84,14 +85,13 @@ class ExpenseWidget : GlanceAppWidget() {
             try {
                 val app = context.applicationContext as ExpenseTrackerApp
                 val dao = app.database.transactionDao()
-                val sharedPrefs = context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+                val settingsRepo = SettingsRepository(context)
 
                 // FIXED: Check lock state to enforce screen privacy (PO-F)
-                val isLocked = sharedPrefs.getBoolean("key_app_lock_enabled", false)
-                hideAmounts = sharedPrefs.getBoolean("key_hide_widget_amounts", isLocked)
+                hideAmounts = settingsRepo.hideWidgetAmounts
 
                 // FIXED: Use unified BillingCycle bounds instead of raw calendar months (PO-H)
-                val startDay = sharedPrefs.getInt("key_start_day_of_month", 1)
+                val startDay = settingsRepo.startDayOfMonth
                 val (cycleStart, cycleEnd) = BillingCycleHelper.getCycleRange(startDay)
 
                 val todayStart = Calendar.getInstance().apply {
@@ -99,9 +99,9 @@ class ExpenseWidget : GlanceAppWidget() {
                 }.timeInMillis
                 val todayEnd = todayStart + 86400000L - 1L
 
-                // FIXED: Use the unified spend queries instead of raw SQL and limits (PO-H)
-                spentToday = dao.getMySpendBetween(todayStart, todayEnd)
-                spentMonth = dao.getMySpendBetween(cycleStart, cycleEnd)
+                // FIXED: Use the unified spend queries (returned in Long paise) (PO-H)
+                spentTodayPaise = dao.getMySpendBetween(todayStart, todayEnd)
+                spentMonthPaise = dao.getMySpendBetween(cycleStart, cycleEnd)
 
                 // Fetch recent transactions for the list view
                 val recents = dao.getRecentTransactions(5)
@@ -123,10 +123,14 @@ class ExpenseWidget : GlanceAppWidget() {
             val isMonthlyView = prefs[booleanPreferencesKey("widget_is_monthly")] ?: false
             val size = LocalSize.current
             val isCompactHeight = size.height < 200.dp
-            val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
+            val formatter = NumberFormat.getNumberInstance(Locale("en", "IN")).apply {
+                maximumFractionDigits = 2
+                minimumFractionDigits = 0
+            }
 
-            // Apply Privacy Lock
-            val displayAmount = if (hideAmounts) "***" else formatter.format(if (isMonthlyView) spentMonth else spentToday)
+            // FIXED: Convert paise to rupees (/ 100.0) before formatting
+            val activeSpendPaise = if (isMonthlyView) spentMonthPaise else spentTodayPaise
+            val displayAmount = if (hideAmounts) "***" else formatter.format(activeSpendPaise / 100.0)
 
             val openAppIntent = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -208,8 +212,9 @@ class ExpenseWidget : GlanceAppWidget() {
                                                 Text(txn.payee, maxLines = 1, style = TextStyle(color = ColorProvider(textZinc50), fontSize = 14.sp, fontWeight = FontWeight.Medium))
                                                 Text(timeStr, maxLines = 1, style = TextStyle(color = ColorProvider(textZinc400), fontSize = 12.sp))
                                             }
+                                            // FIXED: Convert txn.amount from paise to rupees (/ 100.0)
                                             Text(
-                                                text = "${if (txn.isDebit) "" else "+"}₹${formatter.format(txn.amount)}",
+                                                text = "${if (txn.isDebit) "" else "+"}₹${formatter.format(txn.amount / 100.0)}",
                                                 style = TextStyle(color = ColorProvider(if (txn.isDebit) textZinc50 else creditGreen), fontSize = 14.sp, fontWeight = FontWeight.Medium),
                                                 maxLines = 1
                                             )

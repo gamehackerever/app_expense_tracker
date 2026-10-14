@@ -87,7 +87,7 @@ object CaptureDispatcher {
         // ── GHOST CHECK ── only with a known baseline, and only when this message was actually kept.
         if (ingested && baseline != null && storedTs > 0L && amount != null) {
             val netSince = app.database.transactionDao()
-                .getIntermediateNetSpend(storedTs, timestamp, bank, account).toLong()
+                .getIntermediateNetSpend(storedTs, timestamp, bank, account)
             // Pending review items newer than the baseline for THIS account (the baseline already
             // contains everything older). Includes this message if it went to review.
             val pendingNet = app.database.reviewItemDao()

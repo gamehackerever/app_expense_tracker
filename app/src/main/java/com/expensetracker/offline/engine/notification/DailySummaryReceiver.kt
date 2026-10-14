@@ -8,23 +8,14 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.expensetracker.offline.MainActivity
-import com.expensetracker.offline.data.local.AppDatabase
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import java.util.Calendar
 import java.util.Locale
 
 class DailySummaryReceiver : BroadcastReceiver() {
 
     companion object {
-        private const val TAG = "DailySummaryReceiver"
         private const val CHANNEL_ID = "daily_summary_channel"
         private const val NOTIF_ID = 2002
 
@@ -37,7 +28,12 @@ class DailySummaryReceiver : BroadcastReceiver() {
             pendingIntent?.let { alarmManager.cancel(it); it.cancel() }
         }
 
-        fun showNotification(context: Context, spent: Double, count: Int) {
+        // FIXED: Accepts spentPaise (Long) and divides by 100.0 so daily spend isn't reported 100x too high
+        fun showNotification(context: Context, spentPaise: Long, count: Int) {
+            showNotificationRupees(context, spentPaise / 100.0, count)
+        }
+
+        private fun showNotificationRupees(context: Context, spentRupees: Double, count: Int) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -64,7 +60,7 @@ class DailySummaryReceiver : BroadcastReceiver() {
             val isCaptureHealthy = NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 
             val message = if (count > 0) {
-                "You spent ₹${String.format(Locale.getDefault(), "%,.2f", spent)} across $count transactions today."
+                "You spent ₹${String.format(Locale.getDefault(), "%,.2f", spentRupees)} across $count transactions today."
             } else if (!isCaptureHealthy) {
                 "Zero expenses recorded today, but Auto-Capture is OFF. Tap to enable it."
             } else {
@@ -91,67 +87,11 @@ class DailySummaryReceiver : BroadcastReceiver() {
 
             manager.notify(NOTIF_ID, notification)
         }
-
-        fun scheduleDailySummary(context: Context) {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val intent = Intent(context, DailySummaryReceiver::class.java)
-            val pendingIntent = PendingIntent.getBroadcast(
-                context, 0, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val calendar = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, 21)
-                set(Calendar.MINUTE, 30)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-                if (before(Calendar.getInstance())) add(Calendar.DATE, 1)
-            }
-
-            try {
-                alarmManager.setInexactRepeating(
-                    AlarmManager.RTC_WAKEUP,
-                    calendar.timeInMillis,
-                    AlarmManager.INTERVAL_DAY,
-                    pendingIntent
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to schedule daily summary alarm", e)
-            }
-        }
     }
 
     override fun onReceive(context: Context, intent: Intent?) {
-        val prefs = context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-        if (!prefs.getBoolean("key_daily_digest_enabled", true)) return
-
-        val pendingResult = goAsync()
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-        scope.launch {
-            try {
-                val db = AppDatabase.getInstance(context)
-                val cal = Calendar.getInstance().apply {
-                    set(Calendar.HOUR_OF_DAY, 0)
-                    set(Calendar.MINUTE, 0)
-                    set(Calendar.SECOND, 0)
-                    set(Calendar.MILLISECOND, 0)
-                }
-                val startOfDay = cal.timeInMillis
-                cal.add(Calendar.DATE, 1)
-                val endOfDay = cal.timeInMillis - 1
-
-                // FIXED: Use the unified spend queries instead of generic sums (PO-H)
-                val todaySpent = db.transactionDao().getMySpendBetween(startOfDay, endOfDay)
-                val count = db.transactionDao().getMySpendCountBetween(startOfDay, endOfDay)
-
-                showNotification(context, todaySpent, count)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error generating daily summary", e)
-            } finally {
-                pendingResult?.finish()
-                scope.cancel()
-            }
-        }
+        // Legacy AlarmManager broadcasts are retired in favor of DailyDigestWorker;
+        // if an older alarm fires once before cancellation, cancel it immediately.
+        cancelLegacyAlarm(context)
     }
 }

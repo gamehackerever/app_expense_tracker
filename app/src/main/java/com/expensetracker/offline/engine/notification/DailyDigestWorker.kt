@@ -7,6 +7,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.expensetracker.offline.data.local.AppDatabase
+import com.expensetracker.offline.data.repository.SettingsRepository
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
@@ -16,8 +17,7 @@ class DailyDigestWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        val prefs = applicationContext.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-        if (!prefs.getBoolean("key_daily_digest_enabled", true)) return Result.success()
+        if (!SettingsRepository(applicationContext).dailyDigestEnabled) return Result.success()
 
         val db = AppDatabase.getInstance(applicationContext)
         val cal = Calendar.getInstance().apply {
@@ -30,12 +30,12 @@ class DailyDigestWorker(
         // FIXED: Subtract 1ms to ensure strict 23:59:59.999 boundary
         val endOfDay = cal.apply { add(Calendar.DATE, 1) }.timeInMillis - 1
 
-        // FIXED: Use the unified spend queries instead of generic un-clamped sums (PO-H)
-        val spent = db.transactionDao().getMySpendBetween(startOfDay, endOfDay)
+        // FIXED: getMySpendBetween returns Long paise (PO-H)
+        val spentPaise = db.transactionDao().getMySpendBetween(startOfDay, endOfDay)
         val count = db.transactionDao().getMySpendCountBetween(startOfDay, endOfDay)
 
-        // showNotification handles the Auto-Capture health check internally
-        DailySummaryReceiver.showNotification(applicationContext, spent, count)
+        // showNotification converts paise to rupees and handles Auto-Capture health check internally
+        DailySummaryReceiver.showNotification(applicationContext, spentPaise, count)
 
         return Result.success()
     }

@@ -32,16 +32,16 @@ enum class Cadence(
 data class RecurringPayment(
     val payee: String,
     val category: String,
-    val amount: Long,            // typical (median) charge
-    val isFixedAmount: Boolean,    // false = varies, e.g. a utility bill
+    val amount: Long,            // typical (median) charge in paise
+    val isFixedAmount: Boolean,  // false = varies, e.g. a utility bill
     val cadence: Cadence,
     val occurrences: Int,
     val firstSeen: Long,
     val lastSeen: Long,
     val nextExpected: Long,
-    val isActive: Boolean,         // false = overdue by a lot, probably cancelled
+    val isActive: Boolean,       // false = overdue by a lot, probably cancelled
     val monthlyCost: Long,
-    val confidence: Double,        // 0..1, grows with history and regularity
+    val confidence: Double,      // 0..1, grows with history and regularity
     val transactionIds: List<Long>
 )
 
@@ -51,13 +51,14 @@ object RecurringPaymentDetector {
     private const val DEDUPE_WINDOW_MS = 36L * 3_600_000L   // SMS + notification for the same charge
     private const val MIN_MATCH_RATIO = 0.75                // share of gaps that must fit the cadence
     private const val MAX_VARIABLE_CV = 0.6                 // amount spread allowed for non-fixed series
+    private const val ONE_RUPEE_PAISE = 100.0               // Rs 1 tolerance in paise
 
     /** Fetch this much history from the DB; yearly payments need > 12 months. */
     const val LOOKBACK_MS = 460L * DAY_MS
 
     fun detect(debits: List<DebitPoint>, now: Long = System.currentTimeMillis()): List<RecurringPayment> {
         val byPayee = debits
-            .filter { it.amount > 0.0 }
+            .filter { it.amount > 0L }
             .groupBy { normalizeKey(it.payee) }
             .filterKeys { it.isNotBlank() && it != "unknown" }
 
@@ -93,7 +94,7 @@ object RecurringPaymentDetector {
         val series = dedupe(points.sortedBy { it.timestamp })
         if (series.size < 2) return null
 
-        val amounts = series.map { it.amount }
+        val amounts = series.map { it.amount.toDouble() }
         if (!fixed && coefficientOfVariation(amounts) > MAX_VARIABLE_CV) return null
 
         val gaps = series.zipWithNext { a, b -> (b.timestamp - a.timestamp).toDouble() / DAY_MS }
@@ -152,14 +153,16 @@ object RecurringPaymentDetector {
         return score / gaps.size
     }
 
-    /** Groups payments whose amounts are within max(Rs 1, 3%) of the cluster's smallest amount. */
+    /**
+     * Groups payments whose amounts are within max(Rs 1 [100 paise], 3%) of the cluster's smallest amount.
+     */
     private fun clusterByAmount(points: List<DebitPoint>): List<List<DebitPoint>> {
         val clusters = mutableListOf<MutableList<DebitPoint>>()
         for (p in points.sortedBy { it.amount }) {
             val current = clusters.lastOrNull()
             if (current != null) {
-                val anchor = current.first().amount
-                if (p.amount - anchor <= max(1.0, anchor * 0.03)) {
+                val anchor = current.first().amount.toDouble()
+                if (p.amount - anchor <= max(ONE_RUPEE_PAISE, anchor * 0.03)) {
                     current.add(p)
                     continue
                 }

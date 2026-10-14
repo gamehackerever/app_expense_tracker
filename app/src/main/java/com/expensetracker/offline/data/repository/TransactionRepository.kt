@@ -2,21 +2,19 @@ package com.expensetracker.offline.data.repository
 
 import android.content.Context
 import androidx.room.withTransaction
-import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.AppDatabase
 import com.expensetracker.offline.data.local.entity.CategoryRuleEntity
 import com.expensetracker.offline.data.local.entity.ReviewItemEntity
 import com.expensetracker.offline.data.local.entity.ReviewStatus
+import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.engine.categorizer.NaiveBayesCategorizer
-import com.expensetracker.offline.engine.notification.LowBalanceNotifier
-import com.expensetracker.offline.engine.parser.FinancialParser
-import com.expensetracker.offline.widget.ExpenseWidget
 import com.expensetracker.offline.engine.recurring.RecurringPayment
 import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
+import com.expensetracker.offline.widget.ExpenseWidget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
@@ -31,16 +29,16 @@ class TransactionRepository(
     private val reviewItemDao = database.reviewItemDao()
     private val categoryRuleDao = database.categoryRuleDao()
     private val splitDebtDao = database.splitDebtDao()
+    private val settingsRepo = context?.let { SettingsRepository(it) }
 
     val allTransactionsWithDebts: Flow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> = transactionDao.getAllTransactionsWithDebtsFlow()
     val pendingReviewItems: Flow<List<ReviewItemEntity>> = reviewItemDao.getPendingReviewItemsFlow()
     val pendingReviewCount: Flow<Int> = reviewItemDao.getPendingReviewCountFlow()
     val latestBalance: Flow<Long?> = transactionDao.getLatestBalanceFlow()
-    val totalMoneyOwed: Flow<Double?> = transactionDao.getTotalMoneyOwedToYouFlow()
+    val totalMoneyOwed: Flow<Long?> = transactionDao.getTotalMoneyOwedToYouFlow()
 
     val unsettledSplitsWithDebts: Flow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> =
         splitDebtDao.getUnsettledTransactionsWithDebtsFlow()
-
 
     // ── Split debts ──────────────────────────────────────────────────────────
 
@@ -208,11 +206,7 @@ class TransactionRepository(
 
     suspend fun updatePayeeAndCategoryBulk(oldPayee: String, newPayee: String, newCategory: String) {
         database.transactionDao().updatePayeeAndCategoryBulk(oldPayee, newPayee, newCategory)
-
-        val trimmedOld = oldPayee.trim()
-        val trimmedNew = newPayee.trim()
-        val appPrefs = context?.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-        appPrefs?.edit()?.putString("merchant_alias_${trimmedOld.lowercase()}", trimmedNew)?.apply()
+        settingsRepo?.setMerchantAlias(oldPayee, newPayee)
     }
 
     fun searchAndFilterTransactionsFlow(search: String, category: String, startTime: Long, limit: Int): Flow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> {
@@ -233,9 +227,7 @@ class TransactionRepository(
         val trimmedOld = oldPayee.trim()
         val trimmedNew = newPayee.trim()
         transactionDao.renamePayeeForAll(trimmedOld, trimmedNew)
-
-        val appPrefs = context?.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-        appPrefs?.edit()?.putString("merchant_alias_${trimmedOld.lowercase()}", trimmedNew)?.apply()
+        settingsRepo?.setMerchantAlias(trimmedOld, trimmedNew)
     }
 
     suspend fun insertTransaction(transaction: TransactionEntity): Long {
@@ -263,7 +255,7 @@ class TransactionRepository(
                     lastUpdated = System.currentTimeMillis()
                 )
             )
-            NaiveBayesCategorizer.invalidate()   // <-- add
+            NaiveBayesCategorizer.invalidate()
         }
     }
 
@@ -313,8 +305,6 @@ class TransactionRepository(
             ?.map { it.key }
             ?: emptyList()
     }
-
-    // FIX: Deleted resolveReviewItem (Code logic was duplicated natively inside MainViewModel instead)
 
     /** Insert the approved transaction and close the review item in ONE transaction. */
     suspend fun approveReviewItem(transaction: TransactionEntity, reviewItemId: Long): Long {
@@ -434,9 +424,8 @@ class TransactionRepository(
             return IngestResult.Failed(parsed.rejectReason ?: "Not a financial message")
         }
 
-        val appPrefs = context?.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-        val skipReview = appPrefs?.getBoolean("key_skip_review_queue", false) ?: false
-        val fallbackPayee = appPrefs?.getString("key_fallback_payee", "UPI Payment")?.ifBlank { "UPI Payment" } ?: "UPI Payment"
+        val skipReview = settingsRepo?.skipReviewQueue ?: false
+        val fallbackPayee = settingsRepo?.fallbackPayee ?: "UPI Payment"
         val reviewThreshold = REVIEW_THRESHOLD_PAISE
 
         val result = database.withTransaction {
@@ -448,7 +437,7 @@ class TransactionRepository(
             }
 
             val existingMatch = transactionDao.findMatchingTransaction(
-                amount = amount.toDouble(), type = type,
+                amount = amount, type = type,
                 startTime = timestamp - DEDUPE_WINDOW_MS, endTime = timestamp + DEDUPE_WINDOW_MS,
                 targetTime = timestamp, bankName = parsed.bankName, accountNumber = parsed.accountNumber
             )
@@ -501,7 +490,7 @@ class TransactionRepository(
             }
 
             val resolvedPayee = if (parsed.payee.isNullOrBlank() || parsed.payee.equals("Unknown", ignoreCase = true)) fallbackPayee else parsed.payee
-            val aliasedPayee = appPrefs?.getString("merchant_alias_${resolvedPayee.trim().lowercase()}", null) ?: resolvedPayee
+            val aliasedPayee = settingsRepo?.getMerchantAlias(resolvedPayee) ?: resolvedPayee
             val category = CategoryClassifier.classify(aliasedPayee, parsed.rawText, categoryRuleDao)
 
             val id = transactionDao.insertTransaction(
