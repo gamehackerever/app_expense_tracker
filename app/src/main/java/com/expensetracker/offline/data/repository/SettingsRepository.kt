@@ -176,9 +176,21 @@ class SettingsRepository(context: Context) {
         if (jsonStr.isBlank() || jsonStr == "{}") return emptyMap()
         return try {
             val obj = org.json.JSONObject(jsonStr)
-            val result = mutableMapOf<String, Long>()
+            val result = linkedMapOf<String, Long>()
             obj.keys().forEach { key ->
-                result[key] = obj.getLong(key)
+                val cleanKey = key.trim()
+                val limit = obj.optLong(key, 0L)
+                if (cleanKey.isNotEmpty() &&
+                    !cleanKey.equals("Split Settlement", ignoreCase = true) &&
+                    limit > 0L
+                ) {
+                    val existingKey = result.keys.firstOrNull { it.equals(cleanKey, ignoreCase = true) }
+                    if (existingKey != null) {
+                        result[existingKey] = maxOf(result[existingKey] ?: 0L, limit)
+                    } else {
+                        result[cleanKey] = limit
+                    }
+                }
             }
             result
         } catch (_: Exception) {
@@ -187,56 +199,153 @@ class SettingsRepository(context: Context) {
     }
 
     fun setCategoryBudget(category: String, limitPaise: Long) {
+        val cleanCategory = category.trim()
+        if (cleanCategory.isEmpty() || cleanCategory.equals("Split Settlement", ignoreCase = true)) return
+
         val current = getCategoryBudgets().toMutableMap()
+        val matchingKey = current.keys.firstOrNull { it.equals(cleanCategory, ignoreCase = true) }
+
         if (limitPaise > 0L) {
-            current[category] = limitPaise
+            if (matchingKey != null && matchingKey != cleanCategory) {
+                current.remove(matchingKey)
+            }
+            current[matchingKey ?: cleanCategory] = limitPaise
         } else {
-            current.remove(category)
+            if (matchingKey != null) current.remove(matchingKey) else current.remove(cleanCategory)
         }
+        saveCategoryBudgetsMap(current)
+        // Reset any dismissed warning for this category since its cap was explicitly updated or removed
+        clearDismissedCategoryWarning(cleanCategory)
+    }
+
+    private fun saveCategoryBudgetsMap(map: Map<String, Long>) {
         val obj = org.json.JSONObject()
-        current.forEach { (cat, limit) -> obj.put(cat, limit) }
+        map.forEach { (cat, limit) ->
+            if (cat.isNotBlank() && limit > 0L) {
+                obj.put(cat.trim(), limit)
+            }
+        }
         categoryBudgetsJson = obj.toString()
+    }
+
+    /**
+     * Keeps category budgets consistent when a user deletes or merges a category.
+     * If [newCategory] is provided and does not yet have its own cap, the old cap is migrated to it;
+     * otherwise the deleted category's orphaned cap is removed.
+     */
+    fun reassignCategoryBudget(oldCategory: String, newCategory: String?) {
+        val cleanOld = oldCategory.trim()
+        if (cleanOld.isEmpty()) return
+        val current = getCategoryBudgets().toMutableMap()
+        val oldKey = current.keys.firstOrNull { it.equals(cleanOld, ignoreCase = true) } ?: return
+        val oldLimit = current.remove(oldKey) ?: return
+
+        val cleanNew = newCategory?.trim()
+        if (!cleanNew.isNullOrEmpty() &&
+            !cleanNew.equals("Uncategorized", ignoreCase = true) &&
+            !cleanNew.equals("Split Settlement", ignoreCase = true)
+        ) {
+            val newKey = current.keys.firstOrNull { it.equals(cleanNew, ignoreCase = true) } ?: cleanNew
+            if ((current[newKey] ?: 0L) <= 0L) {
+                current[newKey] = oldLimit
+            }
+        }
+        saveCategoryBudgetsMap(current)
+        clearDismissedCategoryWarning(cleanOld)
     }
 
     var dismissedBudgetWarningsJson: String
         get() = prefs.getString(KEY_DISMISSED_BUDGET_WARNINGS, "{}") ?: "{}"
         set(value) = prefs.edit().putString(KEY_DISMISSED_BUDGET_WARNINGS, value).apply()
 
-    fun dismissCategoryWarning(category: String, cycleStartMillis: Long) {
+    /**
+     * Records a dismissed warning for [category] in [cycleStartMillis] at a specific severity [level]
+     * ("NEAR" for >=80%, "OVER" for >=100%).
+     * If a user dismisses a "NEAR" warning and later exceeds 100% ("OVER"), the "OVER" alert will
+     * still surface so they aren't blindsided.
+     */
+    fun dismissCategoryWarning(category: String, cycleStartMillis: Long, level: String = WARNING_LEVEL_OVER) {
+        val cleanCategory = category.trim()
+        if (cleanCategory.isEmpty()) return
         try {
-            val obj = org.json.JSONObject(if (dismissedBudgetWarningsJson.isBlank()) "{}" else dismissedBudgetWarningsJson)
-            val savedCycle = obj.optLong("cycleStart", 0L)
-            val array = if (savedCycle == cycleStartMillis) obj.optJSONArray("categories") ?: org.json.JSONArray() else org.json.JSONArray()
-            
-            var exists = false
-            for (i in 0 until array.length()) {
-                if (array.optString(i) == category) exists = true
+            val currentLevels = getDismissedCategoryWarningLevels(cycleStartMillis).toMutableMap()
+            val existingKey = currentLevels.keys.firstOrNull { it.equals(cleanCategory, ignoreCase = true) } ?: cleanCategory
+            // "OVER" supersedes "NEAR"
+            if (currentLevels[existingKey] != WARNING_LEVEL_OVER) {
+                currentLevels[existingKey] = level
             }
-            if (!exists) array.put(category)
-
-            val newObj = org.json.JSONObject()
-            newObj.put("cycleStart", cycleStartMillis)
-            newObj.put("categories", array)
-            dismissedBudgetWarningsJson = newObj.toString()
+            saveDismissedCategoryWarningLevels(cycleStartMillis, currentLevels)
         } catch (_: Exception) {}
     }
 
-    fun getDismissedCategoryWarnings(cycleStartMillis: Long): Set<String> {
+    fun clearDismissedCategoryWarning(category: String) {
+        val cleanCategory = category.trim()
+        if (cleanCategory.isEmpty()) return
+        try {
+            val raw = dismissedBudgetWarningsJson
+            if (raw.isBlank() || raw == "{}") return
+            val obj = org.json.JSONObject(raw)
+            val savedCycle = obj.optLong("cycleStart", 0L)
+            if (savedCycle <= 0L) return
+            val currentLevels = getDismissedCategoryWarningLevels(savedCycle).toMutableMap()
+            val keyToRemove = currentLevels.keys.firstOrNull { it.equals(cleanCategory, ignoreCase = true) } ?: return
+            currentLevels.remove(keyToRemove)
+            saveDismissedCategoryWarningLevels(savedCycle, currentLevels)
+        } catch (_: Exception) {}
+    }
+
+    private fun saveDismissedCategoryWarningLevels(cycleStartMillis: Long, levels: Map<String, String>) {
+        val levelsObj = org.json.JSONObject()
+        val legacyArray = org.json.JSONArray()
+        levels.forEach { (cat, lvl) ->
+            levelsObj.put(cat, lvl)
+            legacyArray.put(cat)
+        }
+        val newObj = org.json.JSONObject()
+        newObj.put("cycleStart", cycleStartMillis)
+        newObj.put("levels", levelsObj)
+        newObj.put("categories", legacyArray)
+        dismissedBudgetWarningsJson = newObj.toString()
+    }
+
+    fun getDismissedCategoryWarningLevels(cycleStartMillis: Long): Map<String, String> {
         return try {
-            val obj = org.json.JSONObject(dismissedBudgetWarningsJson)
-            if (obj.optLong("cycleStart", 0L) != cycleStartMillis) return emptySet()
-            val array = obj.optJSONArray("categories") ?: return emptySet()
-            val result = mutableSetOf<String>()
-            for (i in 0 until array.length()) result.add(array.optString(i))
+            val raw = dismissedBudgetWarningsJson
+            if (raw.isBlank() || raw == "{}") return emptyMap()
+            val obj = org.json.JSONObject(raw)
+            if (obj.optLong("cycleStart", 0L) != cycleStartMillis) return emptyMap()
+
+            val result = mutableMapOf<String, String>()
+            val levelsObj = obj.optJSONObject("levels")
+            if (levelsObj != null) {
+                levelsObj.keys().forEach { key ->
+                    val lvl = levelsObj.optString(key, WARNING_LEVEL_OVER)
+                    if (key.isNotBlank()) result[key.trim()] = lvl
+                }
+                return result
+            }
+            // Fallback compatibility for legacy flat "categories" array
+            val array = obj.optJSONArray("categories") ?: return emptyMap()
+            for (i in 0 until array.length()) {
+                val cat = array.optString(i).trim()
+                if (cat.isNotEmpty()) result[cat] = WARNING_LEVEL_NEAR
+            }
             result
         } catch (_: Exception) {
-            emptySet()
+            emptyMap()
         }
     }
+
+    fun getDismissedCategoryWarnings(cycleStartMillis: Long): Set<String> =
+        getDismissedCategoryWarningLevels(cycleStartMillis).keys
 
     fun removeCategoryBudget(category: String) {
         setCategoryBudget(category, 0L)
     }
+
+    var isCategoryBudgetSetupDismissed: Boolean
+        get() = prefs.getBoolean(KEY_CATEGORY_BUDGET_SETUP_DISMISSED, false)
+        set(value) = prefs.edit().putBoolean(KEY_CATEGORY_BUDGET_SETUP_DISMISSED, value).apply()
 
     fun clearLastScanBatch() {
         prefs.edit().remove(KEY_LAST_SCAN_TXNS).remove(KEY_LAST_SCAN_REVIEWS).apply()
@@ -250,7 +359,10 @@ class SettingsRepository(context: Context) {
         const val KEY_MONTHLY_BUDGET_LEGACY = "key_monthly_budget"
         const val KEY_BUDGET_EXPLICITLY_SET = "key_budget_explicitly_set"
         const val KEY_CATEGORY_BUDGETS_JSON = "key_category_budgets_json"
+        const val KEY_CATEGORY_BUDGET_SETUP_DISMISSED = "key_category_budget_setup_dismissed"
         const val KEY_DISMISSED_BUDGET_WARNINGS = "key_dismissed_budget_warnings_v2"
+        const val WARNING_LEVEL_NEAR = "NEAR"
+        const val WARNING_LEVEL_OVER = "OVER"
         const val KEY_START_DAY_OF_MONTH = "key_start_day_of_month"
         const val KEY_NECESSITY_CHUNK = "key_necessity_chunk"
         const val KEY_SKIP_REVIEW_QUEUE = "key_skip_review_queue"
