@@ -34,6 +34,8 @@ object FinancialParser {
     private val CREDIT_PATTERN = Pattern.compile("(?i)\\b(credit|credited|received|refunded|deposited|added|sent you|paid you|transfer(?:red)? from)\\b")
     private val DEBIT_PATTERN = Pattern.compile("(?i)\\b(debit|debited|spent|paid(?!\\s+you)|deducted|withdrawn|sent(?!\\s+you)|transfer(?:red)? to)\\b")
     private val CREDIT_CARD_PATTERN = Pattern.compile("(?i)\\bcredit\\s*(?:card|limit|line|bill)\\b")
+    private val CC_BILL_PATTERN = Pattern.compile("(?i)\\bcredit card bill\\b")
+    private val REFUND_FLAG_PATTERN = Pattern.compile("(?i)\\brefund(?:ed)?\\b")
 
     private val PROMO_PATTERNS = Pattern.compile("(?i)\\b(upgrade\\s+today|recharge\\s+(?:now|with|for)|plan|validity|per\\s+day|days\\b|pre-approved|apply\\s+now|congrats|congratulations|exclusive\\s+offer|special\\s+offer|discount|flat\\s+(?:rs|inr|₹)|free\\s+trial|win\\b|hurry|coupon|gift\\s+card|promo\\s+code|valid\\s+till|dial\\s+\\*|unlimited\\s+data|calls\\s+for\\s+just|bonus)\\b")
     private val BANK_INDICATORS = Pattern.compile("(?i)\\b(a/c|acct|account|vpa|upi\\s*ref|rrn|txn|card\\s+xx|avl\\s+bal|avail\\s+bal|balance|bank)\\b")
@@ -169,9 +171,9 @@ object FinancialParser {
         val bankName = normalizeBankName(extractBankName(combinedText, title))
         val accountNumber = normalizeAccountNumber(extractAccountNumber(combinedText))
 
-        // 3. CC and Refund Flagging
-        val isCcPayment = Pattern.compile("(?i)\\bcredit card bill\\b").matcher(combinedText).find()
-        val isRefund = Pattern.compile("(?i)\\brefund(?:ed)?\\b").matcher(combinedText).find()
+        // 3. CC and Refund Flagging (using precompiled patterns for O(1) allocation during bulk scans)
+        val isCcPayment = CC_BILL_PATTERN.matcher(combinedText).find()
+        val isRefund = REFUND_FLAG_PATTERN.matcher(combinedText).find()
 
         return ParsedTransaction(
             isFinancial = true,

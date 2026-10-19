@@ -36,14 +36,28 @@ object BillingCycleHelper {
      * endMillis strictly bounds to 23:59:59.999 of the cycle end date.
      */
     fun getCycleRange(startDay: Int, referenceDate: LocalDate = LocalDate.now()): Pair<Long, Long> {
-        val (cycleStart, cycleEnd) = getCycleDates(startDay, referenceDate)
+        return getCycleRangeForOffset(startDay, cycleOffset = 0, referenceDate = referenceDate)
+    }
+
+    /**
+     * Returns Pair(startMillis, endMillis) for a billing cycle shifted by [cycleOffset] months
+     * (0 = current cycle, -1 = previous cycle, etc.).
+     * Shifting the start LocalDate first and then deriving cycleEnd avoids Calendar.MONTH truncation
+     * bugs when moving between 30-day and 31-day months (e.g. Apr 30 -> Mar 31, not Mar 30).
+     */
+    fun getCycleRangeForOffset(
+        startDay: Int,
+        cycleOffset: Int,
+        referenceDate: LocalDate = LocalDate.now()
+    ): Pair<Long, Long> {
+        val (baseStart, _) = getCycleDates(startDay, referenceDate)
+        val shiftedStart = if (cycleOffset == 0) baseStart else baseStart.plusMonths(cycleOffset.toLong())
+        val shiftedEnd = shiftedStart.plusMonths(1).minusDays(1)
         val zone = ZoneId.systemDefault()
 
-        val startMillis = cycleStart.atStartOfDay(zone).toInstant().toEpochMilli()
-
+        val startMillis = shiftedStart.atStartOfDay(zone).toInstant().toEpochMilli()
         // Safe end-of-day calculation: Start of the next day minus 1 millisecond.
-        // This avoids nanosecond precision loss bugs when converting LocalTime.MAX to millis.
-        val endMillis = cycleEnd.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1L
+        val endMillis = shiftedEnd.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1L
 
         return Pair(startMillis, endMillis)
     }

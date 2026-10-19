@@ -83,9 +83,11 @@ interface TransactionDao {
     @Query("DELETE FROM transactions")
     suspend fun clearAllTransactions()
 
-    // Fetches transactions WITH their attached debts for the Dashboard
+    // Fetches recent transactions WITH their attached debts for the Dashboard/Insights UI.
+    // Bounded to 5,000 rows so a 1,000,000-row database never overflows Android's 2MB CursorWindow
+    // (SQLiteBlobTooBigException), while SQL aggregate queries still operate over the full table.
     @Transaction
-    @Query("SELECT * FROM transactions ORDER BY timestamp DESC")
+    @Query("SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 5000")
     fun getAllTransactionsWithDebtsFlow(): Flow<List<TransactionWithDebts>>
 
     // ── Repayment links (CREDIT transaction -> specific person's debt) ──

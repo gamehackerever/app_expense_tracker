@@ -53,8 +53,10 @@ object NecessityManager {
     private val regexCache = java.util.concurrent.ConcurrentHashMap<String, Regex>()
 
     private fun getWordBoundaryRegex(word: String): Regex {
-        return regexCache.getOrPut(word) {
-            Regex("(?i)\\b${Regex.escape(word)}\\b")
+        val key = word.trim().lowercase()
+        if (regexCache.size > 256) regexCache.clear()
+        return regexCache.getOrPut(key) {
+            Regex("(?i)\\b${Regex.escape(key)}\\b")
         }
     }
 
@@ -75,10 +77,16 @@ object NecessityManager {
     }
 
     fun findLastTransaction(item: NecessityItem, txns: List<TransactionEntity>): TransactionEntity? {
-        if (item.name.isBlank()) return null
-        return txns.asSequence()
-            .filter { it.type == TransactionType.DEBIT && matches(item, it.payee, it.category) }
-            .maxByOrNull { it.timestamp }
+        if (item.name.isBlank() || txns.isEmpty()) return null
+        // txns from Room are ordered by timestamp DESC; check if sorted so we can return the first match in O(K)
+        val isDescending = txns.size < 2 || txns[0].timestamp >= txns[txns.size - 1].timestamp
+        return if (isDescending) {
+            txns.firstOrNull { it.type == TransactionType.DEBIT && matches(item, it.payee, it.category) }
+        } else {
+            txns.asSequence()
+                .filter { it.type == TransactionType.DEBIT && matches(item, it.payee, it.category) }
+                .maxByOrNull { it.timestamp }
+        }
     }
 
     fun computeEffectiveDueDate(item: NecessityItem, txns: List<TransactionEntity> = emptyList()): Long? {
@@ -157,7 +165,12 @@ object NecessityManager {
     }
 
     fun recurringSuggestion(payee: String, txns: List<TransactionEntity>): BillSuggestion? {
-        val list = txns.filter { it.type == TransactionType.DEBIT && it.payee.equals(payee, ignoreCase = true) }
+        if (payee.isBlank() || txns.size < 3) return null
+        // Cap to the 24 most recent matching charges so median gap calculation is O(1) bounded
+        val list = txns.asSequence()
+            .filter { it.type == TransactionType.DEBIT && it.payee.equals(payee, ignoreCase = true) }
+            .take(24)
+            .toList()
         if (list.size < 3) return null
         val sorted = list.sortedByDescending { it.timestamp }
         val gap = sorted.zipWithNext { a, b -> (a.timestamp - b.timestamp) / 86_400_000L }

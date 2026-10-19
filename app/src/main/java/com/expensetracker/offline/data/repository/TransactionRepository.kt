@@ -354,28 +354,54 @@ class TransactionRepository(
      * amount, type and payee) are skipped, so importing the same file twice changes nothing. All checks
      * run before any insert, so two identical rows inside ONE file (two Rs 20 chai) both count.
      */
+    private data class TxnDedupeKey(
+        val epochSecond: Long,
+        val amount: Long,
+        val type: TransactionType,
+        val payee: String
+    )
+
     suspend fun insertTransactionsBulk(transactions: List<TransactionEntity>): Int {
         if (transactions.isEmpty()) return 0
-        
-        val minTime = transactions.minOf { it.timestamp } - 1000L
-        val maxTime = transactions.maxOf { it.timestamp } + 1000L
-        
-        val inserted = database.withTransaction {
-            val existing = transactionDao.getTransactionsInRangeSync(minTime, maxTime)
-            
-            val fresh = transactions.filter { t ->
-                val secondStart = t.timestamp - Math.floorMod(t.timestamp, 1000L)
-                val secondEnd = secondStart + 999L
-                val isDuplicate = existing.any { e ->
-                    e.timestamp in secondStart..secondEnd && e.amount == t.amount && e.type == t.type && e.payee == t.payee
+
+        var totalInserted = 0
+        // Process in chunks of 500 sorted by timestamp so each range query is narrow and
+        // deduplication runs in O(1) per row via HashSet instead of O(N * M) nested loops.
+        val sorted = transactions.sortedBy { it.timestamp }
+        for (chunk in sorted.chunked(500)) {
+            val minTime = chunk.first().timestamp - 1000L
+            val maxTime = chunk.last().timestamp + 1000L
+
+            val chunkInserted = database.withTransaction {
+                val existing = transactionDao.getTransactionsInRangeSync(minTime, maxTime)
+                val existingKeys = HashSet<TxnDedupeKey>(existing.size * 2)
+                for (e in existing) {
+                    existingKeys.add(
+                        TxnDedupeKey(
+                            epochSecond = Math.floorDiv(e.timestamp, 1000L),
+                            amount = e.amount,
+                            type = e.type,
+                            payee = e.payee
+                        )
+                    )
                 }
-                !isDuplicate
+
+                val fresh = chunk.filter { t ->
+                    val key = TxnDedupeKey(
+                        epochSecond = Math.floorDiv(t.timestamp, 1000L),
+                        amount = t.amount,
+                        type = t.type,
+                        payee = t.payee
+                    )
+                    !existingKeys.contains(key)
+                }
+                fresh.forEach { transactionDao.insertTransaction(it) }
+                fresh.size
             }
-            fresh.forEach { transactionDao.insertTransaction(it) }
-            fresh.size
+            totalInserted += chunkInserted
         }
-        if (inserted > 0) refreshWidget()
-        return inserted
+        if (totalInserted > 0) refreshWidget()
+        return totalInserted
     }
 
     suspend fun renameAllPayees(oldPayee: String, newPayee: String) {
