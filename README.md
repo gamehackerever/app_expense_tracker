@@ -2,7 +2,7 @@
 
 An offline Android expense tracker. It reads bank SMS and notifications on the device, turns them into categorized transactions, and keeps everything in a local database. The app declares no `INTERNET` permission, so nothing leaves the phone.
 
-Package: `com.expensetracker.offline` · Min SDK 26 · Target SDK 35 · Kotlin + Jetpack Compose
+Package: `com.expensetracker.offline` · Application ID: `com.srinand.expensetracker.offline` · Min SDK 26 · Target SDK 35 · Kotlin + Jetpack Compose
 
 ## Features
 
@@ -33,7 +33,7 @@ SMS and notification content is processed locally and is not sent anywhere.
 
 ## Install (APK)
 
-Download the APK from the [Releases](../../releases) page. Because it isn't on the Play Store and uses SMS and notification access, Android will show warnings and restrict those permissions until you allow them. The step-by-step guide, with Play Protect, restricted settings, notification access and battery settings, is in **[INSTALL.md](INSTALL.md)**.
+Download the APK from the [Releases](https://github.com/gamehackerever/app_expense_tracker/releases) page, or install and update it with [Obtainium](https://github.com/ImranR98/Obtainium) by adding this repository's URL. Because it isn't on the Play Store and uses SMS and notification access, Android will show warnings and restrict those permissions until you allow them. The step-by-step guide, with Obtainium, Play Protect, restricted settings, notification access and battery settings, is in **[INSTALL.md](INSTALL.md)**.
 
 ## Build
 
@@ -71,4 +71,4 @@ app/src/main/java/com/expensetracker/offline/
 
 ## Status
 
-Personal project, version 1.0.0. Built and tested mainly against Indian bank SMS formats.
+Personal project, version 1.1.0. Built and tested mainly against Indian bank SMS formats.

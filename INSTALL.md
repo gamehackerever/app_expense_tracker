@@ -1,6 +1,6 @@
 # Installing Expense Tracker (APK)
 
-Expense Tracker is not on the Play Store. You install it by downloading the APK from the [Releases](../../releases) page. Because of that, Android and Google Play Protect will show warnings, and Android will restrict the SMS and notification permissions the app depends on. This guide covers every step. Menu names differ between phone brands and Android versions, so use the closest match on your phone.
+Expense Tracker is not on the Play Store. You install it by downloading the APK from the [Releases](https://github.com/gamehackerever/app_expense_tracker/releases) page. Because of that, Android and Google Play Protect will show warnings, and Android will restrict the SMS and notification permissions the app depends on. This guide covers every step. Menu names differ between phone brands and Android versions, so use the closest match on your phone.
 
 **Requirements:** Android 8.0 (API 26) or higher.
 
@@ -19,13 +19,26 @@ The app has no internet permission. Your data stays on the device.
 
 ---
 
+## Easiest way: install with Obtainium
+
+[Obtainium](https://github.com/ImranR98/Obtainium) is a separate open-source app that installs and updates APKs straight from GitHub Releases.
+
+1. Install Obtainium.
+2. In Obtainium, tap **Add App** and enter this repository's URL: `https://github.com/gamehackerever/app_expense_tracker`
+3. Install the app from Obtainium.
+4. Continue from **Step 4** below. You can skip Steps 1 to 3.
+
+On the author's phone this installed without the Play Protect block. Google can change how Play Protect behaves, so it isn't guaranteed on yours. If it is blocked, use the manual steps below.
+
+---
+
 ## Step 1: Download the APK
 
-1. On your phone, open the [Releases](../../releases) page and download `ExpenseTracker-v1.0.0.apk` under **Assets**.
+1. On your phone, open the [Releases](https://github.com/gamehackerever/app_expense_tracker/releases) page and download `ExpenseTracker-v1.1.0.apk` under **Assets**.
 2. Or download it on a PC and copy it to your phone (USB, Google Drive, etc.).
 3. Do not download an APK from anywhere other than this repository's Releases page.
 
-Optional: to check the file wasn't corrupted or swapped, compare its SHA-256 with the one in the release notes (if listed). On a PC: `certutil -hashfile ExpenseTracker-v1.0.0.apk SHA256` (Windows) or `sha256sum ExpenseTracker-v1.0.0.apk` (Linux/macOS).
+Optional: to check the file wasn't corrupted or swapped, compare its SHA-256 with the one in the release notes (if listed). On a PC: `certutil -hashfile ExpenseTracker-v1.1.0.apk SHA256` (Windows) or `sha256sum ExpenseTracker-v1.1.0.apk` (Linux/macOS).
 
 ## Step 2: Allow installs from your browser or file manager
 
@@ -64,7 +77,7 @@ Android blocks SMS and notification access for apps installed outside the Play S
 1. Long-press the **Expense Tracker** icon → **App info** (or Settings → Apps → Expense Tracker).
 2. Tap the **⋮** (three dots) at the top right.
 3. Tap **Allow restricted settings**. Confirm with your PIN, pattern or fingerprint.
-    - The option only appears after you have tried to enable a blocked permission at least once. If you don't see the ⋮ menu or the option, go back, try enabling the SMS or notification permission once so it gets blocked, then return here.
+   - The option only appears after you have tried to enable a blocked permission at least once. If you don't see the ⋮ menu or the option, go back, try enabling the SMS or notification permission once so it gets blocked, then return here.
 4. Now repeat the permission steps below.
 
 ## Step 6: Grant SMS permission manually (if needed)
@@ -151,7 +164,9 @@ This is normal for sideloaded apps with SMS access. It's a warning, not a detect
 
 1. Download the new APK from Releases.
 2. Open it and tap **Install**. Android updates in place and keeps your data, as long as it's signed with the same key as the version you have installed.
-3. Re-check your permissions and battery setting afterward, since some phones reset them after an update.
+3. Re-check your permissions and battery setting afterward, since some phones reset them.
+
+If you installed with Obtainium, it will offer updates itself when a new release is published.
 
 ## Uninstalling and backups
 
