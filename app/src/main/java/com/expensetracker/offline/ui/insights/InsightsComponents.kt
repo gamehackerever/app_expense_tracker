@@ -15,15 +15,17 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Edit
@@ -46,24 +49,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.expensetracker.offline.data.local.dao.AccountInfo
 import com.expensetracker.offline.data.local.dao.CategoryInsight
 import com.expensetracker.offline.data.local.dao.PayeeInsight
@@ -78,29 +78,18 @@ import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
 import com.expensetracker.offline.ui.theme.getCategoryColor
 import com.expensetracker.offline.ui.theme.getCategoryIcon
-import com.expensetracker.offline.ui.viewmodel.MainViewModel
-import com.expensetracker.offline.util.BillingCycleHelper
-import com.expensetracker.offline.util.NecessityManager
-import kotlinx.coroutines.Dispatchers
+import com.expensetracker.offline.ui.theme.hasCategoryIcon
+import com.expensetracker.offline.util.tick
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-import kotlin.math.abs
-import kotlin.math.ceil
 import kotlin.math.roundToInt
-
-import com.expensetracker.offline.util.tick
-import com.expensetracker.offline.util.click
-import com.expensetracker.offline.util.confirm
-import com.expensetracker.offline.util.delete
-import androidx.compose.foundation.ExperimentalFoundationApi
 
 internal const val DAY_MS = 86_400_000L
 internal const val TOP_N_BY_DEFAULT = 5
 
-// Same hues as the Dashboard's private AppColors.
+// Same hues as the Dashboard's AppColors.
 internal object InsightsColors {
     val positive @Composable get() = if (isSystemInDarkTheme()) Color(0xFF10B981) else Color(0xFF059669)
     val negative @Composable get() = if (isSystemInDarkTheme()) Color(0xFFEF4444) else Color(0xFFDC2626)
@@ -114,16 +103,17 @@ internal fun formatRupees(value: Double): String =
 internal fun formatRupees(value: Long): String =
     formatRupees(value.toDouble())
 
-/** Numbers that need a second pass over the data (previous cycle, biggest single expense) in paise. */
+/** Numbers that need a second pass over the data (previous cycle, biggest single expense, rhythm) in paise. */
 internal data class CycleStats(
     val prevSpent: Long = 0L,
     val largestAmount: Long = 0L,
-    val largestPayee: String? = null
+    val largestPayee: String? = null,
+    val largestTxnId: Long? = null,
+    val spendFreeDays: Int = 0
 )
 
 internal fun matchesAccount(txn: TransactionEntity, filter: AccountInfo?): Boolean =
     filter == null || (txn.bankName == filter.bankName && txn.accountNumber == filter.accountNumber)
-
 
 // Your own share of a bill = amount minus what other people owe (same rule the Dashboard uses).
 internal fun myShareOf(item: TransactionWithDebts): Long =
@@ -134,8 +124,78 @@ internal fun isSpendDebit(txn: TransactionEntity): Boolean =
             !txn.excludeFromSpend &&
             txn.category != "Split Settlement"
 
+/**
+ * Clean, gapless pill progress bar without Material3 LinearProgressIndicator's trailing stop-dot
+ * or 4.dp active/track gap.
+ */
+@Composable
+internal fun InsightsProgressBar(
+    progress: Float,
+    color: Color,
+    trackColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+    height: androidx.compose.ui.unit.Dp = 4.dp,
+    modifier: Modifier = Modifier
+) {
+    val clamped = progress.coerceIn(0f, 1f)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(height)
+            .clip(RoundedCornerShape(AppRadius.pill))
+            .background(trackColor)
+    ) {
+        if (clamped > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(clamped)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(AppRadius.pill))
+                    .background(color)
+            )
+        }
+    }
+}
+
+@Composable
+internal fun CategoryGlyphBox(
+    category: String,
+    categoryColor: Color,
+    size: androidx.compose.ui.unit.Dp = 40.dp,
+    cornerRadius: androidx.compose.ui.unit.Dp = 12.dp,
+    iconSize: androidx.compose.ui.unit.Dp = 20.dp
+) {
+    val hasIcon = remember(category) { hasCategoryIcon(category) }
+    val initial = remember(category) {
+        category.trim().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?"
+    }
+    Surface(
+        shape = RoundedCornerShape(cornerRadius),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+        modifier = Modifier.size(size)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            if (hasIcon) {
+                Icon(
+                    getCategoryIcon(category),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(iconSize)
+                )
+            } else {
+                Text(
+                    text = initial,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
 // ─────────────────────────────── Category breakdown ───────────────────────────────
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun CategoryBreakdownCard(
     categories: List<CategoryInsight>,
@@ -143,16 +203,23 @@ internal fun CategoryBreakdownCard(
     grandTotal: Long,
     isAnimating: Boolean,
     onCategoryClick: (String) -> Unit,
+    onManageBudgetsClick: () -> Unit,
     haptic: HapticFeedback
 ) {
-    var showAll by remember { mutableStateOf(false) }
+    var showAll by rememberSaveable { mutableStateOf(false) }
 
     val entered = rememberEntered(250)
     val reveal by animateFloatAsState(
         targetValue = if (isAnimating && entered) 1f else 0f,
-        animationSpec = tween(durationMillis = 800, delayMillis = 100, easing = FastOutSlowInEasing),
+        animationSpec = tween(
+            durationMillis = 800,
+            delayMillis = 100,
+            easing = FastOutSlowInEasing
+        ),
         label = "categoryDistributionReveal"
     )
+
+    val positiveCategories = remember(categories) { categories.filter { it.totalSpent > 0L } }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -162,33 +229,77 @@ internal fun CategoryBreakdownCard(
     ) {
         Column(
             modifier = Modifier
-                .padding(AppSpacing.cardPadding)
+                .padding(horizontal = AppSpacing.cardPadding, vertical = 16.dp)
         ) {
-            // One stacked bar showing the whole split at a glance
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(10.dp)
-                    .clip(RoundedCornerShape(AppRadius.pill))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(reveal).fillMaxHeight(),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+            if (positiveCategories.isNotEmpty() && grandTotal > 0L) {
+                // Stacked distribution bar showing all positive categories in their true colors
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(AppRadius.pill))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                 ) {
-                    categories.filter { it.totalSpent > 0L }.forEach { cat ->
-                        val share = if (grandTotal > 0L) (cat.totalSpent.toDouble() / grandTotal.toDouble()).toFloat() else 0f
-                        Box(
-                            modifier = Modifier
-                                .weight(share.coerceAtLeast(0.01f))
-                                .fillMaxHeight()
-                                .background(getCategoryColor(cat.category))
-                        )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth(reveal)
+                            .fillMaxHeight(),
+                        horizontalArrangement = Arrangement.spacedBy(1.5.dp)
+                    ) {
+                        positiveCategories.forEach { cat ->
+                            val share = (cat.totalSpent.toDouble() / grandTotal.toDouble()).toFloat()
+                            Box(
+                                modifier = Modifier
+                                    .weight(share.coerceAtLeast(0.018f))
+                                    .fillMaxHeight()
+                                    .background(getCategoryColor(cat.category))
+                            )
+                        }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(12.dp))
+                // Horizontally scrollable category legend pills under the stacked bar for all active categories
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    positiveCategories.forEach { cat ->
+                        val rawPct = cat.totalSpent.toDouble() / grandTotal.toDouble() * 100.0
+                        val pctLabel = if (rawPct >= 1.0) "${rawPct.roundToInt()}%" else "<1%" 
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(AppRadius.pill))
+                                .quietClickable {
+                                    haptic.tap()
+                                    onCategoryClick(cat.category)
+                                }
+                                .padding(vertical = 2.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .background(getCategoryColor(cat.category), CircleShape)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "${cat.category} $pctLabel",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+            }
 
             categories.forEachIndexed { index, cat ->
                 AnimatedVisibility(
@@ -196,25 +307,34 @@ internal fun CategoryBreakdownCard(
                     enter = expandVertically(spring(stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
                     exit = shrinkVertically(spring(stiffness = Spring.StiffnessMediumLow)) + fadeOut()
                 ) {
-                    val limit = categoryBudgets[cat.category]
-                    if (limit != null && limit > 0L) {
-                        CategoryRowWithBudget(
-                            insight = cat,
-                            budgetPaise = limit,
-                            isAnimating = isAnimating,
-                            onClick = { haptic.tap(); onCategoryClick(cat.category) }
-                        )
-                    } else {
-                        CategoryRow(
-                            insight = cat,
-                            grandTotal = grandTotal,
-                            onClick = { haptic.tap(); onCategoryClick(cat.category) }
-                        )
+                    Column {
+                        if (index > 0) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        }
+                        val limit = categoryBudgets.entries
+                            .firstOrNull { it.key.equals(cat.category, ignoreCase = true) }
+                            ?.value
+                        if (limit != null && limit > 0L) {
+                            CategoryRowWithBudget(
+                                insight = cat,
+                                budgetPaise = limit,
+                                isAnimating = isAnimating,
+                                onClick = { haptic.tap(); onCategoryClick(cat.category) }
+                            )
+                        } else {
+                            CategoryRow(
+                                insight = cat,
+                                grandTotal = grandTotal,
+                                isAnimating = isAnimating,
+                                onClick = { haptic.tap(); onCategoryClick(cat.category) }
+                            )
+                        }
                     }
                 }
             }
 
             if (categories.size > TOP_N_BY_DEFAULT) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                 Spacer(modifier = Modifier.height(4.dp))
                 ShowMoreToggle(
                     text = if (showAll) "Show less" else "Show all ${categories.size}",
@@ -230,59 +350,77 @@ internal fun CategoryBreakdownCard(
 }
 
 @Composable
-internal fun CategoryRow(insight: CategoryInsight, grandTotal: Long, onClick: () -> Unit) {
+internal fun CategoryRow(
+    insight: CategoryInsight,
+    grandTotal: Long,
+    isAnimating: Boolean = true,
+    onClick: () -> Unit
+) {
     val categoryColor = getCategoryColor(insight.category)
     val categoryIcon = getCategoryIcon(insight.category)
-    val percentage = if (grandTotal > 0L) insight.totalSpent.toDouble() / grandTotal.toDouble() * 100.0 else 0.0
+    val share = if (grandTotal > 0L) (insight.totalSpent.toDouble() / grandTotal.toDouble()) else 0.0
+    val percentage = share * 100.0
+    val avgPerTxn = if (insight.transactionCount > 0) insight.totalSpent.toDouble() / insight.transactionCount else 0.0
 
-    Row(
+    val entered = rememberEntered(250)
+    val animatedProgress by animateFloatAsState(
+        targetValue = if (isAnimating && entered) share.toFloat().coerceIn(0f, 1f) else 0f,
+        animationSpec = tween(durationMillis = 800, delayMillis = 100, easing = FastOutSlowInEasing),
+        label = "categoryShareGrowth"
+    )
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(AppRadius.small))
             .quietClickable(onClick = onClick)
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(vertical = 12.dp)
     ) {
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-            modifier = Modifier.size(40.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(categoryIcon, contentDescription = null, tint = categoryColor, modifier = Modifier.size(20.dp))
+            CategoryGlyphBox(category = insight.category, categoryColor = categoryColor)
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    insight.category,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "${insight.transactionCount} ${if (insight.transactionCount == 1) "txn" else "txns"} · avg ${formatRupees(avgPerTxn)}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    formatRupees(insight.totalSpent),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "${String.format(Locale.getDefault(), "%.1f", percentage)}%",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                insight.category,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                "${insight.transactionCount} ${if (insight.transactionCount == 1) "txn" else "txns"}",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                formatRupees(insight.totalSpent),
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                "${String.format(Locale.getDefault(), "%.1f", percentage)}%",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        InsightsProgressBar(
+            progress = animatedProgress,
+            color = categoryColor.copy(alpha = 0.85f)
+        )
     }
 }
 
@@ -296,12 +434,23 @@ internal fun CategoryRowWithBudget(
     val categoryIcon = getCategoryIcon(insight.category)
     val categoryColor = getCategoryColor(insight.category)
     val pct = if (budgetPaise > 0L) (insight.totalSpent.toFloat() / budgetPaise).coerceAtLeast(0f) else 0f
-    val isOver = budgetPaise > 0L && insight.totalSpent >= budgetPaise
-    val isNear = budgetPaise > 0L && pct >= 0.8f && !isOver
+    val isOver = budgetPaise > 0L && insight.totalSpent > budgetPaise
+    val isAtLimit = budgetPaise > 0L && insight.totalSpent == budgetPaise
+    val isNear = budgetPaise > 0L && !isOver && (pct >= 0.8f || isAtLimit)
     val barColor = when {
         isOver -> AppColors.negative
         isNear -> AppColors.warning
-        else -> categoryColor
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val statusNote = when {
+        isOver -> "${formatRupees(insight.totalSpent - budgetPaise)} over"
+        isAtLimit -> "limit reached"
+        else -> "${formatRupees(budgetPaise - insight.totalSpent)} left"
+    }
+    val statusColor = when {
+        isOver -> AppColors.negative
+        isAtLimit || isNear -> AppColors.warning
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
     val entered = rememberEntered(250)
@@ -316,18 +465,10 @@ internal fun CategoryRowWithBudget(
             .fillMaxWidth()
             .clip(RoundedCornerShape(AppRadius.small))
             .quietClickable(onClick = onClick)
-            .padding(vertical = 8.dp)
+            .padding(vertical = 12.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = categoryColor.copy(alpha = 0.1f),
-                modifier = Modifier.size(40.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(categoryIcon, contentDescription = null, tint = categoryColor, modifier = Modifier.size(20.dp))
-                }
-            }
+            CategoryGlyphBox(category = insight.category, categoryColor = categoryColor)
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -339,9 +480,12 @@ internal fun CategoryRowWithBudget(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    "${insight.transactionCount} ${if (insight.transactionCount == 1) "txn" else "txns"}",
+                    "${insight.transactionCount} ${if (insight.transactionCount == 1) "txn" else "txns"} · $statusNote",
                     fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    fontWeight = if (isOver || isAtLimit) FontWeight.Medium else FontWeight.Normal,
+                    color = statusColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
@@ -350,25 +494,21 @@ internal fun CategoryRowWithBudget(
                     formatRupees(insight.totalSpent),
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = if (isOver) AppColors.negative else MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    "${(pct * 100).roundToInt()}% used",
+                    "of ${formatRupees(budgetPaise)} · ${(pct * 100).roundToInt()}%",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (isOver) AppColors.negative else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
         Spacer(modifier = Modifier.height(10.dp))
-        LinearProgressIndicator(
-            progress = { animatedProgress },
-            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(AppRadius.pill)),
-            color = barColor,
-            trackColor = MaterialTheme.colorScheme.surfaceVariant,
-            strokeCap = StrokeCap.Round,
-            drawStopIndicator = {}
+        InsightsProgressBar(
+            progress = animatedProgress,
+            color = barColor
         )
     }
 }
@@ -379,10 +519,11 @@ internal fun CategoryRowWithBudget(
 internal fun MerchantsCard(
     merchants: List<PayeeInsight>,
     grandTotal: Long,
-    isAnimating: Boolean
+    isAnimating: Boolean,
+    onMerchantClick: (String) -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
-    var showAll by remember { mutableStateOf(false) }
+    var showAll by rememberSaveable { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -404,7 +545,15 @@ internal fun MerchantsCard(
                         if (index > 0) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                         }
-                        MerchantRow(insight = insight, grandTotal = grandTotal, isAnimating = isAnimating)
+                        MerchantRow(
+                            insight = insight,
+                            grandTotal = grandTotal,
+                            isAnimating = isAnimating,
+                            onClick = {
+                                haptic.tap()
+                                onMerchantClick(insight.payee)
+                            }
+                        )
                     }
                 }
             }
@@ -427,7 +576,12 @@ internal fun MerchantsCard(
 }
 
 @Composable
-internal fun MerchantRow(insight: PayeeInsight, grandTotal: Long, isAnimating: Boolean) {
+internal fun MerchantRow(
+    insight: PayeeInsight,
+    grandTotal: Long,
+    isAnimating: Boolean,
+    onClick: () -> Unit = {}
+) {
     val share = if (grandTotal > 0L) (insight.totalSpent.toDouble() / grandTotal.toDouble()) else 0.0
     val avgPerVisit = if (insight.transactionCount > 0) insight.totalSpent.toDouble() / insight.transactionCount else 0.0
 
@@ -438,7 +592,13 @@ internal fun MerchantRow(insight: PayeeInsight, grandTotal: Long, isAnimating: B
         label = "merchantBarGrowth"
     )
 
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(AppRadius.small))
+            .quietClickable(onClick = onClick)
+            .padding(vertical = 12.dp)
+    ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
@@ -446,7 +606,12 @@ internal fun MerchantRow(insight: PayeeInsight, grandTotal: Long, isAnimating: B
                 modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text(insight.payee.trim().take(1).uppercase().ifBlank { "?" }, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        insight.payee.trim().take(1).uppercase().ifBlank { "?" },
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
             Spacer(modifier = Modifier.width(12.dp))
@@ -477,20 +642,15 @@ internal fun MerchantRow(insight: PayeeInsight, grandTotal: Long, isAnimating: B
                     "${String.format(Locale.getDefault(), "%.1f", share * 100)}%",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface // Changed from primary
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
         Spacer(modifier = Modifier.height(10.dp))
-        LinearProgressIndicator(
-            progress = { animatedProgress },
-            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(AppRadius.pill)),
-            // FIX: Black/White data bars instead of primary green
-            color = MaterialTheme.colorScheme.onSurface,
-            trackColor = MaterialTheme.colorScheme.surfaceVariant,
-            strokeCap = StrokeCap.Round,
-            drawStopIndicator = {}
+        InsightsProgressBar(
+            progress = animatedProgress,
+            color = MaterialTheme.colorScheme.onSurface
         )
     }
 }
@@ -505,7 +665,6 @@ internal fun FixedCostsRow(trackedCount: Int, onClick: () -> Unit) {
             .clip(RoundedCornerShape(AppRadius.medium))
             .quietClickable(onClick = onClick),
         shape = RoundedCornerShape(AppRadius.medium),
-        // FIX: Neutral card background and border instead of primary.copy
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
     ) {
@@ -519,7 +678,6 @@ internal fun FixedCostsRow(trackedCount: Int, onClick: () -> Unit) {
             Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = RoundedCornerShape(11.dp),
-                    // FIX: Neutral background
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
                     modifier = Modifier.size(42.dp)
                 ) {
@@ -535,7 +693,7 @@ internal fun FixedCostsRow(trackedCount: Int, onClick: () -> Unit) {
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text(
-                        "Fixed costs",
+                        "Fixed costs & bills",
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         color = MaterialTheme.colorScheme.onSurface
@@ -543,7 +701,7 @@ internal fun FixedCostsRow(trackedCount: Int, onClick: () -> Unit) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         if (trackedCount == 0) "Track rent, bills & sinking funds"
-                        else "$trackedCount tracked",
+                        else "$trackedCount tracked · Kept out of Safe to Spend",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -552,12 +710,13 @@ internal fun FixedCostsRow(trackedCount: Int, onClick: () -> Unit) {
             Spacer(modifier = Modifier.width(8.dp))
             Surface(
                 shape = RoundedCornerShape(AppRadius.pill),
-                // FIX: Stark neutral pill
                 color = MaterialTheme.colorScheme.onSurface
             ) {
                 Text(
-                    "Manage →", fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.surface, // White text
+                    "Manage →",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.surface,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                 )
             }
@@ -565,22 +724,27 @@ internal fun FixedCostsRow(trackedCount: Int, onClick: () -> Unit) {
     }
 }
 
-// ─────────────────────────────── Category sheet (unchanged) ───────────────────────────────
+// ─────────────────────────────── Category & Merchant drill-down sheets ───────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategoryTransactionsSheet(
     categoryName: String,
     allTransactions: List<TransactionWithDebts>,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    budgetPaise: Long? = null,
+    onManageBudgetClick: (() -> Unit)? = null,
+    onTransactionClick: ((TransactionEntity) -> Unit)? = null
 ) {
+    val haptic = LocalHapticFeedback.current
     val categoryTxns = remember(allTransactions, categoryName) {
-        allTransactions.filter { it.transaction.category == categoryName && isSpendDebit(it.transaction) }
+        allTransactions.filter { it.transaction.category.equals(categoryName, ignoreCase = true) && isSpendDebit(it.transaction) }
             .sortedByDescending { it.transaction.timestamp }
     }
 
     val totalSpent = remember(categoryTxns) { categoryTxns.sumOf { myShareOf(it) } }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val hasBudget = budgetPaise != null && budgetPaise > 0L
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -589,17 +753,65 @@ fun CategoryTransactionsSheet(
         containerColor = MaterialTheme.colorScheme.background
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp, top = 8.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp, top = 8.dp)
         ) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
-                    Text(categoryName, fontWeight = FontWeight.Bold, fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurface)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        categoryName,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                     Spacer(modifier = Modifier.height(2.dp))
-                    Text("${categoryTxns.size} transactions • ₹${String.format(Locale.getDefault(), "%,.2f", totalSpent / 100.0)}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "${categoryTxns.size} ${if (categoryTxns.size == 1) "transaction" else "transactions"} • ₹${String.format(Locale.getDefault(), "%,.2f", totalSpent / 100.0)}",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (onManageBudgetClick != null && !categoryName.equals("Uncategorized", ignoreCase = true)) {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Surface(
+                        shape = RoundedCornerShape(AppRadius.pill),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(AppRadius.pill))
+                            .quietClickable {
+                                haptic.tap()
+                                onManageBudgetClick()
+                            }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                if (hasBudget) Icons.Default.Edit else Icons.Default.Add,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                if (hasBudget) "Cap: ${formatRupees(budgetPaise!!)}" else "Set cap",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             LazyColumn {
                 item {
@@ -612,11 +824,102 @@ fun CategoryTransactionsSheet(
                                     debts = item.debts,
                                     isSettled = false,
                                     settledBy = null,
-                                    showActions = false, // THIS REMOVES THE ACTION ROW
+                                    showActions = false,
                                     grouped = true,
                                     showCategory = false,
                                     showDate = true,
-                                    onCardClick = { },
+                                    onCardClick = {
+                                        if (onTransactionClick != null) {
+                                            haptic.tap()
+                                            onTransactionClick(item.transaction)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MerchantTransactionsSheet(
+    merchantName: String,
+    allTransactions: List<TransactionWithDebts>,
+    onDismiss: () -> Unit,
+    onTransactionClick: ((TransactionEntity) -> Unit)? = null
+) {
+    val haptic = LocalHapticFeedback.current
+    val merchantTxns = remember(allTransactions, merchantName) {
+        allTransactions.filter { it.transaction.payee.equals(merchantName, ignoreCase = true) && isSpendDebit(it.transaction) }
+            .sortedByDescending { it.transaction.timestamp }
+    }
+
+    val totalSpent = remember(merchantTxns) { merchantTxns.sumOf { myShareOf(it) } }
+    val avgPerVisit = remember(merchantTxns, totalSpent) {
+        if (merchantTxns.isNotEmpty()) totalSpent.toDouble() / merchantTxns.size else 0.0
+    }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
+        containerColor = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp, top = 8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        merchantName,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        "${merchantTxns.size} ${if (merchantTxns.size == 1) "visit" else "visits"} • ₹${String.format(Locale.getDefault(), "%,.2f", totalSpent / 100.0)} • avg ${formatRupees(avgPerVisit)}",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            LazyColumn {
+                item {
+                    TransactionGroup {
+                        merchantTxns.forEachIndexed { index, item ->
+                            if (index > 0) TransactionRowDivider()
+                            key(item.transaction.id) {
+                                DashboardTransactionCard(
+                                    transaction = item.transaction,
+                                    debts = item.debts,
+                                    isSettled = false,
+                                    settledBy = null,
+                                    showActions = false,
+                                    grouped = true,
+                                    showCategory = true,
+                                    showDate = true,
+                                    onCardClick = {
+                                        if (onTransactionClick != null) {
+                                            haptic.tap()
+                                            onTransactionClick(item.transaction)
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -630,15 +933,71 @@ fun CategoryTransactionsSheet(
 // ─────────────────────────────── Shared bits ───────────────────────────────
 
 @Composable
-internal fun SectionHeader(title: String, trailing: String? = null) {
+internal fun SectionHeader(
+    title: String,
+    trailing: String? = null,
+    actionLabel: String? = null,
+    actionIcon: ImageVector? = null,
+    onActionClick: (() -> Unit)? = null
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-        if (trailing != null) {
-            Text(trailing, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                title,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (trailing != null && actionLabel != null) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "· $trailing",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        if (actionLabel != null && onActionClick != null) {
+            Surface(
+                shape = RoundedCornerShape(AppRadius.pill),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(AppRadius.pill))
+                    .quietClickable(onClick = onActionClick)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    if (actionIcon != null) {
+                        Icon(
+                            actionIcon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text(
+                        actionLabel,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        } else if (trailing != null) {
+            Text(
+                trailing,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -646,17 +1005,31 @@ internal fun SectionHeader(title: String, trailing: String? = null) {
 @Composable
 internal fun EmptyInsightState(text: String) {
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
         shape = RoundedCornerShape(AppRadius.medium),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(32.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(28.dp))
-            Text(text, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
+            Icon(
+                Icons.Default.ReceiptLong,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(28.dp)
+            )
+            Text(
+                text,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 14.sp
+            )
         }
     }
 }
@@ -703,14 +1076,14 @@ internal fun HeroFact(modifier: Modifier, label: String, value: String, caption:
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             value,
-            fontSize = 20.sp,
+            fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = (-0.3).sp,
             color = valueColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Text(caption, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(caption, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -751,10 +1124,13 @@ internal fun InsightsStatTile(
     label: String,
     value: String,
     caption: String,
-    accent: Color
+    accent: Color,
+    onClick: (() -> Unit)? = null
 ) {
     Surface(
-        modifier = modifier,
+        modifier = modifier
+            .clip(RoundedCornerShape(AppRadius.medium))
+            .then(if (onClick != null) Modifier.quietClickable(onClick = onClick) else Modifier),
         shape = RoundedCornerShape(AppRadius.medium),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
@@ -763,10 +1139,9 @@ internal fun InsightsStatTile(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = RoundedCornerShape(9.dp),
-                    // FIX: Neutral background instead of accent.copy(alpha = 0.12f)
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
                 ) {
-                    Icon(icon, contentDescription = null, modifier = Modifier.padding(6.dp).size(16.dp), tint = accent) // Keep glyph accent
+                    Icon(icon, contentDescription = null, modifier = Modifier.padding(6.dp).size(16.dp), tint = accent)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
@@ -775,8 +1150,17 @@ internal fun InsightsStatTile(
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
+                if (onClick != null) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(12.dp))
             Text(
@@ -815,7 +1199,6 @@ internal fun ShowMoreToggle(text: String, expanded: Boolean, onClick: () -> Unit
             text,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
-            // FIX: Remove primary green from text links
             color = MaterialTheme.colorScheme.onSurface
         )
         Spacer(modifier = Modifier.width(2.dp))
@@ -831,7 +1214,6 @@ internal fun ShowMoreToggle(text: String, expanded: Boolean, onClick: () -> Unit
 @Composable
 internal fun InsightsAccountChip(label: String, isSelected: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    // FIX: Grounded neutral states instead of primary green
     val bg by animateColorAsState(
         if (isSelected) colors.onSurface else colors.surfaceVariant.copy(alpha = 0.35f),
         tween(250), label = "chipBg"
@@ -841,7 +1223,7 @@ internal fun InsightsAccountChip(label: String, isSelected: Boolean, onClick: ()
         tween(250), label = "chipBorder"
     )
     val textColor by animateColorAsState(
-        if (isSelected) colors.surface else colors.onSurface, // White text when active
+        if (isSelected) colors.surface else colors.onSurface,
         tween(250), label = "chipText"
     )
     Surface(
@@ -873,7 +1255,7 @@ internal fun CycleSelector(
 ) {
     val label = remember(startMillis, endMillis) { formatCycleRange(startMillis, endMillis) }
     val subtitle = when {
-        !isCurrent -> "Past cycle · Back to current"
+        !isCurrent -> "Past cycle · Tap to return to current"
         daysLeft == 0 -> "Current cycle · Resets today"
         daysLeft == 1 -> "Current cycle · 1 day left"
         else -> "Current cycle · $daysLeft days left"
@@ -914,7 +1296,6 @@ internal fun CycleSelector(
                     subtitle,
                     fontSize = 12.sp,
                     fontWeight = if (isCurrent) FontWeight.Normal else FontWeight.SemiBold,
-                    // FIX: Stark neutral instead of primary
                     color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant
                     else MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
@@ -969,4 +1350,3 @@ internal fun rememberEntered(delayMs: Long = 0L): Boolean {
     }
     return entered
 }
-
