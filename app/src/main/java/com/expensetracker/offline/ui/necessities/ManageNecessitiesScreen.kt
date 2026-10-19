@@ -301,6 +301,51 @@ fun ManageNecessitiesScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 18.sp
                         )
+                        if (sortedItems.isNotEmpty() && total > 0L) {
+                            val paidFraction = (paidCount.toFloat() / sortedItems.size.toFloat()).coerceIn(0f, 1f)
+                            val animatedPaidFraction by animateFloatAsState(
+                                targetValue = paidFraction,
+                                animationSpec = tween(600),
+                                label = "paidBillsProgress"
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                            ) {
+                                val clampedPaid = animatedPaidFraction.coerceIn(0f, 1f)
+                                if (clampedPaid > 0f) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(clampedPaid)
+                                            .fillMaxHeight()
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.onSurface)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "$paidCount of ${sortedItems.size} paid this cycle",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    if (paidCount == sortedItems.size) "All settled" else "${sortedItems.size - paidCount} remaining",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (paidCount == sortedItems.size) AppColors.positive else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
                     }
                 }
             }

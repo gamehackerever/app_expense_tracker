@@ -88,8 +88,10 @@ import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
 import com.expensetracker.offline.util.NecessityManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -189,12 +191,24 @@ internal fun NecessityCard(
 
             if (vault != null) {
                 Spacer(Modifier.height(12.dp))
-                LinearProgressIndicator(
-                    progress = { vault.fraction },
-                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
-                    color = scheme.onSurface,
-                    trackColor = scheme.onSurface.copy(alpha = 0.08f)
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(CircleShape)
+                        .background(scheme.onSurface.copy(alpha = 0.08f))
+                ) {
+                    val f = vault.fraction.coerceIn(0f, 1f)
+                    if (f > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(f)
+                                .fillMaxHeight()
+                                .clip(CircleShape)
+                                .background(scheme.onSurface)
+                        )
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "${CurrencyFormat.withSymbol(vault.saved, 0)} / ${CurrencyFormat.withSymbol(vault.target, 0)} set aside",
@@ -442,8 +456,15 @@ internal fun NecessityFormSheet(
         )
     }
 
-    val autoTxn = remember(currentDraftItem, transactions) {
-        NecessityManager.findLastTransaction(currentDraftItem, transactions)
+    val autoTxn by produceState<TransactionEntity?>(initialValue = null, currentDraftItem, transactions) {
+        if (currentDraftItem.name.isBlank()) {
+            value = null
+        } else {
+            delay(150)
+            value = withContext(Dispatchers.Default) {
+                NecessityManager.findLastTransaction(currentDraftItem, transactions)
+            }
+        }
     }
 
     var extraCategories by remember { mutableStateOf(emptyList<String>()) }
@@ -455,10 +476,16 @@ internal fun NecessityFormSheet(
                     .distinct()
     }
 
-    val suggestions = remember(nameInput, transactions) {
-        if (seed != null) emptyList()
-        else NecessityManager.suggestBills(nameInput, transactions)
-            .filter { !it.payee.equals(nameInput.trim(), true) }
+    val suggestions by produceState(initialValue = emptyList<NecessityManager.BillSuggestion>(), nameInput, transactions) {
+        if (seed != null) {
+            value = emptyList()
+        } else {
+            delay(200)
+            value = withContext(Dispatchers.Default) {
+                NecessityManager.suggestBills(nameInput, transactions.take(1000))
+                    .filter { !it.payee.equals(nameInput.trim(), true) }
+            }
+        }
     }
 
     val isValid = nameInput.isNotBlank() && parsedAmount != null && parsedAmount > 0L &&
@@ -587,8 +614,10 @@ internal fun NecessityFormSheet(
                 }
 
                 // Due date: shown for every billing type, monthly included.
-                val autoDueDate = remember(currentDraftItem, transactions) {
-                    effectiveDue(currentDraftItem.copy(dueTimestamp = null), transactions, System.currentTimeMillis())
+                val autoDueDate by produceState<Long?>(initialValue = null, currentDraftItem, transactions) {
+                    value = withContext(Dispatchers.Default) {
+                        effectiveDue(currentDraftItem.copy(dueTimestamp = null), transactions, System.currentTimeMillis())
+                    }
                 }
                 val shownDue = dueTimestamp ?: autoDueDate
 
@@ -604,7 +633,8 @@ internal fun NecessityFormSheet(
                         NecessityIcon(Icons.Default.AutoAwesome)
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            if (autoTxn != null) {
+                            val currentAutoTxn = autoTxn
+                            if (currentAutoTxn != null) {
                                 Text(
                                     "Auto-detected from transaction history",
                                     fontSize = 11.sp,
@@ -612,7 +642,7 @@ internal fun NecessityFormSheet(
                                     color = colors.onSurfaceVariant
                                 )
                                 Text(
-                                    "Last paid on ${dateFmt.format(autoTxn.timestamp)} (${autoTxn.payee})",
+                                    "Last paid on ${dateFmt.format(currentAutoTxn.timestamp)} (${currentAutoTxn.payee})",
                                     fontSize = 13.sp,
                                     color = colors.onSurface
                                 )
