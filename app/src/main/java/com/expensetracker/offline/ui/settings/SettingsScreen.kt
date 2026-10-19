@@ -271,7 +271,10 @@ fun SettingsScreen(
 
     var isLowBalanceEnabled by remember { mutableStateOf(settingsRepo.lowBalanceAlertEnabled) }
     var thresholdText by remember { mutableStateOf(settingsRepo.lowBalanceThreshold.toInt().toString()) }
-    var budgetText by remember { mutableStateOf(settingsRepo.monthlyBudget.toInt().toString()) }
+    val vmMonthlyBudget by viewModel.monthlyBudget.collectAsState()
+    val allTransactionsWithDebts by viewModel.allTransactionsWithDebts.collectAsState()
+    val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsState()
+    var budgetText by remember(vmMonthlyBudget) { mutableStateOf(vmMonthlyBudget.toString()) }
 
     var startDayOfMonth by remember { mutableIntStateOf(settingsRepo.startDayOfMonth) }
     var skipReviewQueue by remember { mutableStateOf(settingsRepo.skipReviewQueue) }
@@ -322,7 +325,7 @@ fun SettingsScreen(
             // Same for the budget: leaving while the field is focused must not drop the edit.
             val pendingBudget = budgetText.toLongOrNull()?.takeIf { it > 0L }
             if (pendingBudget != null && pendingBudget != settingsRepo.monthlyBudget) {
-                settingsRepo.monthlyBudget = pendingBudget
+                viewModel.updateMonthlyBudget(pendingBudget)
             }
         }
     }
@@ -358,11 +361,11 @@ fun SettingsScreen(
     fun commitBudget() {
         val parsed = budgetText.toLongOrNull()?.takeIf { it > 0L }
         if (parsed != null && parsed != settingsRepo.monthlyBudget) {
-            settingsRepo.monthlyBudget = parsed
+            viewModel.updateMonthlyBudget(parsed)
             budgetText = parsed.toString()
             showSnack("Budget saved")
         } else {
-            budgetText = settingsRepo.monthlyBudget.toInt().toString()
+            budgetText = settingsRepo.monthlyBudget.toString()
         }
     }
 
@@ -648,8 +651,8 @@ fun SettingsScreen(
             }
 
             Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 listOf(
                     "Budget" to "Cycle",
@@ -661,16 +664,22 @@ fun SettingsScreen(
                     val isSelected = highlightedSection == key
                     Surface(
                         shape = RoundedCornerShape(AppRadius.pill),
-                        color = if (isSelected) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant,
+                        color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceVariant,
                         border = if (isSelected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                        modifier = Modifier.clip(RoundedCornerShape(AppRadius.pill)).quietClickable { scrollToAndHighlight(key) }
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(AppRadius.pill))
+                            .quietClickable { scrollToAndHighlight(key) }
                     ) {
                         Text(
                             text = label,
-                            fontSize = 14.sp,
+                            fontSize = 12.5.sp,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            color = if (isSelected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
                         )
                     }
                 }
@@ -790,9 +799,74 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
+                val categoryBudgets by viewModel.categoryBudgets.collectAsState()
+                var showManageCategoryBudgetsDialog by remember { mutableStateOf(false) }
 
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(AppRadius.small))
+                        .quietClickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            showManageCategoryBudgetsDialog = true
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        SettingsIcon(Icons.Default.Category, MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                "Category Budgets",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            val totalAllocated = categoryBudgets.values.sum()
+                            Text(
+                                if (categoryBudgets.isEmpty()) "Set spending caps for Food, Shopping, etc."
+                                else "${categoryBudgets.size} ${if (categoryBudgets.size == 1) "limit" else "limits"} active · ${com.expensetracker.offline.ui.components.CurrencyFormat.withSymbol(totalAllocated, 0)} allocated",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
 
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
 
+                if (showManageCategoryBudgetsDialog) {
+                    val allAvailableCategories = remember(transactions) {
+                        (com.expensetracker.offline.engine.categorizer.CategoryClassifier.PREDEFINED_CATEGORIES +
+                                settingsRepo.customCategories +
+                                transactions.asSequence().take(500).map { it.category }.toList())
+                            .filter { it.isNotBlank() }
+                            .distinct()
+                    }
+                    com.expensetracker.offline.ui.dashboard.ManageCategoryBudgetsSheet(
+                        availableCategories = allAvailableCategories,
+                        currentBudgets = categoryBudgets,
+                        onSaveBudget = { cat, limit ->
+                            viewModel.setCategoryBudget(cat, limit)
+                        },
+                        onRemoveBudget = { cat ->
+                            viewModel.removeCategoryBudget(cat)
+                        },
+                        onDismiss = { showManageCategoryBudgetsDialog = false },
+                        transactions = allTransactionsWithDebts,
+                        pendingDeleteIds = pendingDeleteIds.keys,
+                        monthlyBudgetPaise = vmMonthlyBudget * 100L,
+                        startDayOfMonth = startDayOfMonth
+                    )
+                }
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
@@ -827,66 +901,6 @@ fun SettingsScreen(
                     keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                     modifier = Modifier.onFocusLost { commitMyUpi() }
                 )
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-
-                val categoryBudgets by viewModel.categoryBudgets.collectAsState()
-                var showManageCategoryBudgetsDialog by remember { mutableStateOf(false) }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .quietClickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            showManageCategoryBudgetsDialog = true
-                        },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        SettingsIcon(com.expensetracker.offline.ui.theme.getCategoryIcon("Shopping"), MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                "Category Budgets",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                if (categoryBudgets.isEmpty()) "Set spending caps for Food, Shopping, etc." else "${categoryBudgets.size} category ${if (categoryBudgets.size == 1) "limit" else "limits"} active",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Icon(
-                        Icons.Default.ChevronRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                if (showManageCategoryBudgetsDialog) {
-                    val settingsRepo = remember { SettingsRepository(context) }
-                    val allAvailableCategories = remember {
-                        (com.expensetracker.offline.engine.categorizer.CategoryClassifier.PREDEFINED_CATEGORIES + settingsRepo.customCategories).distinct()
-                    }
-                    com.expensetracker.offline.ui.dashboard.ManageCategoryBudgetsSheet(
-                        availableCategories = allAvailableCategories,
-                        currentBudgets = categoryBudgets,
-                        onSaveBudget = { cat, limit ->
-                            viewModel.setCategoryBudget(cat, limit)
-                        },
-                        onRemoveBudget = { cat ->
-                            viewModel.removeCategoryBudget(cat)
-                        },
-                        onDismiss = { showManageCategoryBudgetsDialog = false }
-                    )
-                }
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 

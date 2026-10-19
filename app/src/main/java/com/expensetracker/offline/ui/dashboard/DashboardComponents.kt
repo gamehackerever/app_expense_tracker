@@ -33,13 +33,23 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.text.KeyboardActions
+import kotlin.math.roundToInt
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
@@ -49,6 +59,7 @@ import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.ChevronRight
 import com.expensetracker.offline.ui.theme.getCategoryIcon
 import com.expensetracker.offline.ui.theme.getCategoryColor
+import com.expensetracker.offline.ui.theme.hasCategoryIcon
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
@@ -1202,37 +1213,362 @@ internal fun Modifier.quietSelectable(
     onClick = onClick
 )
 
+
+@Composable
+fun DashboardProgressBar(
+    progress: Float,
+    color: Color,
+    trackColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+    height: androidx.compose.ui.unit.Dp = 4.dp,
+    modifier: Modifier = Modifier
+) {
+    val clamped = progress.coerceIn(0f, 1f)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(height)
+            .clip(RoundedCornerShape(AppRadius.pill))
+            .background(trackColor)
+    ) {
+        if (clamped > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(clamped)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(AppRadius.pill))
+                    .background(color)
+            )
+        }
+    }
+}
+
+@Composable
+internal fun CategoryBadgeTile(
+    category: String,
+    size: androidx.compose.ui.unit.Dp = 38.dp,
+    cornerRadius: androidx.compose.ui.unit.Dp = 10.dp,
+    iconSize: androidx.compose.ui.unit.Dp = 18.dp
+) {
+    val hasIcon = remember(category) { hasCategoryIcon(category) }
+    val initial = remember(category) {
+        category.trim().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?"
+    }
+    val neutralTint = MaterialTheme.colorScheme.onSurfaceVariant
+    Surface(
+        shape = RoundedCornerShape(cornerRadius),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+        modifier = Modifier.size(size)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            if (hasIcon) {
+                Icon(
+                    getCategoryIcon(category),
+                    contentDescription = null,
+                    tint = neutralTint,
+                    modifier = Modifier.size(iconSize)
+                )
+            } else {
+                Text(
+                    text = initial,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = neutralTint
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CategoryBudgetsDashboardWidget(
+    statuses: List<CategoryBudgetStatus>,
+    onManageClick: () -> Unit,
+    onCategoryClick: (String) -> Unit = { onManageClick() },
+    onDismissPromo: () -> Unit = {}
+) {
+    if (statuses.isEmpty()) return
+
+    val haptic = LocalHapticFeedback.current
+    var showAll by rememberSaveable { mutableStateOf(false) }
+    val previewCount = 3
+    val overCount = remember(statuses) { statuses.count { it.isOverBudget } }
+    val nearCount = remember(statuses) { statuses.count { !it.isOverBudget && (it.isNearLimit || it.isAtLimit) } }
+
+    val (badgeText, badgeColor, badgeBg) = when {
+        overCount > 0 -> Triple(
+            "$overCount exceeded",
+            AppColors.negative,
+            AppColors.negative.copy(alpha = 0.10f)
+        )
+        nearCount > 0 -> Triple(
+            "$nearCount near limit",
+            AppColors.warning,
+            AppColors.warning.copy(alpha = 0.10f)
+        )
+        else -> Triple(
+            "${statuses.size} on track",
+            MaterialTheme.colorScheme.onSurfaceVariant,
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+        )
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AppRadius.large),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(AppSpacing.cardPadding)
+                .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(AppRadius.small))
+                    .quietClickable {
+                        haptic.tap()
+                        onManageClick()
+                    },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Category budgets",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(AppRadius.pill),
+                    color = badgeBg
+                ) {
+                    Text(
+                        text = badgeText,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = badgeColor,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            val displayed = if (showAll) statuses else statuses.take(previewCount)
+            displayed.forEachIndexed { index, status ->
+                if (index > 0) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+                CategoryBudgetCompactRow(
+                    status = status,
+                    onClick = {
+                        haptic.tap()
+                        onCategoryClick(status.category)
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (statuses.size > previewCount) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(AppRadius.small))
+                            .quietClickable {
+                                haptic.tap()
+                                showAll = !showAll
+                            }
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            if (showAll) "Show less" else "Show all ${statuses.size}",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Icon(
+                            if (showAll) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                } else {
+                    val totalLimited = statuses.sumOf { it.limitPaise }
+                    val totalSpent = statuses.sumOf { it.spentPaise }
+                    Text(
+                        "${CurrencyFormat.withSymbol(totalSpent, 0)} of ${CurrencyFormat.withSymbol(totalLimited, 0)} used",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(AppRadius.small))
+                        .quietClickable {
+                            haptic.tap()
+                            onManageClick()
+                        }
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Manage",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryBudgetCompactRow(
+    status: CategoryBudgetStatus,
+    onClick: () -> Unit
+) {
+    val pct = (status.progress * 100f).roundToInt()
+    val barColor = when {
+        status.isOverBudget -> AppColors.negative
+        status.isNearLimit || status.isAtLimit -> AppColors.warning
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val subtitleText = when {
+        status.isOverBudget -> "Exceeded by ${CurrencyFormat.withSymbol(status.overagePaise, 0)}"
+        status.isAtLimit -> "Limit reached · ₹0 left"
+        status.dailyAllowancePaise > 0L -> "${CurrencyFormat.withSymbol(status.remainingPaise, 0)} left · ≈ ${CurrencyFormat.withSymbol(status.dailyAllowancePaise, 0)}/day"
+        status.isPacingHigh -> "${CurrencyFormat.withSymbol(status.remainingPaise, 0)} left · pacing high"
+        else -> "${CurrencyFormat.withSymbol(status.remainingPaise, 0)} left"
+    }
+    val subtitleColor = when {
+        status.isOverBudget -> AppColors.negative
+        status.isAtLimit || status.isNearLimit -> AppColors.warning
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    val animatedProgress by animateFloatAsState(
+        targetValue = status.progress.coerceIn(0f, 1f),
+        animationSpec = tween(700, easing = FastOutSlowInEasing),
+        label = "catBudgetRowProgress"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(AppRadius.small))
+            .quietClickable(onClick = onClick)
+            .padding(vertical = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CategoryBadgeTile(category = status.category)
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    status.category,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(1.dp))
+                Text(
+                    subtitleText,
+                    fontSize = 12.sp,
+                    fontWeight = if (status.isOverBudget || status.isAtLimit) FontWeight.Medium else FontWeight.Normal,
+                    color = subtitleColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    CurrencyFormat.withSymbol(status.spentPaise, 0),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (status.isOverBudget) AppColors.negative else MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "of ${CurrencyFormat.withSymbol(status.limitPaise, 0)} · $pct%",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        DashboardProgressBar(
+            progress = animatedProgress,
+            color = barColor,
+            height = 4.dp
+        )
+    }
+}
+
 @Composable
 fun CategoryBudgetWarningBanner(
     statuses: List<CategoryBudgetStatus>,
     onManageClick: () -> Unit,
     onDismissClick: (List<String>) -> Unit
 ) {
-    val warningCategories = statuses.filter { it.isOverBudget || it.isNearLimit }
+    val warningCategories = statuses.filter { it.isOverBudget || it.isAtLimit || it.isNearLimit }
     if (warningCategories.isEmpty()) return
 
-    val isOver = warningCategories.any { it.isOverBudget }
-    val color = if (isOver) MaterialTheme.colorScheme.errorContainer else AppColors.warning.copy(alpha = 0.15f)
-    val contentColor = if (isOver) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
-    val strokeColor = if (isOver) MaterialTheme.colorScheme.error.copy(alpha = 0.4f) else AppColors.warning.copy(alpha = 0.4f)
-    val iconColor = if (isOver) MaterialTheme.colorScheme.error else AppColors.warning
+    val anyOver = warningCategories.any { it.isOverBudget }
+    val accentColor = if (anyOver) AppColors.negative else AppColors.warning
 
     Surface(
         shape = RoundedCornerShape(AppRadius.medium),
-        color = color,
-        border = BorderStroke(1.dp, strokeColor),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.35f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = 8.dp),
+            modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.Top
         ) {
-            Icon(
-                Icons.Default.WarningAmber,
-                contentDescription = null,
-                tint = iconColor,
-                modifier = Modifier.size(24.dp)
-            )
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = accentColor.copy(alpha = 0.10f),
+                modifier = Modifier.size(36.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.WarningAmber,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
             Spacer(modifier = Modifier.width(12.dp))
             Column(
                 modifier = Modifier
@@ -1240,32 +1576,37 @@ fun CategoryBudgetWarningBanner(
                     .quietClickable { onManageClick() }
             ) {
                 Text(
-                    if (isOver) "Category Budget Exceeded" else "Category Budget Warning",
+                    if (anyOver) "Category limit exceeded" else "Approaching category limit",
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = contentColor
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    warningCategories.joinToString("\n") { status ->
-                        val pct = (status.progress * 100).toInt()
-                        val verb = if (status.isOverBudget) "over budget" else "used"
-                        "${status.category}: ${CurrencyFormat.withSymbol(status.spentPaise, 0)} of ${CurrencyFormat.withSymbol(status.limitPaise, 0)} ($pct% $verb)"
+                    warningCategories.joinToString("") { status ->
+                        when {
+                            status.isOverBudget ->
+                                "${status.category}: exceeded ${CurrencyFormat.withSymbol(status.limitPaise, 0)} by ${CurrencyFormat.withSymbol(status.overagePaise, 0)}"
+                            status.isAtLimit ->
+                                "${status.category}: reached ${CurrencyFormat.withSymbol(status.limitPaise, 0)} cap"
+                            else ->
+                                "${status.category}: ${CurrencyFormat.withSymbol(status.remainingPaise, 0)} left of ${CurrencyFormat.withSymbol(status.limitPaise, 0)} (${(status.progress * 100f).roundToInt()}%)"
+                        }
                     },
-                    fontSize = 12.sp,
-                    color = contentColor.copy(alpha = 0.8f),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 18.sp
                 )
             }
             IconButton(
                 onClick = { onDismissClick(warningCategories.map { it.category }) },
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(28.dp)
             ) {
                 Icon(
                     Icons.Default.Close,
                     contentDescription = "Dismiss warning",
-                    tint = contentColor.copy(alpha = 0.6f),
-                    modifier = Modifier.size(20.dp)
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
@@ -1277,312 +1618,740 @@ fun CategoryBudgetsCard(
     statuses: List<CategoryBudgetStatus>,
     onManageClick: () -> Unit
 ) {
-    if (statuses.isEmpty()) return
-
-    Surface(
-        shape = RoundedCornerShape(AppRadius.large),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(AppSpacing.cardPadding)) {
-            Row(
-                modifier = Modifier.fillMaxWidth().quietClickable { onManageClick() },
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Default.Category,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            "Category Budgets",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            "${statuses.size} ${if (statuses.size == 1) "category" else "categories"} tracked",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                Icon(
-                    Icons.Default.ChevronRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                statuses.forEach { status ->
-                    val icon = getCategoryIcon(status.category)
-                    val catColor = getCategoryColor(status.category)
-                    val barColor = when {
-                        status.isOverBudget -> AppColors.negative
-                        status.isNearLimit -> AppColors.warning
-                        else -> catColor
-                    }
-                    val pct = (status.progress * 100).toInt()
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = catColor.copy(alpha = 0.1f),
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(icon, contentDescription = null, tint = catColor, modifier = Modifier.size(16.dp))
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                                Text(
-                                    status.category,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    "${pct}%",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (status.isOverBudget) AppColors.negative else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            LinearProgressIndicator(
-                                progress = { status.progress.coerceIn(0f, 1f) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(4.dp)
-                                    .clip(RoundedCornerShape(AppRadius.pill)),
-                                color = barColor,
-                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                strokeCap = StrokeCap.Round,
-                                drawStopIndicator = {}
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                                Text(
-                                    CurrencyFormat.withSymbol(status.spentPaise, 0),
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    "of ${CurrencyFormat.withSymbol(status.limitPaise, 0)}",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    CategoryBudgetsDashboardWidget(
+        statuses = statuses,
+        onManageClick = onManageClick
+    )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ManageCategoryBudgetsSheet(
     availableCategories: List<String>,
     currentBudgets: Map<String, Long>,
     onSaveBudget: (category: String, limitPaise: Long) -> Unit,
     onRemoveBudget: (category: String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initialCategory: String? = null,
+    transactions: List<TransactionWithDebts> = emptyList(),
+    pendingDeleteIds: Set<Long> = emptySet(),
+    monthlyBudgetPaise: Long = 0L,
+    startDayOfMonth: Int = 1
 ) {
-    var selectedCategory by remember { mutableStateOf(availableCategories.firstOrNull() ?: "Food & Dining") }
-    var inputRupees by remember { mutableStateOf("") }
     val haptic = LocalHapticFeedback.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var selectedCategoryForEdit by rememberSaveable(initialCategory) { mutableStateOf(initialCategory) }
+
+    val cleanCategories = remember(availableCategories, currentBudgets, transactions) {
+        val nonExpenseCategories = setOf(
+            "split settlement", "uncategorized", "refunds", "refund", "rewards", "reward", "cashback", "salary", "income"
+        )
+        val budgetedKeys = currentBudgets.keys.map { it.trim().lowercase() }.toSet()
+        val debitCategories = transactions
+            .asSequence()
+            .take(500)
+            .filter { it.transaction.type == TransactionType.DEBIT && !it.transaction.excludeFromSpend }
+            .map { it.transaction.category }
+            .toList()
+        (availableCategories + currentBudgets.keys + debitCategories)
+            .map { it.trim() }
+            .filter {
+                val lower = it.lowercase()
+                it.isNotEmpty() && (lower in budgetedKeys || lower !in nonExpenseCategories)
+            }
+            .distinctBy { it.lowercase() }
+    }
+
+    val statuses = remember(transactions, currentBudgets, startDayOfMonth, pendingDeleteIds) {
+        computeCategoryBudgetStatuses(
+            transactions = transactions,
+            categoryBudgets = currentBudgets,
+            startDayOfMonth = startDayOfMonth,
+            pendingDeleteIds = pendingDeleteIds
+        )
+    }
+
+    val spendStatsMap = remember(transactions, cleanCategories, startDayOfMonth, pendingDeleteIds) {
+        computeCategorySpendStats(
+            transactions = transactions,
+            availableCategories = cleanCategories,
+            startDayOfMonth = startDayOfMonth,
+            pendingDeleteIds = pendingDeleteIds
+        )
+    }
+
+    BackHandler(enabled = selectedCategoryForEdit != null && initialCategory == null) {
+        haptic.tap()
+        selectedCategoryForEdit = null
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surface,
-        dragHandle = { BottomSheetDefaults.DragHandle() },
-        contentWindowInsets = { WindowInsets(0, 0, 0, 0) }
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
+        containerColor = MaterialTheme.colorScheme.background,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = AppSpacing.screenPadding)
-                .padding(bottom = 32.dp)
+                .navigationBarsPadding()
+                .imePadding()
         ) {
+            AnimatedContent(
+                targetState = selectedCategoryForEdit,
+                transitionSpec = {
+                    if (targetState != null) {
+                        (slideInHorizontally { width -> width / 3 } + fadeIn(tween(180)))
+                            .togetherWith(slideOutHorizontally { width -> -width / 3 } + fadeOut(tween(120)))
+                    } else {
+                        (slideInHorizontally { width -> -width / 3 } + fadeIn(tween(180)))
+                            .togetherWith(slideOutHorizontally { width -> width / 3 } + fadeOut(tween(120)))
+                    }
+                },
+                label = "categoryBudgetSheetTransition"
+            ) { editingCategory ->
+                if (editingCategory == null) {
+                    CategoryBudgetListContent(
+                        availableCategories = cleanCategories,
+                        statuses = statuses,
+                        spendStatsMap = spendStatsMap,
+                        monthlyBudgetPaise = monthlyBudgetPaise,
+                        startDayOfMonth = startDayOfMonth,
+                        onCategorySelect = { cat ->
+                            haptic.tap()
+                            selectedCategoryForEdit = cat
+                        },
+                        onDone = {
+                            haptic.tap()
+                            onDismiss()
+                        }
+                    )
+                } else {
+                    val existingLimit = currentBudgets.entries
+                        .firstOrNull { it.key.equals(editingCategory, ignoreCase = true) }
+                        ?.value
+                    val stats = spendStatsMap.entries
+                        .firstOrNull { it.key.equals(editingCategory, ignoreCase = true) }
+                        ?.value
+                    val otherAllocatedPaise = statuses
+                        .filterNot { it.category.equals(editingCategory, ignoreCase = true) }
+                        .sumOf { it.limitPaise }
+
+                    CategoryBudgetFormContent(
+                        category = editingCategory,
+                        currentLimitPaise = existingLimit,
+                        stats = stats,
+                        otherAllocatedPaise = otherAllocatedPaise,
+                        monthlyBudgetPaise = monthlyBudgetPaise,
+                        startDayOfMonth = startDayOfMonth,
+                        onBack = {
+                            haptic.tap()
+                            if (initialCategory != null) onDismiss() else selectedCategoryForEdit = null
+                        },
+                        onSave = { newLimit ->
+                            haptic.confirm()
+                            onSaveBudget(editingCategory, newLimit)
+                            if (initialCategory != null) onDismiss() else selectedCategoryForEdit = null
+                        },
+                        onRemove = {
+                            haptic.delete()
+                            onRemoveBudget(editingCategory)
+                            if (initialCategory != null) onDismiss() else selectedCategoryForEdit = null
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryBudgetListContent(
+    availableCategories: List<String>,
+    statuses: List<CategoryBudgetStatus>,
+    spendStatsMap: Map<String, CategorySpendStats>,
+    monthlyBudgetPaise: Long,
+    startDayOfMonth: Int,
+    onCategorySelect: (String) -> Unit,
+    onDone: () -> Unit
+) {
+    val activeKeys = remember(statuses) { statuses.map { it.category.lowercase() }.toSet() }
+    val unbudgetedCategories = remember(availableCategories, activeKeys, spendStatsMap) {
+        availableCategories
+            .filter { it.lowercase() !in activeKeys }
+            .sortedWith(
+                compareByDescending<String> { spendStatsMap[it]?.currentCycleSpentPaise ?: 0L }
+                    .thenByDescending { spendStatsMap[it]?.threeCycleAvgPaise ?: 0L }
+                    .thenBy { it.lowercase() }
+            )
+    }
+
+    val totalAllocatedPaise = remember(statuses) { statuses.sumOf { it.limitPaise } }
+    val totalCappedSpentPaise = remember(statuses) { statuses.sumOf { it.spentPaise } }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .padding(horizontal = 24.dp)
+                .padding(top = 8.dp, bottom = 16.dp)
+        ) {
+            SheetHeader(
+                title = "Category budgets",
+                subtitle = "Monthly spending caps · Resets Day $startDayOfMonth"
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(bottom = 8.dp)
+            ) {
+                // Allocation & summary card scrolls smoothly with the list so items never clip mid-sheet
+                if (statuses.isNotEmpty() || monthlyBudgetPaise > 0L) {
+                    item(key = "allocation_summary_card") {
+                        SheetCard(contentPadding = 16.dp) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "Total allocated",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        CurrencyFormat.withSymbol(totalAllocatedPaise, 0),
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = (-0.5).sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        if (statuses.isEmpty()) "No category caps set yet"
+                                        else "${statuses.size} ${if (statuses.size == 1) "category" else "categories"} capped",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                if (monthlyBudgetPaise > 0L) {
+                                    val isOverAllocated = totalAllocatedPaise > monthlyBudgetPaise
+                                    val diffPaise = kotlin.math.abs(monthlyBudgetPaise - totalAllocatedPaise)
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            "Monthly target",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            CurrencyFormat.withSymbol(monthlyBudgetPaise, 0),
+                                            fontSize = 18.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            when {
+                                                totalAllocatedPaise == 0L -> "100% unallocated"
+                                                isOverAllocated -> "${CurrencyFormat.withSymbol(diffPaise, 0)} above target"
+                                                else -> "${CurrencyFormat.withSymbol(diffPaise, 0)} unallocated"
+                                            },
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isOverAllocated) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = if (isOverAllocated) AppColors.warning else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (totalAllocatedPaise > 0L) {
+                                val overallProgress = (totalCappedSpentPaise.toFloat() / totalAllocatedPaise.toFloat()).coerceIn(0f, 1f)
+                                val isTotalOver = totalCappedSpentPaise > totalAllocatedPaise
+                                Spacer(modifier = Modifier.height(14.dp))
+                                DashboardProgressBar(
+                                    progress = overallProgress,
+                                    color = if (isTotalOver) AppColors.negative else MaterialTheme.colorScheme.onSurface,
+                                    height = 4.dp
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        "Spent across capped categories",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        "${CurrencyFormat.withSymbol(totalCappedSpentPaise, 0)} (${((totalCappedSpentPaise.toDouble() / totalAllocatedPaise.toDouble()) * 100.0).roundToInt()}%)",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isTotalOver) AppColors.negative else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                if (statuses.isNotEmpty()) {
+                    item(key = "active_limits_section") {
+                        SheetSection(
+                            title = "Active limits",
+                            trailing = "${statuses.size} ${if (statuses.size == 1) "category" else "categories"}"
+                        ) {
+                            TransactionGroup {
+                                statuses.forEachIndexed { index, status ->
+                                    if (index > 0) TransactionRowDivider()
+                                    ActiveCategoryBudgetSheetRow(
+                                        status = status,
+                                        onClick = { onCategorySelect(status.category) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (unbudgetedCategories.isNotEmpty()) {
+                    item(key = "unbudgeted_categories_section") {
+                        SheetSection(
+                            title = if (statuses.isEmpty()) "Categories" else "Available categories",
+                            trailing = "Tap to set cap"
+                        ) {
+                            TransactionGroup {
+                                unbudgetedCategories.forEachIndexed { index, cat ->
+                                    if (index > 0) TransactionRowDivider()
+                                    val stats = spendStatsMap[cat]
+                                    UnbudgetedCategorySheetRow(
+                                        category = cat,
+                                        stats = stats,
+                                        onClick = { onCategorySelect(cat) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        SheetFooter {
+            SheetPrimaryButton(
+                text = "Done",
+                enabled = true,
+                onClick = onDone
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActiveCategoryBudgetSheetRow(
+    status: CategoryBudgetStatus,
+    onClick: () -> Unit
+) {
+    val barColor = when {
+        status.isOverBudget -> AppColors.negative
+        status.isAtLimit || status.isNearLimit -> AppColors.warning
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val statusDetail = when {
+        status.isOverBudget -> "${CurrencyFormat.withSymbol(status.spentPaise, 0)} spent · ${CurrencyFormat.withSymbol(status.overagePaise, 0)} over"
+        status.isAtLimit -> "${CurrencyFormat.withSymbol(status.spentPaise, 0)} spent · Limit reached"
+        else -> "${CurrencyFormat.withSymbol(status.spentPaise, 0)} spent · ${CurrencyFormat.withSymbol(status.remainingPaise, 0)} left"
+    }
+    val detailColor = when {
+        status.isOverBudget -> AppColors.negative
+        status.isAtLimit || status.isNearLimit -> AppColors.warning
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .quietClickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CategoryBadgeTile(category = status.category, size = 40.dp, cornerRadius = 10.dp, iconSize = 20.dp)
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    status.category,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    statusDetail,
+                    fontSize = 12.sp,
+                    fontWeight = if (status.isOverBudget || status.isAtLimit) FontWeight.Medium else FontWeight.Normal,
+                    color = detailColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
-                "Category Budgets",
-                fontSize = 20.sp,
+                CurrencyFormat.withSymbol(status.limitPaise, 0),
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                "Set monthly spending limits for specific categories.",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            Spacer(modifier = Modifier.width(6.dp))
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
             )
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        DashboardProgressBar(
+            progress = status.progress.coerceIn(0f, 1f),
+            color = barColor,
+            height = 3.dp
+        )
+    }
+}
 
-            Spacer(modifier = Modifier.height(24.dp))
-            Text("Select Category", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(modifier = Modifier.height(8.dp))
+@Composable
+private fun UnbudgetedCategorySheetRow(
+    category: String,
+    stats: CategorySpendStats?,
+    onClick: () -> Unit
+) {
+    val curSpent = stats?.currentCycleSpentPaise ?: 0L
+    val avgSpent = stats?.threeCycleAvgPaise ?: 0L
+    val subtitle = when {
+        curSpent > 0L -> "${CurrencyFormat.withSymbol(curSpent, 0)} spent this cycle"
+        avgSpent > 0L -> "Avg ${CurrencyFormat.withSymbol(avgSpent, 0)}/mo"
+        else -> "No spend this cycle"
+    }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                availableCategories.forEach { cat ->
-                    val isSel = cat == selectedCategory
-                    PremiumFilterChip(
-                        text = cat,
-                        isSelected = isSel,
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            selectedCategory = cat
-                            val existingLimit = currentBudgets[cat]
-                            inputRupees = if (existingLimit != null && existingLimit > 0L) (existingLimit / 100L).toString() else ""
-                        }
-                    )
-                }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .quietClickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CategoryBadgeTile(category = category, size = 40.dp, cornerRadius = 10.dp, iconSize = 20.dp)
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    category,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    subtitle,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Surface(
+            shape = RoundedCornerShape(AppRadius.pill),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+        ) {
+            Text(
+                "+ Set cap",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+            )
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            // Premium Large Input Field
-            Surface(
-                shape = RoundedCornerShape(AppRadius.medium),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CategoryBudgetFormContent(
+    category: String,
+    currentLimitPaise: Long?,
+    stats: CategorySpendStats?,
+    otherAllocatedPaise: Long,
+    monthlyBudgetPaise: Long,
+    startDayOfMonth: Int,
+    onBack: () -> Unit,
+    onSave: (Long) -> Unit,
+    onRemove: () -> Unit
+) {
+    val focusManager = LocalFocusManager.current
+    val hasLimit = currentLimitPaise != null && currentLimitPaise > 0L
+
+    var amountStr by remember(category, currentLimitPaise) {
+        mutableStateOf(
+            if (hasLimit && currentLimitPaise != null) {
+                if (currentLimitPaise % 100L == 0L) (currentLimitPaise / 100L).toString()
+                else String.format(Locale.US, "%.2f", currentLimitPaise / 100.0)
+            } else ""
+        )
+    }
+
+    val calculatedPaise = remember(amountStr) { evaluateBasicMath(amountStr) }
+    val validPaise = calculatedPaise?.takeIf { it > 0L }
+    val curSpentPaise = stats?.currentCycleSpentPaise ?: 0L
+    val lastCyclePaise = stats?.lastCycleSpentPaise ?: 0L
+    val avgPaise = stats?.threeCycleAvgPaise ?: 0L
+    val suggestedPaise = stats?.suggestedLimitPaise ?: 0L
+
+    val (_, cycleEnd) = remember(startDayOfMonth) { BillingCycleHelper.getCycleRange(startDayOfMonth) }
+    val daysLeft = remember(cycleEnd) {
+        ceil((cycleEnd - System.currentTimeMillis()).toDouble() / 86_400_000.0).toInt().coerceAtLeast(0)
+    }
+
+    // Build smart quick-fill chips in Rupees
+    val quickPickChips = remember(suggestedPaise, lastCyclePaise, monthlyBudgetPaise) {
+        val chips = linkedMapOf<Long, String>()
+        if (suggestedPaise >= 100_00L) {
+            val r = suggestedPaise / 100L
+            chips[r] = "Suggested · ${CurrencyFormat.withSymbol(suggestedPaise, 0)}"
+        }
+        if (lastCyclePaise >= 100_00L) {
+            val roundedLast = ((lastCyclePaise / 100L + 99L) / 100L) * 100L
+            if (roundedLast !in chips) {
+                chips[roundedLast] = "Last cycle · ${CurrencyFormat.withSymbol(roundedLast * 100L, 0)}"
+            }
+        }
+        listOf(1000L, 2000L, 3000L, 5000L, 10000L, 15000L).forEach { preset ->
+            if (chips.size < 6 && preset !in chips) {
+                chips[preset] = CurrencyFormat.withSymbol(preset * 100L, 0)
+            }
+        }
+        chips.entries.toList()
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .padding(horizontal = 24.dp)
+                .padding(top = 8.dp, bottom = 16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("₹", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    BasicTextField(
-                        value = inputRupees,
-                        onValueChange = { if (it.isEmpty() || it.matches(Regex("""^\d{0,7}$"""))) inputRupees = it },
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        ),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-                        modifier = Modifier.weight(1f),
-                        decorationBox = { innerTextField ->
-                            if (inputRupees.isEmpty()) {
-                                Text("0", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
-                            }
-                            innerTextField()
-                        }
+                SheetIconTile(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    contentDescription = "Back",
+                    onClick = onBack
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        category,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                        letterSpacing = (-0.3).sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        if (hasLimit) "Update monthly spending cap" else "Set a monthly spending cap",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                SheetIconTile(
+                    icon = getCategoryIcon(category),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            SheetAmountCard(
+                amountStr = amountStr,
+                onAmountChange = { amountStr = it },
+                calculatedAmount = calculatedPaise?.let { it / 100.0 },
+                isDebit = true
+            )
 
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                val currentLimit = currentBudgets[selectedCategory]
-                if (currentLimit != null && currentLimit > 0L) {
-                    TextButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onRemoveBudget(selectedCategory)
-                            inputRupees = ""
-                        }
-                    ) {
-                        Text("Remove Cap", color = AppColors.negative)
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                }
-
-                Button(
-                    onClick = {
-                        val rupees = inputRupees.toLongOrNull() ?: 0L
-                        if (rupees > 0L) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onSaveBudget(selectedCategory, rupees * 100L)
-                            inputRupees = ""
-                        }
-                    },
-                    enabled = (inputRupees.toLongOrNull() ?: 0L) > 0L,
-                    shape = RoundedCornerShape(AppRadius.pill)
+            // Quick suggestions & presets
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Quick select",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Save Limit", fontWeight = FontWeight.SemiBold)
+                    quickPickChips.forEach { (rupeesVal, label) ->
+                        val isSelected = validPaise == rupeesVal * 100L
+                        SheetChip(
+                            text = label,
+                            isSelected = isSelected,
+                            onClick = { amountStr = rupeesVal.toString() }
+                        )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text("Active Limits", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(modifier = Modifier.height(12.dp))
-
-            if (currentBudgets.isEmpty()) {
-                Text("No category budgets configured.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    currentBudgets.forEach { (cat, limitPaise) ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = getCategoryColor(cat).copy(alpha = 0.1f),
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(getCategoryIcon(cat), contentDescription = null, tint = getCategoryColor(cat), modifier = Modifier.size(14.dp))
-                                    }
-                                }
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(cat, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
-                            }
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(CurrencyFormat.withSymbol(limitPaise, 0), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                IconButton(
-                                    onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        onRemoveBudget(cat)
-                                    },
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Icon(Icons.Default.Clear, contentDescription = "Remove", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        }
+            // Spending context & live impact preview card
+            SheetCard(contentPadding = 16.dp, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Spending history",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("This cycle", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            CurrencyFormat.withSymbol(curSpentPaise, 0),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
                     }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Last cycle", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            if (lastCyclePaise > 0L) CurrencyFormat.withSymbol(lastCyclePaise, 0) else "—",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Monthly avg", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            if (avgPaise > 0L) CurrencyFormat.withSymbol(avgPaise, 0) else "—",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
+                if (validPaise != null) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                    val previewPct = ((curSpentPaise.toDouble() / validPaise.toDouble()) * 100.0).roundToInt()
+                    val isAlreadyOver = curSpentPaise > validPaise
+                    val remainingPaise = (validPaise - curSpentPaise).coerceAtLeast(0L)
+                    val dailyPaise = if (daysLeft > 0 && remainingPaise > 0L) remainingPaise / daysLeft else 0L
+
+                    val previewText = when {
+                        isAlreadyOver ->
+                            "You've already spent ${CurrencyFormat.withSymbol(curSpentPaise - validPaise, 0)} over this cap this cycle ($previewPct% used)."
+                        curSpentPaise == validPaise ->
+                            "This matches your exact spend so far this cycle (₹0 remaining)."
+                        dailyPaise > 0L ->
+                            "Leaves ${CurrencyFormat.withSymbol(remainingPaise, 0)} for the next $daysLeft ${if (daysLeft == 1) "day" else "days"} (≈ ${CurrencyFormat.withSymbol(dailyPaise, 0)}/day)."
+                        else ->
+                            "Leaves ${CurrencyFormat.withSymbol(remainingPaise, 0)} remaining in this cycle."
+                    }
+
+                    Text(
+                        previewText,
+                        fontSize = 13.sp,
+                        color = if (isAlreadyOver) AppColors.warning else MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 18.sp
+                    )
+
+                    if (monthlyBudgetPaise > 0L && (otherAllocatedPaise + validPaise) > monthlyBudgetPaise) {
+                        val excess = (otherAllocatedPaise + validPaise) - monthlyBudgetPaise
+                        Text(
+                            "Heads up: Total category caps will exceed your ${CurrencyFormat.withSymbol(monthlyBudgetPaise, 0)} monthly budget by ${CurrencyFormat.withSymbol(excess, 0)}.",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = AppColors.warning,
+                            lineHeight = 17.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        SheetFooter {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (hasLimit) {
+                    OutlinedButton(
+                        onClick = {
+                            focusManager.clearFocus()
+                            onRemove()
+                        },
+                        shape = RoundedCornerShape(AppRadius.small),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Remove", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Box(modifier = Modifier.weight(if (hasLimit) 1.3f else 1f)) {
+                    SheetPrimaryButton(
+                        text = if (hasLimit) "Update cap" else "Save cap",
+                        enabled = validPaise != null && validPaise != currentLimitPaise,
+                        onClick = {
+                            focusManager.clearFocus()
+                            if (validPaise != null) onSave(validPaise)
+                        }
+                    )
                 }
             }
         }

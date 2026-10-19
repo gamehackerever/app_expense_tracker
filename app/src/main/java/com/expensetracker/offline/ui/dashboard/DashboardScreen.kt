@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
@@ -205,8 +206,8 @@ fun DashboardScreen(
     }
 
     val settingsRepo = remember { SettingsRepository(context) }
-    var monthlyBudget by remember { mutableLongStateOf(settingsRepo.monthlyBudget) }
-    var isBudgetExplicitlySet by remember { mutableStateOf(settingsRepo.isBudgetExplicitlySet) }
+    val monthlyBudget by viewModel.monthlyBudget.collectAsState()
+    val isBudgetExplicitlySet by viewModel.isBudgetExplicitlySet.collectAsState()
 
     var customCategories by remember { mutableStateOf(prefs.getStringSet("key_custom_categories", emptySet()) ?: emptySet()) }
     var isSetupDismissed by remember { mutableStateOf(prefs.getBoolean("key_setup_dismissed", false)) }
@@ -295,12 +296,16 @@ fun DashboardScreen(
     var showSettleDebtDialog by remember { mutableStateOf(false) }
     var showBudgetDialog by remember { mutableStateOf(false) }
     var showManageCategoryBudgetsDialog by remember { mutableStateOf(false) }
+    var initialCategoryForBudgetEdit by remember { mutableStateOf<String?>(null) }
     var showStartDayDialog by remember { mutableStateOf(false) }
     var showManageCategoriesDialog by remember { mutableStateOf(false) }
     var categoryToDelete by remember { mutableStateOf<String?>(null) }
     var transactionPendingDelete by remember { mutableStateOf<Long?>(null) }
 
+    var selectedBillImageUri by remember { mutableStateOf<String?>(null) }
 
+    val categoryBudgets by viewModel.categoryBudgets.collectAsState()
+    val dismissedCategoryWarnings by viewModel.dismissedCategoryWarnings.collectAsState()
 
     LaunchedEffect(Unit) {
         if (activity?.intent?.getBooleanExtra("OPEN_ADD_EXPENSE", false) == true) {
@@ -384,6 +389,23 @@ fun DashboardScreen(
 
     val startDayOfMonth by viewModel.startDayOfMonth.collectAsState()
 
+    val categoryBudgetStatuses by produceState(
+        initialValue = emptyList<CategoryBudgetStatus>(),
+        transactionsWithDebts, categoryBudgets, startDayOfMonth, pendingDeleteIds
+    ) {
+        value = withContext(Dispatchers.Default) {
+            computeCategoryBudgetStatuses(
+                transactions = transactionsWithDebts,
+                categoryBudgets = categoryBudgets,
+                startDayOfMonth = startDayOfMonth,
+                pendingDeleteIds = pendingDeleteIds.keys
+            )
+        }
+    }
+
+    var isCategoryBudgetSetupDismissed by remember {
+        mutableStateOf(settingsRepo.isCategoryBudgetSetupDismissed)
+    }
 
     var hasSmsPermission by remember {
         mutableStateOf(
@@ -397,6 +419,8 @@ fun DashboardScreen(
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
                     viewModel.refreshSettings()
+                    customCategories = prefs.getStringSet("key_custom_categories", emptySet()) ?: emptySet()
+                    isCategoryBudgetSetupDismissed = settingsRepo.isCategoryBudgetSetupDismissed
                     hasNotificationPermission = isNotificationPermissionGranted(context)
                     isIgnoringBatteryOptimizations = powerManager.isIgnoringBatteryOptimizations(context.packageName)
                     hasSmsPermission = ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECEIVE_SMS) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -426,17 +450,17 @@ fun DashboardScreen(
     ) {
         value = withContext(Dispatchers.Default) {
             val standard = CategoryClassifier.PREDEFINED_CATEGORIES
-            val fromTxns = transactions.map { it.category }.filter { it.isNotBlank() }
-            val allDistinct = (standard + customCategories + fromTxns).distinct()
-
-            val lastUsedMap = mutableMapOf<String, Long>()
-            for (txn in transactions) {
-                val cat = txn.category
-                if (cat.isNotBlank()) {
-                    val currentMax = lastUsedMap[cat] ?: 0L
-                    if (txn.timestamp > currentMax) lastUsedMap[cat] = txn.timestamp
+            val lastUsedMap = HashMap<String, Long>(32)
+            // transactions is ordered DESC; scanning the 1,000 most recent rows is O(1) bounded
+            val sampleLimit = minOf(transactions.size, 1000)
+            for (i in 0 until sampleLimit) {
+                val txn = transactions[i]
+                val cat = txn.category.trim()
+                if (cat.isNotEmpty() && !lastUsedMap.containsKey(cat)) {
+                    lastUsedMap[cat] = txn.timestamp
                 }
             }
+            val allDistinct = (standard + customCategories + lastUsedMap.keys).distinct()
             allDistinct.sortedWith(compareByDescending<String> { lastUsedMap[it] ?: 0L }.thenBy { it.lowercase() })
         }
     }
@@ -456,45 +480,53 @@ fun DashboardScreen(
         listOf(startOfDay, startOfWeek, startOfCycle, startOfYear)
     }
 
-    val filteredTransactions = remember(
+    val filteredTransactions by produceState(
+        initialValue = emptyList<TransactionWithDebts>(),
         transactionsWithDebts, debouncedSearchQuery, selectedFilterCategory, selectedTimeRange, selectedAccount, timeBoundaries
     ) {
         val query = debouncedSearchQuery
         val categoryFilter = selectedFilterCategory
         val range = selectedTimeRange
         val currentAccount = selectedAccount
-        val startOfDayMillis = timeBoundaries[0]
-        val startOfWeekMillis = timeBoundaries[1]
-        val startOfMonthMillis = timeBoundaries[2]
-        val startOfYearMillis = timeBoundaries[3]
+        val minTimestamp = when (range) {
+            TimeRange.TODAY -> timeBoundaries[0]
+            TimeRange.THIS_WEEK -> timeBoundaries[1]
+            TimeRange.THIS_MONTH -> timeBoundaries[2]
+            TimeRange.THIS_YEAR -> timeBoundaries[3]
+            TimeRange.ALL_TIME -> Long.MIN_VALUE
+        }
+        value = withContext(Dispatchers.Default) {
+            val isDesc = transactionsWithDebts.size < 2 ||
+                    transactionsWithDebts.first().transaction.timestamp >= transactionsWithDebts.last().transaction.timestamp
+            val out = ArrayList<TransactionWithDebts>()
+            for (txnWithDebts in transactionsWithDebts) {
+                val txn = txnWithDebts.transaction
+                if (txn.timestamp < minTimestamp) {
+                    if (isDesc) break else continue
+                }
+                val matchesAccount = currentAccount == null ||
+                        (currentAccount.bankName == "Unspecified" && txn.bankName == null) ||
+                        (txn.bankName == currentAccount.bankName && txn.accountNumber == currentAccount.accountNumber)
+                if (!matchesAccount) continue
 
-        transactionsWithDebts.filter { txnWithDebts ->
-            val txn = txnWithDebts.transaction
-            val matchesSearch = query.isBlank() ||
-                    txn.payee.contains(query, ignoreCase = true) ||
-                    txn.category.contains(query, ignoreCase = true) ||
-                    (txn.itemsSummary?.contains(query, ignoreCase = true) == true) ||
-                    txnWithDebts.debts.any { it.debtorName.contains(query, ignoreCase = true) }
+                val matchesCategory = when (categoryFilter) {
+                    "All" -> true
+                    "Split Only" -> txnWithDebts.debts.isNotEmpty()
+                    else -> txn.category.equals(categoryFilter, ignoreCase = true)
+                }
+                if (!matchesCategory) continue
 
-            val matchesCategory = when (categoryFilter) {
-                "All" -> true
-                "Split Only" -> txnWithDebts.debts.isNotEmpty()
-                else -> txn.category.equals(categoryFilter, ignoreCase = true)
+                val matchesSearch = query.isBlank() ||
+                        txn.payee.contains(query, ignoreCase = true) ||
+                        txn.category.contains(query, ignoreCase = true) ||
+                        (txn.itemsSummary?.contains(query, ignoreCase = true) == true) ||
+                        (txn.note?.contains(query, ignoreCase = true) == true) ||
+                        txnWithDebts.debts.any { it.debtorName.contains(query, ignoreCase = true) }
+                if (matchesSearch) {
+                    out.add(txnWithDebts)
+                }
             }
-
-            val matchesTime = when (range) {
-                TimeRange.TODAY -> txn.timestamp >= startOfDayMillis
-                TimeRange.THIS_WEEK -> txn.timestamp >= startOfWeekMillis
-                TimeRange.THIS_MONTH -> txn.timestamp >= startOfMonthMillis
-                TimeRange.THIS_YEAR -> txn.timestamp >= startOfYearMillis
-                TimeRange.ALL_TIME -> true
-            }
-
-            val matchesAccount = currentAccount == null ||
-                    (currentAccount.bankName == "Unspecified" && txn.bankName == null) ||
-                    (txn.bankName == currentAccount.bankName && txn.accountNumber == currentAccount.accountNumber)
-
-            matchesSearch && matchesCategory && matchesTime && matchesAccount
+            out
         }
     }
 
@@ -523,19 +555,23 @@ fun DashboardScreen(
         value = withContext(Dispatchers.Default) {
             val start = startMillisFor(range, cycleDay)
             val end = endOfTodayMillis()
-            val activeTxns = allTxns.filter { it.transaction.timestamp in start..end && it.transaction.id !in pendingIds }
-
-            val gross = activeTxns.filter {
-                it.transaction.type == TransactionType.DEBIT &&
-                        !it.transaction.excludeFromSpend &&
-                        it.transaction.category != "Split Settlement"
-            }.sumOf { item ->
-                val parentAmt = item.transaction.amount
-                val debtsSum = item.debts.sumOf { it.amountOwed.toLong() }
-                maxOf(0L, parentAmt - debtsSum)
-            }
-            val refunds = activeTxns.filter { it.transaction.type == TransactionType.CREDIT && it.transaction.linkedDebtId == null }.sumOf {
-                if (it.transaction.note?.contains("refund", ignoreCase = true) == true || it.transaction.itemsSummary?.contains("refund", ignoreCase = true) == true) it.transaction.amount else 0L
+            val isDesc = allTxns.size < 2 ||
+                    allTxns.first().transaction.timestamp >= allTxns.last().transaction.timestamp
+            var gross = 0L
+            var refunds = 0L
+            for (item in allTxns) {
+                val txn = item.transaction
+                if (txn.timestamp > end) continue
+                if (txn.timestamp < start) {
+                    if (isDesc) break else continue
+                }
+                if (txn.id in pendingIds) continue
+                if (txn.type == TransactionType.DEBIT && !txn.excludeFromSpend && txn.category != "Split Settlement") {
+                    val debtsSum = item.debts.sumOf { it.amountOwed.toLong() }
+                    gross += maxOf(0L, txn.amount - debtsSum)
+                } else if (isRefundCredit(txn)) {
+                    refunds += txn.amount
+                }
             }
             (gross - refunds).coerceAtLeast(0L)
         }
@@ -645,10 +681,19 @@ fun DashboardScreen(
     val anyDialogOpen = showAddExpenseSheet ||
             showAccountsDialog ||
             showBudgetDialog ||
+            showManageCategoryBudgetsDialog ||
+            showStartDayDialog ||
+            showNecessityBreakdownDialog ||
+            showDismissConfirmDialog ||
+            showBankInfoDialog ||
+            showRestorePrompt ||
+            showBulkDeleteConfirm ||
             showManageCategoriesDialog ||
             showSettleDebtDialog ||
             categoryToDelete != null ||
             transactionPendingDelete != null ||
+            selectedBillImageUri != null ||
+            repaymentToUndo != null ||
             activeTransactionForEditId != null ||
             activeTransactionForSplitId != null ||
             activeCreditTransactionToLinkId != null
@@ -744,8 +789,6 @@ fun DashboardScreen(
 
     val searchFocus = remember { FocusRequester() }
     LaunchedEffect(searchOpen) { if (searchOpen) runCatching { searchFocus.requestFocus() } }
-
-    var selectedBillImageUri by remember { mutableStateOf<String?>(null) }
 
     if (selectedBillImageUri != null) {
         var billBitmap by remember(selectedBillImageUri) { mutableStateOf<Bitmap?>(null) }
@@ -936,9 +979,7 @@ fun DashboardScreen(
             onDismiss = { showBudgetDialog = false },
             onSaveTarget = { newTarget ->
                 haptic.confirm()
-                monthlyBudget = newTarget
-                isBudgetExplicitlySet = true
-                settingsRepo.monthlyBudget = newTarget
+                viewModel.updateMonthlyBudget(newTarget)
                 showBudgetDialog = false
             }
         )
@@ -1035,6 +1076,7 @@ fun DashboardScreen(
                     val updated = customCategories - catToDelete
                     customCategories = updated
                     prefs.edit().putStringSet("key_custom_categories", updated).apply()
+                    viewModel.onCategoryDeleted(catToDelete, null)
                     if (selectedFilterCategory == catToDelete) selectedFilterCategory = "All"
                     showSnack("Category deleted")
                 }
@@ -1051,14 +1093,13 @@ fun DashboardScreen(
             onDismiss = { categoryToDelete = null },
             onConfirm = { reassignTarget ->
                 haptic.delete()
-                val updated = customCategories - categoryToDelete!!
+                val targetCat = categoryToDelete!!
+                val updated = customCategories - targetCat
                 customCategories = updated
                 prefs.edit().putStringSet("key_custom_categories", updated).apply()
-                if (selectedFilterCategory == categoryToDelete) selectedFilterCategory = "All"
+                if (selectedFilterCategory == targetCat) selectedFilterCategory = "All"
 
-                if (reassignTarget != null) {
-                    viewModel.reassignCategory(oldCategory = categoryToDelete!!, newCategory = reassignTarget)
-                }
+                viewModel.onCategoryDeleted(deletedCategory = targetCat, reassignTo = reassignTarget)
                 showSnack("Category removed")
                 categoryToDelete = null
             }
@@ -1176,6 +1217,28 @@ fun DashboardScreen(
         }
     }
 
+    if (showManageCategoryBudgetsDialog) {
+        ManageCategoryBudgetsSheet(
+            availableCategories = allAvailableCategories,
+            currentBudgets = categoryBudgets,
+            onSaveBudget = { cat, limit ->
+                viewModel.setCategoryBudget(cat, limit)
+            },
+            onRemoveBudget = { cat ->
+                viewModel.removeCategoryBudget(cat)
+            },
+            onDismiss = {
+                showManageCategoryBudgetsDialog = false
+                initialCategoryForBudgetEdit = null
+            },
+            initialCategory = initialCategoryForBudgetEdit,
+            transactions = transactionsWithDebts,
+            pendingDeleteIds = pendingDeleteIds.keys,
+            monthlyBudgetPaise = monthlyBudget * 100L,
+            startDayOfMonth = startDayOfMonth
+        )
+    }
+
 
 
     data class DayGroup(val label: String, val rows: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>, val daySpentPaise: Long)
@@ -1238,9 +1301,13 @@ fun DashboardScreen(
                     txn.timestamp >= startOfCurrentMonthMillis(startDayOfMonth) &&
                     safeToSpendBreakdown.itemStatuses.any { it.item.id == bill.id }
         }
-        val billSuggestion = remember(txn, matchedBill, transactionsWithDebts) {
-            if (matchedBill != null || txn.type != TransactionType.DEBIT) null
-            else NecessityManager.suggestionFor(txn, transactionsWithDebts.map { it.transaction })
+        val billSuggestion by produceState<NecessityManager.BillSuggestion?>(
+            initialValue = null, txn, matchedBill, transactions
+        ) {
+            value = if (matchedBill != null || txn.type != TransactionType.DEBIT) null
+            else withContext(Dispatchers.Default) {
+                NecessityManager.suggestionFor(txn, transactions.take(500))
+            }
         }
 
         val activeCreditSuggestion = remember(txn, settleList) {
@@ -1312,30 +1379,38 @@ fun DashboardScreen(
 
     activeTransactionForSplit?.let { bill ->
 
-        // 1. Context-Aware: People you frequently split with at THIS specific merchant
-        val contextualSplitPartners = remember(bill, transactionsWithDebts) {
-            val targetPayee = bill.transaction.payee.trim()
-            transactionsWithDebts
-                .filter { it.transaction.payee.equals(targetPayee, ignoreCase = true) }
-                .flatMap { it.debts }
-                .map { it.debtorName.trim() }
-                .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
-                .groupingBy { it }
-                .eachCount()
-                .entries.sortedByDescending { it.value }
-                .map { it.key }
+        // 1. Context-Aware: People you frequently split with at THIS specific merchant (bounded off-thread)
+        val contextualSplitPartners by produceState(initialValue = emptyList<String>(), bill, transactionsWithDebts) {
+            value = withContext(Dispatchers.Default) {
+                val targetPayee = bill.transaction.payee.trim()
+                transactionsWithDebts
+                    .asSequence()
+                    .take(1000)
+                    .filter { it.transaction.payee.equals(targetPayee, ignoreCase = true) }
+                    .flatMap { it.debts.asSequence() }
+                    .map { it.debtorName.trim() }
+                    .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
+                    .groupingBy { it }
+                    .eachCount()
+                    .entries.sortedByDescending { it.value }
+                    .map { it.key }
+            }
         }
 
-        // 2. Fallback: Global frequently split partners across all merchants
-        val globalSplitPartners = remember(bill, transactionsWithDebts) {
-            transactionsWithDebts
-                .flatMap { it.debts }
-                .map { it.debtorName.trim() }
-                .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
-                .groupingBy { it }
-                .eachCount()
-                .entries.sortedByDescending { it.value }
-                .map { it.key }
+        // 2. Fallback: Global frequently split partners across all merchants (bounded off-thread)
+        val globalSplitPartners by produceState(initialValue = emptyList<String>(), bill, transactionsWithDebts) {
+            value = withContext(Dispatchers.Default) {
+                transactionsWithDebts
+                    .asSequence()
+                    .take(1000)
+                    .flatMap { it.debts.asSequence() }
+                    .map { it.debtorName.trim() }
+                    .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
+                    .groupingBy { it }
+                    .eachCount()
+                    .entries.sortedByDescending { it.value }
+                    .map { it.key }
+            }
         }
 
         MultiSplitShareSheet(
@@ -1733,12 +1808,11 @@ fun DashboardScreen(
                                         label = "onboardingProgress"
                                     )
 
-                                    LinearProgressIndicator(
-                                        progress = { animatedOnboardingProgress },
-                                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(AppRadius.pill)),
+                                    DashboardProgressBar(
+                                        progress = animatedOnboardingProgress,
                                         color = MaterialTheme.colorScheme.primary,
                                         trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                        strokeCap = StrokeCap.Round
+                                        height = 6.dp
                                     )
 
                                     Spacer(modifier = Modifier.height(20.dp))
@@ -1871,8 +1945,13 @@ fun DashboardScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                val heroSpendLabel = if (isMonthlyView && startDayOfMonth != 1) {
+                                    "this cycle"
+                                } else {
+                                    selectedTimeRange.spendLabel
+                                }
                                 Text(
-                                    "Total spent ${selectedTimeRange.spendLabel}",
+                                    "Total spent $heroSpendLabel",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1881,12 +1960,12 @@ fun DashboardScreen(
                                 if (isMonthlyView) {
                                     Surface(
                                         shape = RoundedCornerShape(AppRadius.pill),
-                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(AppRadius.pill))
                                             .quietClickable {
                                                 haptic.tap()
-                                                onNavigateToSettings("Cycle")
+                                                showStartDayDialog = true
                                             }
                                     ) {
                                         Row(
@@ -1896,15 +1975,15 @@ fun DashboardScreen(
                                             Icon(
                                                 Icons.Default.Edit,
                                                 contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                tint = MaterialTheme.colorScheme.onSurface,
                                                 modifier = Modifier.size(12.dp)
                                             )
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text(
-                                                "Day $startDayOfMonth",
-                                                fontSize = 12.sp,
+                                                "Resets Day $startDayOfMonth",
+                                                fontSize = 11.5.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = MaterialTheme.colorScheme.onSurface
                                             )
                                         }
                                     }
@@ -1923,12 +2002,11 @@ fun DashboardScreen(
                                 val remaining = (monthlyBudgetPaise - periodSpent).coerceAtLeast(0L)
 
                                 Spacer(modifier = Modifier.height(24.dp))
-                                LinearProgressIndicator(
-                                    progress = { animatedBudgetProgress },
-                                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(AppRadius.pill)),
+                                DashboardProgressBar(
+                                    progress = animatedBudgetProgress,
                                     color = barColor,
                                     trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    strokeCap = StrokeCap.Round
+                                    height = 6.dp
                                 )
 
                                 Spacer(modifier = Modifier.height(16.dp))
@@ -1962,6 +2040,172 @@ fun DashboardScreen(
                                         color = if (isOverBudget) AppColors.negative else MaterialTheme.colorScheme.onSurface
                                     )
                                 }
+
+                                if (categoryBudgetStatuses.isNotEmpty()) {
+                                    val overCats = remember(categoryBudgetStatuses) { categoryBudgetStatuses.filter { it.isOverBudget } }
+                                    val nearCats = remember(categoryBudgetStatuses) { categoryBudgetStatuses.filter { !it.isOverBudget && (it.isNearLimit || it.isAtLimit) } }
+                                    val alertCat = overCats.firstOrNull() ?: nearCats.firstOrNull()
+                                    val dotColor = when {
+                                        overCats.isNotEmpty() -> AppColors.negative
+                                        nearCats.isNotEmpty() -> AppColors.warning
+                                        else -> AppColors.positive
+                                    }
+                                    val statusSummary = when {
+                                        overCats.size > 1 -> "${overCats.size} category caps exceeded"
+                                        overCats.size == 1 -> {
+                                            val c = overCats.first()
+                                            "${c.category} · ${CurrencyFormat.withSymbol(c.overagePaise, 0)} over cap"
+                                        }
+                                        nearCats.size > 1 -> "${nearCats.size} category caps near limit"
+                                        nearCats.size == 1 -> {
+                                            val c = nearCats.first()
+                                            val pct = (c.progress * 100f).roundToInt()
+                                            if (c.isAtLimit) "${c.category} · Cap reached (100%)"
+                                            else "${c.category} · ${CurrencyFormat.withSymbol(c.remainingPaise, 0)} left ($pct%)"
+                                        }
+                                        else -> "${categoryBudgetStatuses.size} ${if (categoryBudgetStatuses.size == 1) "category cap" else "category caps"} on track"
+                                    }
+                                    val summaryColor = when {
+                                        overCats.isNotEmpty() -> AppColors.negative
+                                        nearCats.isNotEmpty() -> AppColors.warning
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(AppRadius.small))
+                                            .quietClickable {
+                                                haptic.tap()
+                                                initialCategoryForBudgetEdit = if (overCats.size + nearCats.size == 1) alertCat?.category else null
+                                                showManageCategoryBudgetsDialog = true
+                                            }
+                                            .padding(vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.weight(1f),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(7.dp)
+                                                    .background(dotColor, CircleShape)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = statusSummary,
+                                                fontSize = 12.5.sp,
+                                                fontWeight = if (alertCat != null) FontWeight.SemiBold else FontWeight.Medium,
+                                                color = summaryColor,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Category caps →",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(AppRadius.small))
+                                                .quietClickable {
+                                                    haptic.tap()
+                                                    initialCategoryForBudgetEdit = null
+                                                    showManageCategoryBudgetsDialog = true
+                                                }
+                                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                } else if (!isCategoryBudgetSetupDismissed) {
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(AppRadius.small))
+                                                .quietClickable {
+                                                    haptic.tap()
+                                                    initialCategoryForBudgetEdit = null
+                                                    showManageCategoryBudgetsDialog = true
+                                                }
+                                                .padding(vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                "Set spending caps for Food, Shopping & more",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                "Set caps →",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(AppRadius.small))
+                                                    .quietClickable {
+                                                        haptic.tap()
+                                                        initialCategoryForBudgetEdit = null
+                                                        showManageCategoryBudgetsDialog = true
+                                                    }
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                            IconButton(
+                                                onClick = {
+                                                    haptic.tap()
+                                                    settingsRepo.isCategoryBudgetSetupDismissed = true
+                                                    isCategoryBudgetSetupDismissed = true
+                                                },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Close,
+                                                    contentDescription = "Dismiss category caps suggestion",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if (!isMonthlyView) {
+                                val periodStart = remember(selectedTimeRange, startDayOfMonth) {
+                                    startMillisFor(selectedTimeRange, startDayOfMonth)
+                                }
+                                val periodCount = remember(transactionsWithDebts, periodStart, pendingDeleteIds) {
+                                    transactionsWithDebts.count {
+                                        it.transaction.id !in pendingDeleteIds &&
+                                                it.transaction.type == TransactionType.DEBIT &&
+                                                !it.transaction.excludeFromSpend &&
+                                                it.transaction.category != "Split Settlement" &&
+                                                it.transaction.timestamp >= periodStart
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    if (periodCount > 0) "Across $periodCount ${if (periodCount == 1) "expense" else "expenses"} ${selectedTimeRange.spendLabel}"
+                                    else "No expenses recorded ${selectedTimeRange.spendLabel}",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             } else if (monthlyBudget <= 0 && transactions.isNotEmpty()) {
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Surface(
@@ -1992,7 +2236,24 @@ fun DashboardScreen(
                 }
             }
 
-
+            // Category Budgets are now surfaced as a compact 1-line status strip inside the Monthly Hero Card
+            // (or standalone only when no overall monthly budget is set), keeping Available Balance and
+            // Transactions above the fold on the Dashboard.
+            if (selectedTimeRange == TimeRange.THIS_MONTH && monthlyBudget <= 0L && categoryBudgetStatuses.isNotEmpty()) {
+                item(key = "category_budgets_widget") {
+                    CategoryBudgetsDashboardWidget(
+                        statuses = categoryBudgetStatuses,
+                        onManageClick = {
+                            initialCategoryForBudgetEdit = null
+                            showManageCategoryBudgetsDialog = true
+                        },
+                        onCategoryClick = { cat ->
+                            initialCategoryForBudgetEdit = cat
+                            showManageCategoryBudgetsDialog = true
+                        }
+                    )
+                }
+            }
 
             if (necessitiesList.isNotEmpty() || moneyOwedToYou > 0L || linkedAccounts.isNotEmpty() || accountBalances.isNotEmpty() || latestBalance != null) {
                 item {
@@ -2157,79 +2418,155 @@ fun DashboardScreen(
                         PremiumFilterChip(text = "+ Manage", isSelected = false, onClick = { haptic.tap(); showManageCategoriesDialog = true })
                     }
 
-                    Spacer(Modifier.height(12.dp))
+                    if (linkedAccounts.isEmpty() || linkedAccounts.size > 1) {
+                        Spacer(Modifier.height(10.dp))
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (linkedAccounts.isEmpty()) {
-                            Surface(
-                                shape = RoundedCornerShape(AppRadius.pill),
-                                color = Color.Transparent,
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(AppRadius.pill))
-                                    .quietClickable { haptic.tap(); showBankInfoDialog = true }
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (linkedAccounts.isEmpty()) {
+                                Surface(
+                                    shape = RoundedCornerShape(AppRadius.pill),
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(AppRadius.pill))
+                                        .quietClickable { haptic.tap(); showBankInfoDialog = true }
                                 ) {
-                                    Icon(
-                                        Icons.Default.AccountBalanceWallet,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        "Auto-detect Banks",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.primary
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.AccountBalanceWallet,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            "Auto-detect Banks",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            } else {
+                                PremiumFilterChip(
+                                    text = "All Accounts",
+                                    isSelected = selectedAccount == null,
+                                    onClick = { haptic.tap(); viewModel.selectedAccount.value = null }
+                                )
+
+                                val hasUnspecified = remember(transactions) {
+                                    transactions.asSequence().take(1000).any { it.bankName == null }
+                                }
+                                if (hasUnspecified) {
+                                    val isUnspecifiedSelected = selectedAccount?.bankName == "Unspecified"
+                                    PremiumFilterChip(
+                                        text = "Unspecified",
+                                        isSelected = isUnspecifiedSelected,
+                                        onClick = {
+                                            haptic.tap(); viewModel.selectedAccount.value = AccountInfo("Unspecified", null)
+                                        }
                                     )
                                 }
-                            }
-                        } else if (linkedAccounts.size > 1) {
-                            PremiumFilterChip(
-                                text = "All Accounts",
-                                isSelected = selectedAccount == null,
-                                onClick = { haptic.tap(); viewModel.selectedAccount.value = null }
-                            )
 
-                            val hasUnspecified = transactions.any { it.bankName == null }
-                            if (hasUnspecified) {
-                                val isUnspecifiedSelected = selectedAccount?.bankName == "Unspecified"
-                                PremiumFilterChip(
-                                    text = "Unspecified",
-                                    isSelected = isUnspecifiedSelected,
-                                    onClick = {
-                                        haptic.tap(); viewModel.selectedAccount.value = AccountInfo("Unspecified", null)
-                                    }
-                                )
-                            }
-
-                            linkedAccounts.forEach { account ->
-                                val label = if (account.accountNumber != null) "${account.bankName} (..${account.accountNumber})" else account.bankName
-                                PremiumFilterChip(
-                                    text = label,
-                                    isSelected = selectedAccount == account && account.bankName != "Unspecified",
-                                    onClick = { haptic.tap(); viewModel.selectedAccount.value = account }
-                                )
+                                linkedAccounts.forEach { account ->
+                                    val label = if (account.accountNumber != null) "${account.bankName} (..${account.accountNumber})" else account.bankName
+                                    PremiumFilterChip(
+                                        text = label,
+                                        isSelected = selectedAccount == account && account.bankName != "Unspecified",
+                                        onClick = { haptic.tap(); viewModel.selectedAccount.value = account }
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
             item {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Transactions", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    val visibleCount = filteredTransactions.count { it.transaction.id !in pendingDeleteIds }
-                    Text("$visibleCount ${if (visibleCount == 1) "entry" else "entries"}", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val hasActiveListFilter = searchQuery.isNotBlank() || selectedFilterCategory != "All" || selectedAccount != null
+                val activeRows = remember(filteredTransactions, pendingDeleteIds) {
+                    filteredTransactions.filter { it.transaction.id !in pendingDeleteIds }
+                }
+                val visibleCount = activeRows.size
+                val filteredSpendTotal = remember(activeRows, hasActiveListFilter) {
+                    if (!hasActiveListFilter) 0L
+                    else activeRows
+                        .filter {
+                            it.transaction.type == TransactionType.DEBIT &&
+                                    !it.transaction.excludeFromSpend &&
+                                    it.transaction.category != "Split Settlement"
+                        }
+                        .sumOf { item ->
+                            (item.transaction.amount - item.debts.sumOf { d -> d.amountOwed.toLong() }).coerceAtLeast(0L)
+                        }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Transactions",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        if (hasActiveListFilter && filteredSpendTotal > 0L) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "· ${CurrencyFormat.smart(filteredSpendTotal)}",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "$visibleCount ${if (visibleCount == 1) "entry" else "entries"}",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (hasActiveListFilter) {
+                            Surface(
+                                shape = RoundedCornerShape(AppRadius.pill),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(AppRadius.pill))
+                                    .quietClickable {
+                                        haptic.tap()
+                                        searchQuery = ""
+                                        debouncedSearchQuery = ""
+                                        searchOpen = false
+                                        selectedFilterCategory = "All"
+                                        viewModel.selectedAccount.value = null
+                                    }
+                            ) {
+                                Text(
+                                    "Reset",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

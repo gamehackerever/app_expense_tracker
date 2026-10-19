@@ -363,7 +363,7 @@ internal fun SettingsTextField(
         modifier = modifier.fillMaxWidth(),
         singleLine = true,
         textStyle = TextStyle(color = colors.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Medium),
-        cursorBrush = SolidColor(colors.primary),
+        cursorBrush = SolidColor(colors.onSurface),
         interactionSource = interaction,
         keyboardOptions = keyboardOptions,
         keyboardActions = keyboardActions,

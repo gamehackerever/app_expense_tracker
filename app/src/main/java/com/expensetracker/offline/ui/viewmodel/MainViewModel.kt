@@ -16,6 +16,7 @@ import com.expensetracker.offline.data.repository.TransactionRepository
 import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.engine.recurring.RecurringPayment
 import com.expensetracker.offline.util.BalanceCache
+import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.NecessityItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -50,31 +51,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val startDayOfMonth = MutableStateFlow(1)
+    val monthlyBudget = MutableStateFlow(15000L)
+    val isBudgetExplicitlySet = MutableStateFlow(false)
     val necessityChunkLimit = MutableStateFlow(0L)
     val categoryBudgets = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val dismissedCategoryWarningLevels = MutableStateFlow<Map<String, String>>(emptyMap())
+    val dismissedCategoryWarnings = MutableStateFlow<Set<String>>(emptySet())
 
     init {
-        viewModelScope.launch(Dispatchers.IO) {
-            startDayOfMonth.value = settingsRepo.startDayOfMonth
-            necessityChunkLimit.value = settingsRepo.necessityChunkLimit
-            categoryBudgets.value = settingsRepo.getCategoryBudgets()
-            
-            val (cycleStart, _) = com.expensetracker.offline.util.BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
-            dismissedCategoryWarnings.value = settingsRepo.getDismissedCategoryWarnings(cycleStart)
-        }
+        refreshSettings()
     }
 
     fun updateStartDayOfMonth(day: Int) {
+        val clamped = day.coerceIn(1, 28)
+        startDayOfMonth.value = clamped
         viewModelScope.launch(Dispatchers.IO) {
-            settingsRepo.startDayOfMonth = day
+            settingsRepo.startDayOfMonth = clamped
+            val (cycleStart, _) = BillingCycleHelper.getCycleRange(clamped)
+            val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
+            dismissedCategoryWarningLevels.value = levels
+            dismissedCategoryWarnings.value = levels.keys
         }
-        startDayOfMonth.value = day
+    }
+
+    fun updateMonthlyBudget(rupees: Long) {
+        if (rupees <= 0L) return
+        monthlyBudget.value = rupees
+        isBudgetExplicitlySet.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.monthlyBudget = rupees
+        }
     }
 
     fun setCategoryBudget(category: String, limitPaise: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             settingsRepo.setCategoryBudget(category, limitPaise)
             categoryBudgets.value = settingsRepo.getCategoryBudgets()
+            val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+            val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
+            dismissedCategoryWarningLevels.value = levels
+            dismissedCategoryWarnings.value = levels.keys
         }
     }
 
@@ -82,27 +98,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             settingsRepo.removeCategoryBudget(category)
             categoryBudgets.value = settingsRepo.getCategoryBudgets()
+            val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+            val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
+            dismissedCategoryWarningLevels.value = levels
+            dismissedCategoryWarnings.value = levels.keys
         }
     }
-
-    val dismissedCategoryWarnings = MutableStateFlow<Set<String>>(emptySet())
 
     fun refreshSettings() {
         viewModelScope.launch(Dispatchers.IO) {
-            startDayOfMonth.value = settingsRepo.startDayOfMonth
+            val day = settingsRepo.startDayOfMonth
+            startDayOfMonth.value = day
+            monthlyBudget.value = settingsRepo.monthlyBudget
+            isBudgetExplicitlySet.value = settingsRepo.isBudgetExplicitlySet
             necessityChunkLimit.value = settingsRepo.necessityChunkLimit
             categoryBudgets.value = settingsRepo.getCategoryBudgets()
-            
-            val (cycleStart, _) = com.expensetracker.offline.util.BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
-            dismissedCategoryWarnings.value = settingsRepo.getDismissedCategoryWarnings(cycleStart)
+
+            val (cycleStart, _) = BillingCycleHelper.getCycleRange(day)
+            val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
+            dismissedCategoryWarningLevels.value = levels
+            dismissedCategoryWarnings.value = levels.keys
         }
     }
 
-    fun dismissCategoryWarning(category: String) {
+    fun dismissCategoryWarning(category: String, level: String = SettingsRepository.WARNING_LEVEL_OVER) {
         viewModelScope.launch(Dispatchers.IO) {
-            val (cycleStart, _) = com.expensetracker.offline.util.BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
-            settingsRepo.dismissCategoryWarning(category, cycleStart)
-            dismissedCategoryWarnings.value = settingsRepo.getDismissedCategoryWarnings(cycleStart)
+            val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+            settingsRepo.dismissCategoryWarning(category, cycleStart, level)
+            val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
+            dismissedCategoryWarningLevels.value = levels
+            dismissedCategoryWarnings.value = levels.keys
         }
     }
 
@@ -368,6 +393,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun reassignCategory(oldCategory: String, newCategory: String) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.reassignCategory(oldCategory, newCategory)
+            settingsRepo.reassignCategoryBudget(oldCategory, newCategory)
+            categoryBudgets.value = settingsRepo.getCategoryBudgets()
+            val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+            val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
+            dismissedCategoryWarningLevels.value = levels
+            dismissedCategoryWarnings.value = levels.keys
+        }
+    }
+
+    fun onCategoryDeleted(deletedCategory: String, reassignTo: String? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (reassignTo != null) {
+                repository.reassignCategory(deletedCategory, reassignTo)
+            }
+            settingsRepo.reassignCategoryBudget(deletedCategory, reassignTo)
+            categoryBudgets.value = settingsRepo.getCategoryBudgets()
+            val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+            val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
+            dismissedCategoryWarningLevels.value = levels
+            dismissedCategoryWarnings.value = levels.keys
         }
     }
 
@@ -384,7 +429,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Review items now carry bank/account/balance/ref from the ONE header-aware parse.
             // Only legacy rows (before those columns existed) fall back to re-parsing, with the sender.
             val needsParse = reviewItem.bankName == null && reviewItem.balance == null && reviewItem.referenceId == null
-            val parsed = FinancialParser.parse(reviewItem.rawContent, reviewItem.sender, reviewItem.source)
+            val parsed = if (needsParse) FinancialParser.parse(reviewItem.rawContent, reviewItem.sender, reviewItem.source) else null
             val bank = bankName ?: reviewItem.bankName ?: parsed?.bankName
             val account = accountNumber ?: reviewItem.accountNumber ?: parsed?.accountNumber
             val balance = reviewItem.balance ?: parsed?.balance
@@ -404,7 +449,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 source = reviewItem.source,
                 itemsSummary = null,
                 receiptImageUri = null,
-                excludeFromSpend = parsed.excludeFromSpend
+                excludeFromSpend = parsed?.excludeFromSpend ?: false
             )
             // Insert + mark RESOLVED in one DB transaction (no half-approved items).
             repository.approveReviewItem(newTransaction, reviewItem.id)
@@ -448,7 +493,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val approvals = mutableListOf<Pair<TransactionEntity, Long>>()
             val context = getApplication<Application>().applicationContext
             val prefs = BalanceCache.prefs(context)
-            
+
             // Oldest first, so the newest balance is written last (newer-wins also guards this).
             items.sortedBy { it.timestamp }.forEach { item ->
                 val needsParse = item.bankName == null && item.balance == null && item.referenceId == null && item.type == null
@@ -492,9 +537,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     skipped++
                 }
             }
-            
+
             repository.bulkApproveReviewItems(approvals)
-            
+
             kotlinx.coroutines.withContext(Dispatchers.Main) { onDone(approved, skipped) }
         }
     }

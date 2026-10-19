@@ -34,7 +34,10 @@ import com.expensetracker.offline.util.tick
 import com.expensetracker.offline.util.click
 import com.expensetracker.offline.util.confirm
 import com.expensetracker.offline.util.delete
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.round
 
@@ -136,13 +139,15 @@ fun AddExpenseSheet(
         if (transactionType != TransactionType.DEBIT || payee.isBlank()) {
             fixedCostSuggestion = null
         } else {
-            // Push calculation to Default dispatcher
+            delay(250)
             val dummyTxn = TransactionEntity(
                 amount = calculatedAmount ?: 0L, payee = payee.trim(), timestamp = System.currentTimeMillis(),
                 type = TransactionType.DEBIT, source = TransactionSource.MANUAL, referenceId = null,
                 category = selectedCategory, rawContent = "Manual Entry"
             )
-            fixedCostSuggestion = NecessityManager.suggestionFor(dummyTxn, transactionsHistory)
+            fixedCostSuggestion = withContext(Dispatchers.Default) {
+                NecessityManager.suggestionFor(dummyTxn, transactionsHistory.take(500))
+            }
         }
     }
 

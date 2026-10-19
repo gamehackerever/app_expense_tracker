@@ -13,6 +13,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -136,7 +143,11 @@ class MainActivity : FragmentActivity() {
                         if (!isAppLocked) checkAndRequestPermissions()
                     }
 
-                    Box(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background)
+                    ) {
                         AppNavigation(viewModel = viewModel, isAppLocked = isAppLocked)
 
                         if (isAppLocked) {
@@ -337,7 +348,28 @@ fun AppNavigation(
 ) {
     val navController = rememberNavController()
 
-    NavHost(navController = navController, startDestination = "dashboard") {
+    NavHost(
+        navController = navController,
+        startDestination = "dashboard",
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        enterTransition = {
+            fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)) +
+                    slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { it / 16 }
+        },
+        exitTransition = {
+            fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing))
+        },
+        popEnterTransition = {
+            fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)) +
+                    slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { -it / 16 }
+        },
+        popExitTransition = {
+            fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing)) +
+                    slideOutHorizontally(animationSpec = tween(200, easing = FastOutSlowInEasing)) { it / 16 }
+        }
+    ) {
         composable("dashboard") {
             DashboardScreen(
                 viewModel = viewModel,

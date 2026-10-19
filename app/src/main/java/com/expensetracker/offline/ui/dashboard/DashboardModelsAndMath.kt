@@ -121,6 +121,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import com.expensetracker.offline.ui.components.*
 import androidx.core.content.edit
 import com.expensetracker.offline.data.local.dao.AccountInfo
@@ -252,22 +253,37 @@ fun computeSafeToSpend(
     startDayOfMonth: Int = 1
 ): SafeToSpendBreakdown {
     val (cycleStart, cycleEnd) = BillingCycleHelper.getCycleRange(startDayOfMonth)
-
-    val nextCycleStartCal = Calendar.getInstance().apply { timeInMillis = cycleStart; add(Calendar.MONTH, 1) }
-    val nextCycleEndCal = Calendar.getInstance().apply { timeInMillis = cycleEnd; add(Calendar.MONTH, 1) }
+    val (nextCycleStart, nextCycleEnd) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, 1)
 
     var reservedTotal = 0L
     val statuses = mutableListOf<NecessityStatus>()
     val upcomingNextMonth = mutableListOf<UpcomingBill>()
 
-    val validTxns = transactions.filter { it.transaction.type == TransactionType.DEBIT && it.transaction.timestamp in cycleStart..cycleEnd }
-    val rawTxns = transactions.map { it.transaction }
+    // transactions are ordered by timestamp DESC; stop scanning once we pass cycleStart
+    val isDesc = transactions.size < 2 || transactions[0].transaction.timestamp >= transactions.last().transaction.timestamp
+    val validTxns = ArrayList<TransactionWithDebts>()
+    for (item in transactions) {
+        val ts = item.transaction.timestamp
+        if (ts > cycleEnd) continue
+        if (isDesc && ts < cycleStart) break
+        if (ts in cycleStart..cycleEnd && item.transaction.type == TransactionType.DEBIT) {
+            validTxns.add(item)
+        }
+    }
+    // Bound rawTxns lookback to ~400 days so due-date estimation stays O(K) even on 1M-row DBs
+    val lookbackCutoff = cycleStart - 400L * 86_400_000L
+    val rawTxns = ArrayList<TransactionEntity>()
+    for (item in transactions) {
+        val txn = item.transaction
+        if (isDesc && txn.timestamp < lookbackCutoff) break
+        if (txn.timestamp >= lookbackCutoff) rawTxns.add(txn)
+    }
     var totalPaid = 0L
 
     val currentCycleKey = NecessityManager.currentCycleKey(startDayOfMonth)
 
     for (item in necessities) {
-        val isDueNext = isBillDueInCycle(item, nextCycleStartCal.timeInMillis, nextCycleEndCal.timeInMillis, rawTxns)
+        val isDueNext = isBillDueInCycle(item, nextCycleStart, nextCycleEnd, rawTxns)
         if (!item.isProrated && isDueNext && item.frequency != NecessityFrequency.MONTHLY) {
             val dueMillis = NecessityManager.computeEffectiveDueDate(item, rawTxns) ?: 0L
             upcomingNextMonth.add(UpcomingBill(item.name, item.amount, dueMillis))
@@ -309,54 +325,260 @@ fun computeSafeToSpend(
 
 internal const val KEY_LATEST_BANK_BALANCE = "key_latest_bank_balance"
 
+enum class CategoryBudgetHealth(val priority: Int) {
+    OVER_BUDGET(0),
+    AT_LIMIT(1),
+    NEAR_LIMIT(2),
+    PACING_HIGH(3),
+    HEALTHY(4)
+}
+
 data class CategoryBudgetStatus(
     val category: String,
     val limitPaise: Long,
     val spentPaise: Long,
     val progress: Float,
     val isOverBudget: Boolean,
-    val isNearLimit: Boolean
+    val isNearLimit: Boolean,
+    val isAtLimit: Boolean = limitPaise > 0L && spentPaise == limitPaise,
+    val isPacingHigh: Boolean = false,
+    val remainingPaise: Long = (limitPaise - spentPaise).coerceAtLeast(0L),
+    val overagePaise: Long = (spentPaise - limitPaise).coerceAtLeast(0L),
+    val dailyAllowancePaise: Long = 0L,
+    val projectedPaise: Long = spentPaise,
+    val transactionCount: Int = 0,
+    val health: CategoryBudgetHealth = when {
+        isOverBudget -> CategoryBudgetHealth.OVER_BUDGET
+        limitPaise > 0L && spentPaise == limitPaise -> CategoryBudgetHealth.AT_LIMIT
+        isNearLimit -> CategoryBudgetHealth.NEAR_LIMIT
+        isPacingHigh -> CategoryBudgetHealth.PACING_HIGH
+        else -> CategoryBudgetHealth.HEALTHY
+    }
 )
+
+data class CategorySpendStats(
+    val category: String,
+    val currentCycleSpentPaise: Long,
+    val currentCycleTxnCount: Int,
+    val lastCycleSpentPaise: Long,
+    val threeCycleAvgPaise: Long,
+    val suggestedLimitPaise: Long
+)
+
+private const val CYCLE_DAY_MS = 86_400_000.0
+
+internal fun isRefundCredit(txn: TransactionEntity): Boolean {
+    if (txn.type != TransactionType.CREDIT || txn.linkedDebtId != null) return false
+    return txn.note?.let { REFUND_KEYWORD_REGEX.containsMatchIn(it) } == true ||
+            txn.itemsSummary?.let { REFUND_KEYWORD_REGEX.containsMatchIn(it) } == true
+}
+
+internal fun matchesAccountFilter(txn: TransactionEntity, accountFilter: AccountInfo?): Boolean {
+    if (accountFilter == null) return true
+    if (accountFilter.bankName == "Unspecified") return txn.bankName == null
+    return txn.bankName == accountFilter.bankName && txn.accountNumber == accountFilter.accountNumber
+}
+
+/**
+ * Computes net category spending (my share of debits minus category refunds) and transaction counts
+ * for a given [cycleStart]..[cycleEnd] window, keyed by lowercase trimmed category name.
+ */
+internal fun computeCycleCategoryNetSpend(
+    transactions: List<TransactionWithDebts>,
+    cycleStart: Long,
+    cycleEnd: Long,
+    pendingDeleteIds: Set<Long> = emptySet(),
+    accountFilter: AccountInfo? = null
+): Map<String, Pair<Long, Int>> {
+    val grossByKey = mutableMapOf<String, Long>()
+    val countByKey = mutableMapOf<String, Int>()
+    val refundsByKey = mutableMapOf<String, Long>()
+
+    val isDesc = transactions.size < 2 || transactions[0].transaction.timestamp >= transactions.last().transaction.timestamp
+    for (item in transactions) {
+        val txn = item.transaction
+        if (txn.timestamp > cycleEnd) continue
+        if (isDesc && txn.timestamp < cycleStart) break
+        if (txn.timestamp < cycleStart) continue
+        if (txn.id in pendingDeleteIds) continue
+        if (!matchesAccountFilter(txn, accountFilter)) continue
+        val key = txn.category.trim().lowercase()
+        if (key.isEmpty() || key == "split settlement") continue
+
+        if (txn.type == TransactionType.DEBIT && !txn.excludeFromSpend) {
+            val debtsSum = item.debts.sumOf { d -> d.amountOwed.toLong() }
+            val myShare = (txn.amount - debtsSum).coerceAtLeast(0L)
+            grossByKey[key] = (grossByKey[key] ?: 0L) + myShare
+            countByKey[key] = (countByKey[key] ?: 0) + 1
+        } else if (isRefundCredit(txn)) {
+            refundsByKey[key] = (refundsByKey[key] ?: 0L) + txn.amount
+        }
+    }
+
+    val result = mutableMapOf<String, Pair<Long, Int>>()
+    for ((key, gross) in grossByKey) {
+        val refund = refundsByKey[key] ?: 0L
+        val net = (gross - refund).coerceAtLeast(0L)
+        result[key] = net to (countByKey[key] ?: 0)
+    }
+    return result
+}
 
 fun computeCategoryBudgetStatuses(
     transactions: List<TransactionWithDebts>,
     categoryBudgets: Map<String, Long>,
-    startDayOfMonth: Int = 1
+    startDayOfMonth: Int = 1,
+    pendingDeleteIds: Set<Long> = emptySet(),
+    accountFilter: AccountInfo? = null,
+    cycleOffset: Int = 0
 ): List<CategoryBudgetStatus> {
     if (categoryBudgets.isEmpty()) return emptyList()
 
-    val (cycleStart, cycleEnd) = BillingCycleHelper.getCycleRange(startDayOfMonth)
-    val cycleDebits = transactions.filter {
-        it.transaction.type == TransactionType.DEBIT &&
-                !it.transaction.excludeFromSpend &&
-                it.transaction.category != "Split Settlement" &&
-                it.transaction.timestamp in cycleStart..cycleEnd
-    }
+    val (cycleStart, cycleEnd) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset)
+    val now = System.currentTimeMillis()
+    val isCurrent = cycleOffset == 0
+    val effectiveNow = if (isCurrent) minOf(now, cycleEnd) else cycleEnd
+    val cycleLengthDays = ceil((cycleEnd - cycleStart) / CYCLE_DAY_MS).toInt().coerceAtLeast(1)
+    val elapsedDays = ceil((effectiveNow - cycleStart) / CYCLE_DAY_MS).toInt().coerceIn(1, cycleLengthDays)
+    val daysLeft = if (isCurrent) ceil((cycleEnd - now) / CYCLE_DAY_MS).toInt().coerceAtLeast(0) else 0
 
-    val spentPerCategory = cycleDebits.groupBy { it.transaction.category }
-        .mapValues { (_, txns) ->
-            txns.sumOf { item ->
-                val parentAmt = item.transaction.amount
-                val debtsSum = item.debts.sumOf { d -> d.amountOwed.toLong() }
-                maxOf(0L, parentAmt - debtsSum)
+    val spendMap = computeCycleCategoryNetSpend(
+        transactions = transactions,
+        cycleStart = cycleStart,
+        cycleEnd = cycleEnd,
+        pendingDeleteIds = pendingDeleteIds,
+        accountFilter = accountFilter
+    )
+
+    return categoryBudgets.entries
+        .filter { (cat, limit) -> cat.isNotBlank() && !cat.equals("Split Settlement", ignoreCase = true) && limit > 0L }
+        .map { (category, limitPaise) ->
+            val key = category.trim().lowercase()
+            val (spentPaise, txnCount) = spendMap[key] ?: (0L to 0)
+            val progress = (spentPaise.toFloat() / limitPaise.toFloat()).coerceAtLeast(0f)
+
+            // Strictly greater than limit = over budget; exact 100% = at limit (not "₹0 over")
+            val isOver = spentPaise > limitPaise
+            val isAtLimit = spentPaise == limitPaise
+            val isNear = !isOver && (progress >= 0.80f || isAtLimit)
+
+            val remainingPaise = (limitPaise - spentPaise).coerceAtLeast(0L)
+            val overagePaise = (spentPaise - limitPaise).coerceAtLeast(0L)
+            val dailyAllowancePaise = if (isCurrent && daysLeft > 0 && remainingPaise > 0L) {
+                remainingPaise / daysLeft
+            } else 0L
+
+            val projectedPaise = if (isCurrent && elapsedDays >= 3 && spentPaise > 0L) {
+                (spentPaise.toDouble() / elapsedDays.toDouble() * cycleLengthDays.toDouble()).roundToLong()
+            } else {
+                spentPaise
             }
+            val isPacingHigh = isCurrent && !isOver && !isNear && elapsedDays >= 5 && projectedPaise > limitPaise
+
+            val health = when {
+                isOver -> CategoryBudgetHealth.OVER_BUDGET
+                isAtLimit -> CategoryBudgetHealth.AT_LIMIT
+                isNear -> CategoryBudgetHealth.NEAR_LIMIT
+                isPacingHigh -> CategoryBudgetHealth.PACING_HIGH
+                else -> CategoryBudgetHealth.HEALTHY
+            }
+
+            CategoryBudgetStatus(
+                category = category.trim(),
+                limitPaise = limitPaise,
+                spentPaise = spentPaise,
+                progress = progress,
+                isOverBudget = isOver,
+                isNearLimit = isNear,
+                isAtLimit = isAtLimit,
+                isPacingHigh = isPacingHigh,
+                remainingPaise = remainingPaise,
+                overagePaise = overagePaise,
+                dailyAllowancePaise = dailyAllowancePaise,
+                projectedPaise = projectedPaise,
+                transactionCount = txnCount,
+                health = health
+            )
+        }
+        .sortedWith(
+            compareBy<CategoryBudgetStatus> { it.health.priority }
+                .thenByDescending { it.progress }
+                .thenByDescending { it.spentPaise }
+                .thenBy { it.category.lowercase() }
+        )
+}
+
+/**
+ * Computes current cycle, previous cycle, and 3-cycle average spending for every category,
+ * along with a rounded smart budget suggestion (to nearest ₹100 / ₹500).
+ */
+fun computeCategorySpendStats(
+    transactions: List<TransactionWithDebts>,
+    availableCategories: List<String>,
+    startDayOfMonth: Int = 1,
+    pendingDeleteIds: Set<Long> = emptySet()
+): Map<String, CategorySpendStats> {
+    val currentRange = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, 0)
+    val prev1Range = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -1)
+    val prev2Range = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -2)
+    val prev3Range = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -3)
+
+    val currentMap = computeCycleCategoryNetSpend(transactions, currentRange.first, currentRange.second, pendingDeleteIds)
+    val prev1Map = computeCycleCategoryNetSpend(transactions, prev1Range.first, prev1Range.second, pendingDeleteIds)
+    val prev2Map = computeCycleCategoryNetSpend(transactions, prev2Range.first, prev2Range.second, pendingDeleteIds)
+    val prev3Map = computeCycleCategoryNetSpend(transactions, prev3Range.first, prev3Range.second, pendingDeleteIds)
+
+    // Only sample recent transactions if availableCategories is already populated, avoiding 1M-row map allocations
+    val recentCats = transactions.asSequence().take(500).map { it.transaction.category }.toList()
+    val allCats = (availableCategories + recentCats)
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.equals("Split Settlement", ignoreCase = true) }
+        .distinctBy { it.lowercase() }
+
+    return allCats.associateWith { cat ->
+        val key = cat.lowercase()
+        val (curSpent, curCount) = currentMap[key] ?: (0L to 0)
+        val prev1Spent = prev1Map[key]?.first ?: 0L
+        val prev2Spent = prev2Map[key]?.first ?: 0L
+        val prev3Spent = prev3Map[key]?.first ?: 0L
+
+        val historicalNonZero = listOf(prev1Spent, prev2Spent, prev3Spent).filter { it > 0L }
+        val avgPaise = when {
+            historicalNonZero.isNotEmpty() -> historicalNonZero.sum() / historicalNonZero.size
+            curSpent > 0L -> curSpent
+            else -> 0L
         }
 
-    return categoryBudgets.map { (category, limitPaise) ->
-        val spentPaise = spentPerCategory[category] ?: 0L
-        val progress = if (limitPaise > 0L) (spentPaise.toFloat() / limitPaise.toFloat()).coerceAtLeast(0f) else 0f
-        val isOver = limitPaise > 0L && spentPaise >= limitPaise
-        val isNear = limitPaise > 0L && progress >= 0.80f && !isOver
+        val referencePaise = when {
+            avgPaise > 0L && curSpent > avgPaise -> (avgPaise + curSpent) / 2L
+            avgPaise > 0L -> avgPaise
+            curSpent > 0L -> curSpent
+            else -> 0L
+        }
 
-        CategoryBudgetStatus(
-            category = category,
-            limitPaise = limitPaise,
-            spentPaise = spentPaise,
-            progress = progress,
-            isOverBudget = isOver,
-            isNearLimit = isNear
+        val suggestedLimitPaise = roundToCleanRupeeCap(referencePaise)
+
+        CategorySpendStats(
+            category = cat,
+            currentCycleSpentPaise = curSpent,
+            currentCycleTxnCount = curCount,
+            lastCycleSpentPaise = prev1Spent,
+            threeCycleAvgPaise = avgPaise,
+            suggestedLimitPaise = suggestedLimitPaise
         )
-    }.sortedByDescending { it.progress }
+    }
+}
+
+private fun roundToCleanRupeeCap(paise: Long): Long {
+    if (paise <= 0L) return 0L
+    val rupees = paise / 100L
+    val roundedRupees = when {
+        rupees < 500L -> ((rupees + 99L) / 100L) * 100L
+        rupees < 3_000L -> ((rupees + 249L) / 250L) * 250L
+        rupees < 10_000L -> ((rupees + 499L) / 500L) * 500L
+        else -> ((rupees + 999L) / 1000L) * 1000L
+    }
+    return roundedRupees.coerceAtLeast(100L) * 100L
 }
 
 /**
@@ -366,4 +588,3 @@ fun computeCategoryBudgetStatuses(
  */
 internal fun isNotificationPermissionGranted(context: Context): Boolean =
     com.expensetracker.offline.engine.interceptor.NotificationCaptureService.isPermissionGranted(context)
-
