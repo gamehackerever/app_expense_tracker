@@ -117,6 +117,9 @@ fun InsightsScreen(
     // Fixed Costs, to mark which recurring payments are already tracked there
     var necessities by remember { mutableStateOf(NecessityManager.loadNecessities(prefs)) }
 
+    val categoryBudgets by viewModel.categoryBudgets.collectAsState()
+    val dismissedCategoryWarnings by viewModel.dismissedCategoryWarnings.collectAsState()
+
     // Refresh settings instantly if the user just changed them elsewhere
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -394,6 +397,32 @@ fun InsightsScreen(
                 }
             }
 
+            // --- CATEGORY BUDGET WARNINGS (Integrated into Insights) ---
+            val activeWarnings = (categoryInsights ?: emptyList()).mapNotNull { insight ->
+                val limit = categoryBudgets[insight.category] ?: 0L
+                if (limit > 0L) {
+                    val pct = insight.totalSpent.toFloat() / limit.toFloat()
+                    if (pct >= 0.8f && !dismissedCategoryWarnings.contains(insight.category)) {
+                        com.expensetracker.offline.ui.dashboard.CategoryBudgetStatus(
+                            category = insight.category, limitPaise = limit, spentPaise = insight.totalSpent,
+                            progress = pct, isOverBudget = insight.totalSpent >= limit, isNearLimit = pct >= 0.8f && insight.totalSpent < limit
+                        )
+                    } else null
+                } else null
+            }
+
+            if (activeWarnings.isNotEmpty()) {
+                item(key = "budget_warnings") {
+                    EntranceItem("budget_warnings", 1, seenSections, Modifier.animateItem()) {
+                        com.expensetracker.offline.ui.dashboard.CategoryBudgetWarningBanner(
+                            statuses = activeWarnings,
+                            onManageClick = { onNavigateToSettings("Cycle") },
+                            onDismissClick = { cats: List<String> -> cats.forEach { viewModel.dismissCategoryWarning(it) } }
+                        )
+                    }
+                }
+            }
+
             // ── Hero: this cycle's spend, with a trend against the same point last cycle ──
             item(key = "hero") {
                 EntranceItem("hero", 2, seenSections, Modifier.animateItem(fadeInSpec = null)) {
@@ -585,6 +614,7 @@ fun InsightsScreen(
                             )
                             CategoryBreakdownCard(
                                 categories = categories,
+                                categoryBudgets = categoryBudgets,
                                 grandTotal = grandTotalDebit,
                                 isAnimating = startBarAnimations,
                                 onCategoryClick = { selectedCategoryForBreakdown = it },

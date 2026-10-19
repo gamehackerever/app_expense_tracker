@@ -61,9 +61,9 @@ object BackupManager {
     )
 
     private val BACKED_UP_PREF_KEYS = listOf(
-        "key_monthly_budget_v2", "key_budget_explicitly_set", "key_necessities_json",
-        "key_necessities_migrated_v1", "key_necessity_chunk", "key_start_day_of_month",
-        "key_low_balance_alert_enabled", "key_low_balance_threshold"
+        "key_monthly_budget_v2", "key_budget_explicitly_set", "key_category_budgets_json",
+        "key_necessities_json", "key_necessities_migrated_v1", "key_necessity_chunk",
+        "key_start_day_of_month", "key_low_balance_alert_enabled", "key_low_balance_threshold"
     )
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -71,9 +71,10 @@ object BackupManager {
     // ─────────────────────────────────────────────────────────────────────────
 
     private val LEGACY_V3_KEYS = listOf(
-        "key_monthly_budget_v2", "key_monthly_budget", "key_budget_explicitly_set", "key_necessities_json",
-        "key_necessities_migrated_v1", "key_necessity_chunk", "key_start_day_of_month",
-        "key_low_balance_alert_enabled", "key_low_balance_threshold"
+        "key_monthly_budget_v2", "key_monthly_budget", "key_budget_explicitly_set",
+        "key_category_budgets_json", "key_necessities_json", "key_necessities_migrated_v1",
+        "key_necessity_chunk", "key_start_day_of_month", "key_low_balance_alert_enabled",
+        "key_low_balance_threshold"
     )
 
     private fun applySettingsV3(context: Context, bytes: ByteArray) {

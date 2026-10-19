@@ -167,6 +167,77 @@ class SettingsRepository(context: Context) {
         get() = prefs.getString(KEY_LAST_SCAN_REVIEWS, "")?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
         set(value) = prefs.edit().putString(KEY_LAST_SCAN_REVIEWS, value.joinToString(",")).apply()
 
+    var categoryBudgetsJson: String
+        get() = prefs.getString(KEY_CATEGORY_BUDGETS_JSON, "{}") ?: "{}"
+        set(value) = prefs.edit().putString(KEY_CATEGORY_BUDGETS_JSON, value).apply()
+
+    fun getCategoryBudgets(): Map<String, Long> {
+        val jsonStr = categoryBudgetsJson
+        if (jsonStr.isBlank() || jsonStr == "{}") return emptyMap()
+        return try {
+            val obj = org.json.JSONObject(jsonStr)
+            val result = mutableMapOf<String, Long>()
+            obj.keys().forEach { key ->
+                result[key] = obj.getLong(key)
+            }
+            result
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun setCategoryBudget(category: String, limitPaise: Long) {
+        val current = getCategoryBudgets().toMutableMap()
+        if (limitPaise > 0L) {
+            current[category] = limitPaise
+        } else {
+            current.remove(category)
+        }
+        val obj = org.json.JSONObject()
+        current.forEach { (cat, limit) -> obj.put(cat, limit) }
+        categoryBudgetsJson = obj.toString()
+    }
+
+    var dismissedBudgetWarningsJson: String
+        get() = prefs.getString(KEY_DISMISSED_BUDGET_WARNINGS, "{}") ?: "{}"
+        set(value) = prefs.edit().putString(KEY_DISMISSED_BUDGET_WARNINGS, value).apply()
+
+    fun dismissCategoryWarning(category: String, cycleStartMillis: Long) {
+        try {
+            val obj = org.json.JSONObject(if (dismissedBudgetWarningsJson.isBlank()) "{}" else dismissedBudgetWarningsJson)
+            val savedCycle = obj.optLong("cycleStart", 0L)
+            val array = if (savedCycle == cycleStartMillis) obj.optJSONArray("categories") ?: org.json.JSONArray() else org.json.JSONArray()
+            
+            var exists = false
+            for (i in 0 until array.length()) {
+                if (array.optString(i) == category) exists = true
+            }
+            if (!exists) array.put(category)
+
+            val newObj = org.json.JSONObject()
+            newObj.put("cycleStart", cycleStartMillis)
+            newObj.put("categories", array)
+            dismissedBudgetWarningsJson = newObj.toString()
+        } catch (_: Exception) {}
+    }
+
+    fun getDismissedCategoryWarnings(cycleStartMillis: Long): Set<String> {
+        return try {
+            val obj = org.json.JSONObject(dismissedBudgetWarningsJson)
+            if (obj.optLong("cycleStart", 0L) != cycleStartMillis) return emptySet()
+            val array = obj.optJSONArray("categories") ?: return emptySet()
+            val result = mutableSetOf<String>()
+            for (i in 0 until array.length()) result.add(array.optString(i))
+            result
+        } catch (_: Exception) {
+            emptySet()
+        }
+    }
+
+    fun removeCategoryBudget(category: String) {
+        setCategoryBudget(category, 0L)
+    }
+
     fun clearLastScanBatch() {
         prefs.edit().remove(KEY_LAST_SCAN_TXNS).remove(KEY_LAST_SCAN_REVIEWS).apply()
     }
@@ -178,6 +249,8 @@ class SettingsRepository(context: Context) {
         const val KEY_MONTHLY_BUDGET_V2 = "key_monthly_budget_v2"
         const val KEY_MONTHLY_BUDGET_LEGACY = "key_monthly_budget"
         const val KEY_BUDGET_EXPLICITLY_SET = "key_budget_explicitly_set"
+        const val KEY_CATEGORY_BUDGETS_JSON = "key_category_budgets_json"
+        const val KEY_DISMISSED_BUDGET_WARNINGS = "key_dismissed_budget_warnings_v2"
         const val KEY_START_DAY_OF_MONTH = "key_start_day_of_month"
         const val KEY_NECESSITY_CHUNK = "key_necessity_chunk"
         const val KEY_SKIP_REVIEW_QUEUE = "key_skip_review_queue"

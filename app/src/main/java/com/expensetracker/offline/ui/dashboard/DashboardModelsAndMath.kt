@@ -309,6 +309,56 @@ fun computeSafeToSpend(
 
 internal const val KEY_LATEST_BANK_BALANCE = "key_latest_bank_balance"
 
+data class CategoryBudgetStatus(
+    val category: String,
+    val limitPaise: Long,
+    val spentPaise: Long,
+    val progress: Float,
+    val isOverBudget: Boolean,
+    val isNearLimit: Boolean
+)
+
+fun computeCategoryBudgetStatuses(
+    transactions: List<TransactionWithDebts>,
+    categoryBudgets: Map<String, Long>,
+    startDayOfMonth: Int = 1
+): List<CategoryBudgetStatus> {
+    if (categoryBudgets.isEmpty()) return emptyList()
+
+    val (cycleStart, cycleEnd) = BillingCycleHelper.getCycleRange(startDayOfMonth)
+    val cycleDebits = transactions.filter {
+        it.transaction.type == TransactionType.DEBIT &&
+                !it.transaction.excludeFromSpend &&
+                it.transaction.category != "Split Settlement" &&
+                it.transaction.timestamp in cycleStart..cycleEnd
+    }
+
+    val spentPerCategory = cycleDebits.groupBy { it.transaction.category }
+        .mapValues { (_, txns) ->
+            txns.sumOf { item ->
+                val parentAmt = item.transaction.amount
+                val debtsSum = item.debts.sumOf { d -> d.amountOwed.toLong() }
+                maxOf(0L, parentAmt - debtsSum)
+            }
+        }
+
+    return categoryBudgets.map { (category, limitPaise) ->
+        val spentPaise = spentPerCategory[category] ?: 0L
+        val progress = if (limitPaise > 0L) (spentPaise.toFloat() / limitPaise.toFloat()).coerceAtLeast(0f) else 0f
+        val isOver = limitPaise > 0L && spentPaise >= limitPaise
+        val isNear = limitPaise > 0L && progress >= 0.80f && !isOver
+
+        CategoryBudgetStatus(
+            category = category,
+            limitPaise = limitPaise,
+            spentPaise = spentPaise,
+            progress = progress,
+            isOverBudget = isOver,
+            isNearLimit = isNear
+        )
+    }.sortedByDescending { it.progress }
+}
+
 /**
  * True when this app is enabled under Settings > Notification access (NotificationListenerService).
  * That is the permission live capture depends on, and it is what the "Notification access" setup

@@ -51,11 +51,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val startDayOfMonth = MutableStateFlow(1)
     val necessityChunkLimit = MutableStateFlow(0L)
+    val categoryBudgets = MutableStateFlow<Map<String, Long>>(emptyMap())
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
             startDayOfMonth.value = settingsRepo.startDayOfMonth
             necessityChunkLimit.value = settingsRepo.necessityChunkLimit
+            categoryBudgets.value = settingsRepo.getCategoryBudgets()
+            
+            val (cycleStart, _) = com.expensetracker.offline.util.BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+            dismissedCategoryWarnings.value = settingsRepo.getDismissedCategoryWarnings(cycleStart)
         }
     }
 
@@ -66,10 +71,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         startDayOfMonth.value = day
     }
 
+    fun setCategoryBudget(category: String, limitPaise: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.setCategoryBudget(category, limitPaise)
+            categoryBudgets.value = settingsRepo.getCategoryBudgets()
+        }
+    }
+
+    fun removeCategoryBudget(category: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.removeCategoryBudget(category)
+            categoryBudgets.value = settingsRepo.getCategoryBudgets()
+        }
+    }
+
+    val dismissedCategoryWarnings = MutableStateFlow<Set<String>>(emptySet())
+
     fun refreshSettings() {
         viewModelScope.launch(Dispatchers.IO) {
             startDayOfMonth.value = settingsRepo.startDayOfMonth
             necessityChunkLimit.value = settingsRepo.necessityChunkLimit
+            categoryBudgets.value = settingsRepo.getCategoryBudgets()
+            
+            val (cycleStart, _) = com.expensetracker.offline.util.BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+            dismissedCategoryWarnings.value = settingsRepo.getDismissedCategoryWarnings(cycleStart)
+        }
+    }
+
+    fun dismissCategoryWarning(category: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val (cycleStart, _) = com.expensetracker.offline.util.BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+            settingsRepo.dismissCategoryWarning(category, cycleStart)
+            dismissedCategoryWarnings.value = settingsRepo.getDismissedCategoryWarnings(cycleStart)
         }
     }
 

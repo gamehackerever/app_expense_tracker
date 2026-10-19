@@ -73,6 +73,7 @@ import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.ui.components.DashboardTransactionCard
 import com.expensetracker.offline.ui.components.TransactionGroup
 import com.expensetracker.offline.ui.components.TransactionRowDivider
+import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
 import com.expensetracker.offline.ui.theme.getCategoryColor
@@ -138,6 +139,7 @@ internal fun isSpendDebit(txn: TransactionEntity): Boolean =
 @Composable
 internal fun CategoryBreakdownCard(
     categories: List<CategoryInsight>,
+    categoryBudgets: Map<String, Long>,
     grandTotal: Long,
     isAnimating: Boolean,
     onCategoryClick: (String) -> Unit,
@@ -194,11 +196,21 @@ internal fun CategoryBreakdownCard(
                     enter = expandVertically(spring(stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
                     exit = shrinkVertically(spring(stiffness = Spring.StiffnessMediumLow)) + fadeOut()
                 ) {
-                    CategoryRow(
-                        insight = cat,
-                        grandTotal = grandTotal,
-                        onClick = { haptic.tap(); onCategoryClick(cat.category) }
-                    )
+                    val limit = categoryBudgets[cat.category]
+                    if (limit != null && limit > 0L) {
+                        CategoryRowWithBudget(
+                            insight = cat,
+                            budgetPaise = limit,
+                            isAnimating = isAnimating,
+                            onClick = { haptic.tap(); onCategoryClick(cat.category) }
+                        )
+                    } else {
+                        CategoryRow(
+                            insight = cat,
+                            grandTotal = grandTotal,
+                            onClick = { haptic.tap(); onCategoryClick(cat.category) }
+                        )
+                    }
                 }
             }
 
@@ -271,6 +283,93 @@ internal fun CategoryRow(insight: CategoryInsight, grandTotal: Long, onClick: ()
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+@Composable
+internal fun CategoryRowWithBudget(
+    insight: CategoryInsight,
+    budgetPaise: Long,
+    isAnimating: Boolean,
+    onClick: () -> Unit
+) {
+    val categoryIcon = getCategoryIcon(insight.category)
+    val categoryColor = getCategoryColor(insight.category)
+    val pct = if (budgetPaise > 0L) (insight.totalSpent.toFloat() / budgetPaise).coerceAtLeast(0f) else 0f
+    val isOver = budgetPaise > 0L && insight.totalSpent >= budgetPaise
+    val isNear = budgetPaise > 0L && pct >= 0.8f && !isOver
+    val barColor = when {
+        isOver -> AppColors.negative
+        isNear -> AppColors.warning
+        else -> categoryColor
+    }
+
+    val entered = rememberEntered(250)
+    val animatedProgress by animateFloatAsState(
+        targetValue = if (isAnimating && entered) pct.coerceIn(0f, 1f) else 0f,
+        animationSpec = tween(durationMillis = 800, delayMillis = 100, easing = FastOutSlowInEasing),
+        label = "categoryBudgetGrowth"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(AppRadius.small))
+            .quietClickable(onClick = onClick)
+            .padding(vertical = 8.dp)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = categoryColor.copy(alpha = 0.1f),
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(categoryIcon, contentDescription = null, tint = categoryColor, modifier = Modifier.size(20.dp))
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    insight.category,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "${insight.transactionCount} ${if (insight.transactionCount == 1) "txn" else "txns"}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    formatRupees(insight.totalSpent),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "${(pct * 100).roundToInt()}% used",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isOver) AppColors.negative else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        LinearProgressIndicator(
+            progress = { animatedProgress },
+            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(AppRadius.pill)),
+            color = barColor,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            strokeCap = StrokeCap.Round,
+            drawStopIndicator = {}
+        )
     }
 }
 

@@ -61,6 +61,7 @@ import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
@@ -789,6 +790,12 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
+
+
+
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SettingsIcon(Icons.Default.AccountBalanceWallet, MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.width(12.dp))
@@ -820,6 +827,66 @@ fun SettingsScreen(
                     keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                     modifier = Modifier.onFocusLost { commitMyUpi() }
                 )
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+                val categoryBudgets by viewModel.categoryBudgets.collectAsState()
+                var showManageCategoryBudgetsDialog by remember { mutableStateOf(false) }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .quietClickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            showManageCategoryBudgetsDialog = true
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        SettingsIcon(com.expensetracker.offline.ui.theme.getCategoryIcon("Shopping"), MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                "Category Budgets",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                if (categoryBudgets.isEmpty()) "Set spending caps for Food, Shopping, etc." else "${categoryBudgets.size} category ${if (categoryBudgets.size == 1) "limit" else "limits"} active",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                if (showManageCategoryBudgetsDialog) {
+                    val settingsRepo = remember { SettingsRepository(context) }
+                    val allAvailableCategories = remember {
+                        (com.expensetracker.offline.engine.categorizer.CategoryClassifier.PREDEFINED_CATEGORIES + settingsRepo.customCategories).distinct()
+                    }
+                    com.expensetracker.offline.ui.dashboard.ManageCategoryBudgetsSheet(
+                        availableCategories = allAvailableCategories,
+                        currentBudgets = categoryBudgets,
+                        onSaveBudget = { cat, limit ->
+                            viewModel.setCategoryBudget(cat, limit)
+                        },
+                        onRemoveBudget = { cat ->
+                            viewModel.removeCategoryBudget(cat)
+                        },
+                        onDismiss = { showManageCategoryBudgetsDialog = false }
+                    )
+                }
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 

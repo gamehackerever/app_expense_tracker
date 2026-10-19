@@ -45,6 +45,10 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.ChevronRight
+import com.expensetracker.offline.ui.theme.getCategoryIcon
+import com.expensetracker.offline.ui.theme.getCategoryColor
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
@@ -1197,3 +1201,390 @@ internal fun Modifier.quietSelectable(
     role = role,
     onClick = onClick
 )
+
+@Composable
+fun CategoryBudgetWarningBanner(
+    statuses: List<CategoryBudgetStatus>,
+    onManageClick: () -> Unit,
+    onDismissClick: (List<String>) -> Unit
+) {
+    val warningCategories = statuses.filter { it.isOverBudget || it.isNearLimit }
+    if (warningCategories.isEmpty()) return
+
+    val isOver = warningCategories.any { it.isOverBudget }
+    val color = if (isOver) MaterialTheme.colorScheme.errorContainer else AppColors.warning.copy(alpha = 0.15f)
+    val contentColor = if (isOver) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
+    val strokeColor = if (isOver) MaterialTheme.colorScheme.error.copy(alpha = 0.4f) else AppColors.warning.copy(alpha = 0.4f)
+    val iconColor = if (isOver) MaterialTheme.colorScheme.error else AppColors.warning
+
+    Surface(
+        shape = RoundedCornerShape(AppRadius.medium),
+        color = color,
+        border = BorderStroke(1.dp, strokeColor),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = 8.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                Icons.Default.WarningAmber,
+                contentDescription = null,
+                tint = iconColor,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .quietClickable { onManageClick() }
+            ) {
+                Text(
+                    if (isOver) "Category Budget Exceeded" else "Category Budget Warning",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = contentColor
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    warningCategories.joinToString("\n") { status ->
+                        val pct = (status.progress * 100).toInt()
+                        val verb = if (status.isOverBudget) "over budget" else "used"
+                        "${status.category}: ${CurrencyFormat.withSymbol(status.spentPaise, 0)} of ${CurrencyFormat.withSymbol(status.limitPaise, 0)} ($pct% $verb)"
+                    },
+                    fontSize = 12.sp,
+                    color = contentColor.copy(alpha = 0.8f),
+                    lineHeight = 18.sp
+                )
+            }
+            IconButton(
+                onClick = { onDismissClick(warningCategories.map { it.category }) },
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Dismiss warning",
+                    tint = contentColor.copy(alpha = 0.6f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CategoryBudgetsCard(
+    statuses: List<CategoryBudgetStatus>,
+    onManageClick: () -> Unit
+) {
+    if (statuses.isEmpty()) return
+
+    Surface(
+        shape = RoundedCornerShape(AppRadius.large),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(AppSpacing.cardPadding)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().quietClickable { onManageClick() },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.Category,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            "Category Budgets",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            "${statuses.size} ${if (statuses.size == 1) "category" else "categories"} tracked",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Icon(
+                    Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                statuses.forEach { status ->
+                    val icon = getCategoryIcon(status.category)
+                    val catColor = getCategoryColor(status.category)
+                    val barColor = when {
+                        status.isOverBudget -> AppColors.negative
+                        status.isNearLimit -> AppColors.warning
+                        else -> catColor
+                    }
+                    val pct = (status.progress * 100).toInt()
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = catColor.copy(alpha = 0.1f),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(icon, contentDescription = null, tint = catColor, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                                Text(
+                                    status.category,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    "${pct}%",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (status.isOverBudget) AppColors.negative else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = { status.progress.coerceIn(0f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(AppRadius.pill)),
+                                color = barColor,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                strokeCap = StrokeCap.Round,
+                                drawStopIndicator = {}
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                                Text(
+                                    CurrencyFormat.withSymbol(status.spentPaise, 0),
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    "of ${CurrencyFormat.withSymbol(status.limitPaise, 0)}",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ManageCategoryBudgetsSheet(
+    availableCategories: List<String>,
+    currentBudgets: Map<String, Long>,
+    onSaveBudget: (category: String, limitPaise: Long) -> Unit,
+    onRemoveBudget: (category: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedCategory by remember { mutableStateOf(availableCategories.firstOrNull() ?: "Food & Dining") }
+    var inputRupees by remember { mutableStateOf("") }
+    val haptic = LocalHapticFeedback.current
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        contentWindowInsets = { WindowInsets(0, 0, 0, 0) }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = AppSpacing.screenPadding)
+                .padding(bottom = 32.dp)
+        ) {
+            Text(
+                "Category Budgets",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                "Set monthly spending limits for specific categories.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Text("Select Category", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                availableCategories.forEach { cat ->
+                    val isSel = cat == selectedCategory
+                    PremiumFilterChip(
+                        text = cat,
+                        isSelected = isSel,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedCategory = cat
+                            val existingLimit = currentBudgets[cat]
+                            inputRupees = if (existingLimit != null && existingLimit > 0L) (existingLimit / 100L).toString() else ""
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // Premium Large Input Field
+            Surface(
+                shape = RoundedCornerShape(AppRadius.medium),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("₹", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    BasicTextField(
+                        value = inputRupees,
+                        onValueChange = { if (it.isEmpty() || it.matches(Regex("""^\d{0,7}$"""))) inputRupees = it },
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        ),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                        modifier = Modifier.weight(1f),
+                        decorationBox = { innerTextField ->
+                            if (inputRupees.isEmpty()) {
+                                Text("0", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                            }
+                            innerTextField()
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                val currentLimit = currentBudgets[selectedCategory]
+                if (currentLimit != null && currentLimit > 0L) {
+                    TextButton(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onRemoveBudget(selectedCategory)
+                            inputRupees = ""
+                        }
+                    ) {
+                        Text("Remove Cap", color = AppColors.negative)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+
+                Button(
+                    onClick = {
+                        val rupees = inputRupees.toLongOrNull() ?: 0L
+                        if (rupees > 0L) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onSaveBudget(selectedCategory, rupees * 100L)
+                            inputRupees = ""
+                        }
+                    },
+                    enabled = (inputRupees.toLongOrNull() ?: 0L) > 0L,
+                    shape = RoundedCornerShape(AppRadius.pill)
+                ) {
+                    Text("Save Limit", fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text("Active Limits", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (currentBudgets.isEmpty()) {
+                Text("No category budgets configured.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    currentBudgets.forEach { (cat, limitPaise) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = getCategoryColor(cat).copy(alpha = 0.1f),
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(getCategoryIcon(cat), contentDescription = null, tint = getCategoryColor(cat), modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(cat, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(CurrencyFormat.withSymbol(limitPaise, 0), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                IconButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onRemoveBudget(cat)
+                                    },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.Clear, contentDescription = "Remove", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

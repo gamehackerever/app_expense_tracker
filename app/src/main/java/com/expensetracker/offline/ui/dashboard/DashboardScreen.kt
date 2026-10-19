@@ -294,10 +294,13 @@ fun DashboardScreen(
     var showDismissConfirmDialog by remember { mutableStateOf(false) }
     var showSettleDebtDialog by remember { mutableStateOf(false) }
     var showBudgetDialog by remember { mutableStateOf(false) }
+    var showManageCategoryBudgetsDialog by remember { mutableStateOf(false) }
     var showStartDayDialog by remember { mutableStateOf(false) }
     var showManageCategoriesDialog by remember { mutableStateOf(false) }
     var categoryToDelete by remember { mutableStateOf<String?>(null) }
     var transactionPendingDelete by remember { mutableStateOf<Long?>(null) }
+
+
 
     LaunchedEffect(Unit) {
         if (activity?.intent?.getBooleanExtra("OPEN_ADD_EXPENSE", false) == true) {
@@ -380,6 +383,7 @@ fun DashboardScreen(
     var repaymentToUndo by remember { mutableStateOf<TransactionEntity?>(null) }
 
     val startDayOfMonth by viewModel.startDayOfMonth.collectAsState()
+
 
     var hasSmsPermission by remember {
         mutableStateOf(
@@ -1172,6 +1176,8 @@ fun DashboardScreen(
         }
     }
 
+
+
     data class DayGroup(val label: String, val rows: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>, val daySpentPaise: Long)
 
     val grouped by produceState(initialValue = emptyList<DayGroup>(), visibleTransactions, pendingDeleteIds) {
@@ -1495,6 +1501,8 @@ fun DashboardScreen(
             verticalArrangement = Arrangement.spacedBy(AppSpacing.sectionGap)
         ) {
             item { Spacer(modifier = Modifier.height(2.dp)) }
+
+
 
             item {
                 Column {
@@ -1983,6 +1991,8 @@ fun DashboardScreen(
                     }
                 }
             }
+
+
 
             if (necessitiesList.isNotEmpty() || moneyOwedToYou > 0L || linkedAccounts.isNotEmpty() || accountBalances.isNotEmpty() || latestBalance != null) {
                 item {
