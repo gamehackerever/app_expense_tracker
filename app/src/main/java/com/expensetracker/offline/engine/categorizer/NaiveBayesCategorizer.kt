@@ -36,9 +36,11 @@ object NaiveBayesCategorizer {
     /** Call whenever category_rules changes so the next prediction retrains. */
     fun invalidate() { trained = false }
 
+    private val TOKENIZE_REGEX = Regex("[^\\p{L}]+")
+
     fun tokenize(text: String): List<String> =
         text.lowercase(Locale.ROOT)
-            .split(Regex("[^\\p{L}]+"))
+            .split(TOKENIZE_REGEX)
             .filter { it.length >= 3 && it !in NOISE }
             .distinct()
 

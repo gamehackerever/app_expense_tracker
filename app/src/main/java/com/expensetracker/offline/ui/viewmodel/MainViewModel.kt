@@ -41,13 +41,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsRepo = SettingsRepository(application.applicationContext)
 
     val pendingReviewItems: StateFlow<List<ReviewItemEntity>> = repository.pendingReviewItems
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val pendingReviewCount: StateFlow<Int> = repository.pendingReviewCount
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     val unsettledSplitsWithDebts = repository.unsettledSplitsWithDebts
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val startDayOfMonth = MutableStateFlow(1)
     val necessityChunkLimit = MutableStateFlow(0L)
@@ -88,10 +88,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val manualSyncBalance: StateFlow<Long?> = _manualSyncBalance
 
     val linkedAccounts: StateFlow<List<AccountInfo>> = repository.getLinkedAccountsFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val accountBalances: StateFlow<List<AccountBalanceInsight>> = repository.getLatestBalancesForAllAccountsFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val selectedAccount = MutableStateFlow<AccountInfo?>(null)
 
@@ -108,21 +108,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val allTransactionsWithDebts = repository.allTransactionsWithDebts
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val allTransactions: StateFlow<List<TransactionEntity>> = allTransactionsWithDebts
         .map { list -> list.map { it.transaction } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val totalMoneyOwed: StateFlow<Long?> = repository.totalMoneyOwed
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val searchedTransactions: StateFlow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> = combine(
         searchQuery, filterCategory, filterStartTime, transactionLimit
     ) { q, c, s, l -> Triple(q, c, Pair(s, l)) }
         .flatMapLatest { (q, c, sl) -> repository.searchAndFilterTransactionsFlow(q, c, sl.first, sl.second) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     fun syncLatestBalanceFromSms() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -351,7 +351,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Review items now carry bank/account/balance/ref from the ONE header-aware parse.
             // Only legacy rows (before those columns existed) fall back to re-parsing, with the sender.
             val needsParse = reviewItem.bankName == null && reviewItem.balance == null && reviewItem.referenceId == null
-            val parsed = if (needsParse) FinancialParser.parse(reviewItem.rawContent, reviewItem.sender) else null
+            val parsed = FinancialParser.parse(reviewItem.rawContent, reviewItem.sender, reviewItem.source)
             val bank = bankName ?: reviewItem.bankName ?: parsed?.bankName
             val account = accountNumber ?: reviewItem.accountNumber ?: parsed?.accountNumber
             val balance = reviewItem.balance ?: parsed?.balance
@@ -370,7 +370,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 note = parsed?.note,
                 source = reviewItem.source,
                 itemsSummary = null,
-                receiptImageUri = null
+                receiptImageUri = null,
+                excludeFromSpend = parsed.excludeFromSpend
             )
             // Insert + mark RESOLVED in one DB transaction (no half-approved items).
             repository.approveReviewItem(newTransaction, reviewItem.id)
@@ -444,7 +445,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         note = parsed?.note,
                         source = item.source,
                         itemsSummary = null,
-                        receiptImageUri = null
+                        receiptImageUri = null,
+                        excludeFromSpend = parsed?.excludeFromSpend ?: false
                     )
 
                     approvals.add(newTransaction to item.id)

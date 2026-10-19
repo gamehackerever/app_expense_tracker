@@ -1,6 +1,7 @@
 package com.expensetracker.offline.ui.theme
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.DirectionsCar
@@ -71,6 +72,10 @@ private enum class CategoryKind(val color: Color?, val icon: ImageVector, val ke
     EDUCATION(
         Color(0xFF84CC16), Icons.Default.School, // Lime
         setOf("education", "school", "tuition", "course", "courses", "books", "study")
+    ),
+    INVESTMENTS(
+        Color(0xFF14B8A6), Icons.AutoMirrored.Filled.TrendingUp, // Teal
+        setOf("investment", "investments", "mutual", "fund", "funds", "sip", "stocks", "stock", "zerodha", "groww", "upstox", "indmoney")
     ),
     OTHER(null, Icons.Default.Category, emptySet())
 }

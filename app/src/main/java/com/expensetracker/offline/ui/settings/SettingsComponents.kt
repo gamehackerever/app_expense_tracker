@@ -172,6 +172,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.expensetracker.offline.engine.backup.SecurePassphraseStore
 import android.content.ActivityNotFoundException
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
@@ -399,7 +400,7 @@ internal fun SettingsTextField(
 }
 
 internal fun isNotificationPermissionGranted(context: Context): Boolean =
-    NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+    com.expensetracker.offline.engine.interceptor.NotificationCaptureService.isPermissionGranted(context)
 
 /** Click handler with no ripple; presses fade the element slightly instead. */
 @Composable
@@ -494,9 +495,12 @@ internal fun readAtMost(stream: InputStream, limit: Int): ByteArray? {
 }
 
 
-internal const val APP_LOCK_AUTHENTICATORS =
-    BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
-
+internal val APP_LOCK_AUTHENTICATORS: Int
+    get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+    } else {
+        BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+    }
 private tailrec fun Context.findFragmentActivity(): FragmentActivity? = when (this) {
     is FragmentActivity -> this
     is ContextWrapper -> baseContext.findFragmentActivity()

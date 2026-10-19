@@ -52,7 +52,7 @@ class DedupeAndImportTest {
         db.transactionDao().insertTransaction(txn(1_000_000L, null, null, TransactionSource.NOTIFICATION))
 
         val match = db.transactionDao().findMatchingTransaction(
-            amount = 8_000.0, type = TransactionType.DEBIT,
+            amount = 8_000L, type = TransactionType.DEBIT,
             startTime = 700_000L, endTime = 1_300_000L, targetTime = 1_020_000L,
             bankName = "HDFC Bank", accountNumber = "1234"
         )
@@ -63,7 +63,7 @@ class DedupeAndImportTest {
     fun smsFromAnotherAccount_isNotMatched() = runBlocking {
         db.transactionDao().insertTransaction(txn(1_000_000L, "HDFC Bank", "1234", TransactionSource.SMS))
         val match = db.transactionDao().findMatchingTransaction(
-            amount = 8_000.0, type = TransactionType.DEBIT,
+            amount = 8_000L, type = TransactionType.DEBIT,
             startTime = 700_000L, endTime = 1_300_000L, targetTime = 1_020_000L,
             bankName = "SBI", accountNumber = "9999"
         )

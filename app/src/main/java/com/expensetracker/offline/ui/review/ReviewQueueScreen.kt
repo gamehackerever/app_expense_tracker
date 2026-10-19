@@ -403,30 +403,29 @@ fun ReviewCard(
         )
     }
 
-    var transactionType by rememberSaveable { mutableStateOf(TransactionType.DEBIT) }
+    var transactionType by rememberSaveable { mutableStateOf(item.type ?: TransactionType.DEBIT) }
     var categoryText by rememberSaveable { mutableStateOf("Uncategorized") }
-    var userSetType by rememberSaveable { mutableStateOf(false) }
+    var userSetType by rememberSaveable { mutableStateOf(item.type != null) }
     var userSetCategory by rememberSaveable { mutableStateOf(false) }
 
-    var selectedBankName by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedAccountNum by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedBankName by rememberSaveable { mutableStateOf(item.bankName) }
+    var selectedAccountNum by rememberSaveable { mutableStateOf(item.accountNumber) }
     var hasSelectedBankExplicitly by rememberSaveable { mutableStateOf(false) }
 
-    // Collapse state based on whether an amount is missing
     var expanded by rememberSaveable(item.id) { mutableStateOf(item.extractedPartialAmount == null) }
 
     fun resolvedBankInfo(): Pair<String?, String?> {
         if (hasSelectedBankExplicitly) return selectedBankName to selectedAccountNum
         if (selectedBankName != null) return selectedBankName to selectedAccountNum
-        val fallback = FinancialParser.parse(item.rawContent)
-        return fallback.bankName to fallback.accountNumber
+        val fallback = FinancialParser.parse(item.rawContent, item.sender, item.source)
+        return (item.bankName ?: fallback.bankName) to (item.accountNumber ?: fallback.accountNumber)
     }
 
     val focusManager = LocalFocusManager.current
 
-    LaunchedEffect(item.rawContent) {
+    LaunchedEffect(item.rawContent, item.sender) {
         withContext(Dispatchers.Default) {
-            val parsed = FinancialParser.parse(item.rawContent)
+            val parsed = FinancialParser.parse(item.rawContent, item.sender, item.source)
             val catToClassify = item.extractedPartialPayee?.takeIf { it.isNotBlank() } ?: parsed.payee ?: "Unknown"
             val cat = CategoryClassifier.classifySync(catToClassify, item.rawContent)
 
@@ -447,9 +446,14 @@ fun ReviewCard(
         }
     }
 
-    val standardCategories = listOf("Uncategorized", "Food & Dining", "Groceries", "Shopping",
-        "Travel", "Bills & Utilities", "Entertainment", "Health")
-
+    val context = LocalContext.current
+    val customCategories = remember {
+        context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+            .getStringSet("key_custom_categories", emptySet()) ?: emptySet()
+    }
+    val standardCategories = remember(customCategories) {
+        (listOf("Uncategorized") + CategoryClassifier.PREDEFINED_CATEGORIES + customCategories).distinct()
+    }
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
 

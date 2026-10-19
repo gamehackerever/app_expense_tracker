@@ -3,9 +3,11 @@ package com.expensetracker.offline.engine.interceptor
 import android.util.Log
 import com.expensetracker.offline.ExpenseTrackerApp
 import com.expensetracker.offline.data.local.entity.ReviewItemEntity
+import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.data.repository.TransactionRepository
+import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.data.repository.TransactionRepository.IngestResult
 import com.expensetracker.offline.engine.notification.LowBalanceNotifier
 import com.expensetracker.offline.engine.notification.MissingTransactionNotifier
@@ -105,20 +107,41 @@ object CaptureDispatcher {
                 val gap = String.format(Locale.US, "%.2f", abs(discrepancy) / 100.0)
                 val bal = String.format(Locale.US, "%.2f", balance / 100.0)
                 val verb = if (ghostIsDebit) "debited" else "credited"
+                val rawDesc = "Silent Deduction: $verb Rs.$gap $accountStr Bal:Rs.$bal $bankStr".trim()
+                val ghostType = if (ghostIsDebit) TransactionType.DEBIT else TransactionType.CREDIT
+                val autoSave = SettingsRepository(app.applicationContext).autoSaveUnknownDeductions
 
-                app.database.reviewItemDao().insertReviewItem(
-                    ReviewItemEntity(
-                        rawContent = "Silent Deduction: $verb Rs.$gap $accountStr Bal:Rs.$bal $bankStr".trim(),
-                        sender = sender,
-                        source = source,
-                        extractedPartialAmount = abs(discrepancy),
-                        extractedPartialPayee = "Silent Deduction",
-                        timestamp = timestamp - 1000,
-                        type = if (ghostIsDebit) TransactionType.DEBIT else TransactionType.CREDIT,
-                        bankName = bank,
-                        accountNumber = account
+                if (autoSave) {
+                    val repo = TransactionRepository(app.database, app.applicationContext)
+                    repo.insertTransaction(
+                        TransactionEntity(
+                            amount = abs(discrepancy),
+                            payee = "Silent Deduction",
+                            timestamp = timestamp - 1000,
+                            type = ghostType,
+                            source = source,
+                            referenceId = null,
+                            rawContent = rawDesc,
+                            category = "Uncategorized",
+                            bankName = bank,
+                            accountNumber = account
+                        )
                     )
-                )
+                } else {
+                    app.database.reviewItemDao().insertReviewItem(
+                        ReviewItemEntity(
+                            rawContent = rawDesc,
+                            sender = sender,
+                            source = source,
+                            extractedPartialAmount = abs(discrepancy),
+                            extractedPartialPayee = "Silent Deduction",
+                            timestamp = timestamp - 1000,
+                            type = ghostType,
+                            bankName = bank,
+                            accountNumber = account
+                        )
+                    )
+                }
             }
         }
 

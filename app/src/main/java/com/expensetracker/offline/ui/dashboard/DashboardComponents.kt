@@ -879,7 +879,12 @@ internal fun NecessityBreakdownDialog(
 
                 if (breakdown.reservedTotal > 0) {
                     Spacer(modifier = Modifier.height(16.dp))
-                    val progress = (breakdown.paidTowardNecessities / breakdown.reservedTotal).toFloat().coerceIn(0f, 1f)
+                    val targetNecessitiesProgress = (breakdown.paidTowardNecessities.toFloat() / breakdown.reservedTotal.toFloat()).coerceIn(0f, 1f)
+                    val animatedNecessitiesProgress by animateFloatAsState(
+                        targetValue = targetNecessitiesProgress,
+                        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+                        label = "necessitiesProgress"
+                    )
                     Text(
                         "Paid this month: ${CurrencyFormat.withSymbol(breakdown.paidTowardNecessities, 0)} of ${CurrencyFormat.withSymbol(breakdown.reservedTotal, 0)}",
                         fontSize = 13.sp,
@@ -887,7 +892,7 @@ internal fun NecessityBreakdownDialog(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     LinearProgressIndicator(
-                        progress = { progress },
+                        progress = { animatedNecessitiesProgress },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(6.dp)

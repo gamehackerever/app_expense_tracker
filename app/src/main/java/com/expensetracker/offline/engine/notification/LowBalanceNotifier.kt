@@ -103,6 +103,8 @@ object LowBalanceNotifier {
             .setAutoCancel(true)
             .build()
 
-        notificationManager.notify(NOTIFICATION_ID, notification)
+        if (androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            notificationManager.notify(NOTIFICATION_ID, notification)
+        }
     }
 }

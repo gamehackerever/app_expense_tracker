@@ -7,11 +7,13 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
+import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -124,6 +126,7 @@ import kotlin.math.roundToInt
 import com.expensetracker.offline.ui.components.*
 import androidx.core.content.edit
 import com.expensetracker.offline.data.local.dao.AccountInfo
+import com.expensetracker.offline.data.local.entity.DebtStatus
 import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
@@ -149,6 +152,7 @@ import com.expensetracker.offline.util.delete
 @Composable
 fun DashboardScreen(
     viewModel: MainViewModel,
+    isAppLocked: Boolean = false,
     onNavigateToReview: () -> Unit = {},
     onNavigateToSettings: (targetSection: String?) -> Unit = {},
     onNavigateToInsights: () -> Unit = {},
@@ -237,7 +241,12 @@ fun DashboardScreen(
     fun updateNecessities(newList: List<NecessityItem>) {
         necessitiesList = newList
         scope.launch(Dispatchers.IO) { saveNecessities(prefs, newList) }
-        viewModel.updateNecessityChunk(newList.sumOf { it.amount })
+        val totalMonthlyReserve = newList.sumOf { item ->
+            if (item.frequency == NecessityFrequency.MONTHLY || item.isProrated) {
+                NecessityManager.getMonthlyReserveAmount(item)
+            } else 0L
+        }
+        viewModel.updateNecessityChunk(totalMonthlyReserve)
     }
 
     fun addFixedCost(suggestion: NecessityManager.BillSuggestion) {
@@ -408,11 +417,11 @@ fun DashboardScreen(
 
     val currentMonthName = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date()) }
     val allAvailableCategories by produceState(
-        initialValue = listOf("Food & Dining", "Groceries", "Shopping", "Travel", "Bills & Utilities", "Entertainment", "Health") + customCategories,
+        initialValue = (CategoryClassifier.PREDEFINED_CATEGORIES + customCategories).distinct(),
         customCategories, transactions
     ) {
         value = withContext(Dispatchers.Default) {
-            val standard = listOf("Food & Dining", "Groceries", "Shopping", "Travel", "Bills & Utilities", "Entertainment", "Health")
+            val standard = CategoryClassifier.PREDEFINED_CATEGORIES
             val fromTxns = transactions.map { it.category }.filter { it.isNotBlank() }
             val allDistinct = (standard + customCategories + fromTxns).distinct()
 
@@ -443,11 +452,9 @@ fun DashboardScreen(
         listOf(startOfDay, startOfWeek, startOfCycle, startOfYear)
     }
 
-    val filteredTransactions by produceState(
-        initialValue = emptyList<com.expensetracker.offline.data.local.dao.TransactionWithDebts>(),
+    val filteredTransactions = remember(
         transactionsWithDebts, debouncedSearchQuery, selectedFilterCategory, selectedTimeRange, selectedAccount, timeBoundaries
     ) {
-        val allTxns = transactionsWithDebts
         val query = debouncedSearchQuery
         val categoryFilter = selectedFilterCategory
         val range = selectedTimeRange
@@ -456,35 +463,34 @@ fun DashboardScreen(
         val startOfWeekMillis = timeBoundaries[1]
         val startOfMonthMillis = timeBoundaries[2]
         val startOfYearMillis = timeBoundaries[3]
-        value = withContext(Dispatchers.Default) {
-            allTxns.filter { txnWithDebts ->
-                val txn = txnWithDebts.transaction
-                val matchesSearch = query.isBlank() ||
-                        txn.payee.contains(query, ignoreCase = true) ||
-                        txn.category.contains(query, ignoreCase = true) ||
-                        (txn.itemsSummary?.contains(query, ignoreCase = true) == true) ||
-                        txnWithDebts.debts.any { it.debtorName.contains(query, ignoreCase = true) }
 
-                val matchesCategory = when (categoryFilter) {
-                    "All" -> true
-                    "Split Only" -> txnWithDebts.debts.isNotEmpty()
-                    else -> txn.category.equals(categoryFilter, ignoreCase = true)
-                }
+        transactionsWithDebts.filter { txnWithDebts ->
+            val txn = txnWithDebts.transaction
+            val matchesSearch = query.isBlank() ||
+                    txn.payee.contains(query, ignoreCase = true) ||
+                    txn.category.contains(query, ignoreCase = true) ||
+                    (txn.itemsSummary?.contains(query, ignoreCase = true) == true) ||
+                    txnWithDebts.debts.any { it.debtorName.contains(query, ignoreCase = true) }
 
-                val matchesTime = when (range) {
-                    TimeRange.TODAY -> txn.timestamp >= startOfDayMillis
-                    TimeRange.THIS_WEEK -> txn.timestamp >= startOfWeekMillis
-                    TimeRange.THIS_MONTH -> txn.timestamp >= startOfMonthMillis
-                    TimeRange.THIS_YEAR -> txn.timestamp >= startOfYearMillis
-                    TimeRange.ALL_TIME -> true
-                }
-
-                val matchesAccount = currentAccount == null ||
-                        (currentAccount.bankName == "Unspecified" && txn.bankName == null) ||
-                        (txn.bankName == currentAccount.bankName && txn.accountNumber == currentAccount.accountNumber)
-
-                matchesSearch && matchesCategory && matchesTime && matchesAccount
+            val matchesCategory = when (categoryFilter) {
+                "All" -> true
+                "Split Only" -> txnWithDebts.debts.isNotEmpty()
+                else -> txn.category.equals(categoryFilter, ignoreCase = true)
             }
+
+            val matchesTime = when (range) {
+                TimeRange.TODAY -> txn.timestamp >= startOfDayMillis
+                TimeRange.THIS_WEEK -> txn.timestamp >= startOfWeekMillis
+                TimeRange.THIS_MONTH -> txn.timestamp >= startOfMonthMillis
+                TimeRange.THIS_YEAR -> txn.timestamp >= startOfYearMillis
+                TimeRange.ALL_TIME -> true
+            }
+
+            val matchesAccount = currentAccount == null ||
+                    (currentAccount.bankName == "Unspecified" && txn.bankName == null) ||
+                    (txn.bankName == currentAccount.bankName && txn.accountNumber == currentAccount.accountNumber)
+
+            matchesSearch && matchesCategory && matchesTime && matchesAccount
         }
     }
 
@@ -515,7 +521,11 @@ fun DashboardScreen(
             val end = endOfTodayMillis()
             val activeTxns = allTxns.filter { it.transaction.timestamp in start..end && it.transaction.id !in pendingIds }
 
-            val gross = activeTxns.filter { it.transaction.type == TransactionType.DEBIT }.sumOf { item ->
+            val gross = activeTxns.filter {
+                it.transaction.type == TransactionType.DEBIT &&
+                        !it.transaction.excludeFromSpend &&
+                        it.transaction.category != "Split Settlement"
+            }.sumOf { item ->
                 val parentAmt = item.transaction.amount
                 val debtsSum = item.debts.sumOf { it.amountOwed.toLong() }
                 maxOf(0L, parentAmt - debtsSum)
@@ -566,8 +576,19 @@ fun DashboardScreen(
     var activeCreditTransactionToLinkId by rememberSaveable { mutableStateOf<Long?>(null) }
     val activeCreditTransactionToLink = remember(activeCreditTransactionToLinkId, transactionsWithDebts) { transactionsWithDebts.find { it.transaction.id == activeCreditTransactionToLinkId }?.transaction }
 
+    var isAnimationTriggered by remember { mutableStateOf(false) }
+    LaunchedEffect(selectedTimeRange, isAppLocked) {
+        if (!isAppLocked) {
+            isAnimationTriggered = false
+            delay(180)
+            isAnimationTriggered = true
+        } else {
+            isAnimationTriggered = false
+        }
+    }
+
     val animatedSpentTotal by animateValueAsState(
-        targetValue = periodSpent,
+        targetValue = if (isAnimationTriggered) periodSpent else 0L,
         typeConverter = LongConverter,
         animationSpec = tween(800, easing = FastOutSlowInEasing),
         label = "spentAnimation"
@@ -575,7 +596,7 @@ fun DashboardScreen(
     val shownSpent = animatedSpentTotal
 
     val animatedOwedToYou by animateValueAsState(
-        targetValue = moneyOwedToYou,
+        targetValue = if (isAnimationTriggered) moneyOwedToYou else 0L,
         typeConverter = LongConverter,
         animationSpec = tween(800, easing = FastOutSlowInEasing),
         label = "owedAnimation"
@@ -668,7 +689,11 @@ fun DashboardScreen(
         }
 
         val biometricManager = BiometricManager.from(context)
-        val allowedAuthenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        val allowedAuthenticators = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        } else {
+            BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        }
         when (biometricManager.canAuthenticate(allowedAuthenticators)) {
             BiometricManager.BIOMETRIC_SUCCESS -> { }
             BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> {
@@ -806,7 +831,7 @@ fun DashboardScreen(
 
     val settleList = remember(unsettledSplitsWithDebts, splitLinkInfo) {
         unsettledSplitsWithDebts.flatMap { parent ->
-            parent.debts.filter { it.settledAt == null }.map { debt ->
+            parent.debts.filter { it.status == DebtStatus.OPEN && it.settledAt == null }.map { debt ->
                 val repaid = splitLinkInfo.linkedCreditsByDebtId[debt.id]?.sumOf { it.amount } ?: 0L
                 val outstanding = maxOf(0L, debt.amountOwed.toLong() - repaid)
                 DebtInfo(
@@ -1157,7 +1182,12 @@ fun DashboardScreen(
             }
             order.map { (label, rows) ->
                 val daySpent = rows
-                    .filter { it.transaction.type == TransactionType.DEBIT && it.transaction.id !in pendingDeleteIds }
+                    .filter {
+                        it.transaction.type == TransactionType.DEBIT &&
+                                !it.transaction.excludeFromSpend &&
+                                it.transaction.category != "Split Settlement" &&
+                                it.transaction.id !in pendingDeleteIds
+                    }
                     .sumOf { r -> (r.transaction.amount - r.debts.sumOf { d -> d.amountOwed.toLong() }).coerceAtLeast(0L) }
                 DayGroup(label, rows, daySpent)
             }
@@ -1688,8 +1718,15 @@ fun DashboardScreen(
 
                                     Spacer(modifier = Modifier.height(16.dp))
 
+                                    val onboardingTargetProgress = (completedSteps / tasks.size.toFloat()).coerceIn(0f, 1f)
+                                    val animatedOnboardingProgress by animateFloatAsState(
+                                        targetValue = if (isAnimationTriggered) onboardingTargetProgress else 0f,
+                                        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+                                        label = "onboardingProgress"
+                                    )
+
                                     LinearProgressIndicator(
-                                        progress = { progress },
+                                        progress = { animatedOnboardingProgress },
                                         modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(AppRadius.pill)),
                                         color = MaterialTheme.colorScheme.primary,
                                         trackColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -1795,8 +1832,8 @@ fun DashboardScreen(
                     val budgetProgress = if (monthlyBudgetPaise > 0L && isMonthlyView) (periodSpent.toFloat() / monthlyBudgetPaise.toFloat()).coerceIn(0f, 1f) else 0f
                     val isOverBudget = monthlyBudgetPaise > 0L && isMonthlyView && periodSpent > monthlyBudgetPaise
                     val animatedBudgetProgress by animateFloatAsState(
-                        targetValue = budgetProgress,
-                        animationSpec = spring(stiffness = Spring.StiffnessLow),
+                        targetValue = if (isAnimationTriggered) budgetProgress else 0f,
+                        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
                         label = "progressAnimation"
                     )
 

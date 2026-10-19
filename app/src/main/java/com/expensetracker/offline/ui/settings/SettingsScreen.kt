@@ -687,7 +687,7 @@ fun SettingsScreen(
                         prefs.edit { putBoolean("key_pro_tips_dismissed", true) }
                     },
                     onTipClick = { targetKey ->
-                        if (targetKey == "Necessities") onNavigateToNecessities()
+                        if (targetKey.equals("Necessities", ignoreCase = true) || targetKey.equals("necessities", ignoreCase = true)) onNavigateToNecessities()
                         else scrollToAndHighlight(targetKey)
                     }
                 )
@@ -937,7 +937,7 @@ fun SettingsScreen(
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 if (enabled) {
                                     val biometricManager = BiometricManager.from(context)
-                                    val canAuthenticate = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                                    val canAuthenticate = biometricManager.canAuthenticate(APP_LOCK_AUTHENTICATORS)
 
                                     if (canAuthenticate == BiometricManager.BIOMETRIC_SUCCESS) {
                                         isAppLockEnabled = true
@@ -1866,7 +1866,8 @@ fun SettingsScreen(
             onConfirm = {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 startDayOfMonth = tempDay.toInt()
-                prefs.edit { putInt("key_start_day_of_month", startDayOfMonth) }
+                viewModel.updateStartDayOfMonth(startDayOfMonth)
+                runCatching { com.expensetracker.offline.widget.ExpenseWidget.updateAll(context) }
                 showStartDayDialog = false
             }
         ) {

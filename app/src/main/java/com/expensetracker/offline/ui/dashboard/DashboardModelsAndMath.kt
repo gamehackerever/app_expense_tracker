@@ -124,6 +124,7 @@ import kotlin.math.roundToInt
 import com.expensetracker.offline.ui.components.*
 import androidx.core.content.edit
 import com.expensetracker.offline.data.local.dao.AccountInfo
+import com.expensetracker.offline.data.local.entity.DebtStatus
 import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
@@ -184,7 +185,7 @@ internal fun repaidFor(debt: SplitDebtEntity, linkInfo: SplitLinkInfo): Long =
     linkInfo.linkedCreditsByDebtId[debt.id]?.sumOf { it.amount } ?: 0L
 
 internal fun outstandingFor(debt: SplitDebtEntity, linkInfo: SplitLinkInfo): Long {
-    if (debt.settledAt != null) return 0L
+    if (debt.status != DebtStatus.OPEN || debt.settledAt != null) return 0L
     val outstanding = (debt.amountOwed.toLong() - repaidFor(debt, linkInfo)).coerceAtLeast(0L)
     return outstanding
 }
@@ -314,5 +315,5 @@ internal const val KEY_LATEST_BANK_BALANCE = "key_latest_bank_balance"
  * step opens via ACTION_NOTIFICATION_LISTENER_SETTINGS.
  */
 internal fun isNotificationPermissionGranted(context: Context): Boolean =
-    NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+    com.expensetracker.offline.engine.interceptor.NotificationCaptureService.isPermissionGranted(context)
 

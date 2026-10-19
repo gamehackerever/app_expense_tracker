@@ -67,6 +67,8 @@ object MissingTransactionNotifier {
             .setAutoCancel(true)
             .build()
 
-        manager.notify(NOTIFICATION_ID, notification)
+        if (androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            manager.notify(NOTIFICATION_ID, notification)
+        }
     }
 }

@@ -29,6 +29,7 @@ import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.engine.interceptor.CaptureDispatcher
 import com.expensetracker.offline.engine.parser.FinancialParser
+import com.expensetracker.offline.ui.components.CurrencyFormat
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
@@ -61,8 +62,8 @@ fun DebugTestingScreen(
     var senderInput by remember { mutableStateOf("VM-HDFCBK") }
     var executionStatus by remember { mutableStateOf<String?>(null) }
 
-    val liveParse = remember(rawInput) {
-        FinancialParser.parse(rawInput)
+    val liveParse = remember(rawInput, senderInput) {
+        FinancialParser.parse(rawInput, senderInput)
     }
 
     val predictedCategory = remember(liveParse) {
@@ -191,8 +192,8 @@ fun DebugTestingScreen(
                     }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text("• Financial: ${liveParse.isFinancial}", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("• Amount: ${liveParse.amount?.let { "₹$it" } ?: "None"}", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("• Extracted Balance: ${liveParse.balance?.let { "₹$it" } ?: "None"}", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("• Amount: ${liveParse.amount?.let { CurrencyFormat.withSymbol(it, 2) } ?: "None"}", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("• Extracted Balance: ${liveParse.balance?.let { CurrencyFormat.withSymbol(it, 2) } ?: "None"}", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("• Payee: ${liveParse.payee ?: "None"}", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     Spacer(modifier = Modifier.height(4.dp))

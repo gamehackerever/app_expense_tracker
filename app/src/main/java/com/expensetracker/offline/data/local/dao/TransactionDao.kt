@@ -137,7 +137,7 @@ interface TransactionDao {
         SELECT SUM(
             MAX(0, sd.amountOwed - COALESCE((SELECT SUM(amount) FROM transactions t2 WHERE t2.linkedDebtId = sd.id), 0))
         ) 
-        FROM split_debts sd WHERE sd.settledAt IS NULL
+        FROM split_debts sd WHERE sd.status = 'OPEN' AND sd.settledAt IS NULL
     """)
     fun getTotalMoneyOwedToYouFlow(): Flow<Long?>
 
@@ -164,9 +164,10 @@ interface TransactionDao {
     @Query("""
         SELECT t.* FROM transactions t
         WHERE (t.payee LIKE '%' || :search || '%' ESCAPE '\'
-           OR t.category LIKE '%' || :search || '%' ESCAPE '\'
-           OR COALESCE(t.itemsSummary, '') LIKE '%' || :search || '%' ESCAPE '\'
-           OR COALESCE((SELECT GROUP_CONCAT(debtorName) FROM split_debts WHERE transactionId = t.id), '') LIKE '%' || :search || '%' ESCAPE '\')
+   OR t.category LIKE '%' || :search || '%' ESCAPE '\'
+   OR COALESCE(t.itemsSummary, '') LIKE '%' || :search || '%' ESCAPE '\'
+   OR COALESCE(t.note, '') LIKE '%' || :search || '%' ESCAPE '\'
+   OR COALESCE((SELECT GROUP_CONCAT(debtorName) FROM split_debts WHERE transactionId = t.id), '') LIKE '%' || :search || '%' ESCAPE '\')
         AND (
             :filterCategory = 'All' 
             OR (:filterCategory = 'Split Only' AND EXISTS (SELECT 1 FROM split_debts WHERE transactionId = t.id)) 

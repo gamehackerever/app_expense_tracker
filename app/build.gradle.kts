@@ -19,7 +19,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.srinand.expensetracker.offline"
+        applicationId = "com.expensetracker.offline"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

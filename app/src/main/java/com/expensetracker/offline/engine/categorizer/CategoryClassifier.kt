@@ -57,6 +57,12 @@ object CategoryClassifier {
         return "Uncategorized"
     }
 
+    private val categoryCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun clearCache() {
+        categoryCache.clear()
+    }
+
     suspend fun classify(
         payee: String,
         rawContent: String,
@@ -65,17 +71,28 @@ object CategoryClassifier {
         val cleanPayee = payee.trim().lowercase(Locale.ROOT)
 
         if (cleanPayee.isNotBlank()) {
+            categoryCache[cleanPayee]?.let { return it }
+
             // 1. Exact learned rule
             val learned = ruleDao.findMatchingCategory(cleanPayee)
-            if (!learned.isNullOrBlank()) return learned
+            if (!learned.isNullOrBlank()) {
+                categoryCache[cleanPayee] = learned
+                return learned
+            }
 
             // 2. Known-merchant regex on the payee
             for ((category, regex) in CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(cleanPayee)) return category
+                if (regex.containsMatchIn(cleanPayee)) {
+                    categoryCache[cleanPayee] = category
+                    return category
+                }
             }
 
             // 3. Generalize from what the user has taught us
-            NaiveBayesCategorizer.predict(cleanPayee, ruleDao)?.let { return it.category }
+            NaiveBayesCategorizer.predict(cleanPayee, ruleDao)?.let {
+                categoryCache[cleanPayee] = it.category
+                return it.category
+            }
         }
 
         // 4. Last resort: scan the raw SMS text

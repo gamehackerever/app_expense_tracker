@@ -526,7 +526,7 @@ private fun DebtCard(
     val haptic = LocalHapticFeedback.current
     val tap = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
     val confirm = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) }
-    val progress = if (debtInfo.totalOwed > 0L) (debtInfo.repaidSoFar / debtInfo.totalOwed).toFloat().coerceIn(0f, 1f) else 0f
+    val progress = if (debtInfo.totalOwed > 0L) (debtInfo.repaidSoFar.toFloat() / debtInfo.totalOwed.toFloat()).coerceIn(0f, 1f) else 0f
 
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()

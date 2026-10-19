@@ -161,11 +161,30 @@ private fun buildInitialSplit(totalPaise: Long, debts: List<SplitDebtEntity>, co
 }
 
 private fun splitSignature(mode: SplitMode, includeMe: Boolean, participants: List<SplitParticipant>): String =
-    mode.name + "#" + includeMe + "#" + participants.joinToString("|") { "${it.isMe}:${it.name.trim()}:${it.exactAmountStr}:${it.percentageStr}" }
+    mode.name + "#" + includeMe + "#" + participants.joinToString("|") {
+        "${it.isMe}:${it.name.trim()}:${it.exactAmountStr}:${it.percentageStr}:${it.sharesStr}"
+    }
 
 private val ParticipantsSaver = listSaver<List<SplitParticipant>, Any>(
-    save = { list -> list.flatMap { listOf(it.id, it.debtId ?: -1L, it.isMe, it.name, it.isIncludedInEqual, it.exactAmountStr, it.percentageStr) } },
-    restore = { flat -> flat.chunked(7).map { SplitParticipant(id = it[0] as String, debtId = (it[1] as Long).takeIf { id -> id != -1L }, isMe = it[2] as Boolean, name = it[3] as String, isIncludedInEqual = it[4] as Boolean, exactAmountStr = it[5] as String, percentageStr = it[6] as String) } }
+    save = { list ->
+        list.flatMap {
+            listOf(it.id, it.debtId ?: -1L, it.isMe, it.name, it.isIncludedInEqual, it.exactAmountStr, it.percentageStr, it.sharesStr)
+        }
+    },
+    restore = { flat ->
+        flat.chunked(8).map {
+            SplitParticipant(
+                id = it[0] as String,
+                debtId = (it[1] as Long).takeIf { id -> id != -1L },
+                isMe = it[2] as Boolean,
+                name = it[3] as String,
+                isIncludedInEqual = it[4] as Boolean,
+                exactAmountStr = it[5] as String,
+                percentageStr = it[6] as String,
+                sharesStr = it[7] as String
+            )
+        }
+    }
 )
 
 private data class Hint(val text: String, val isError: Boolean)

@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.dao.AccountInfo
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.util.tick
 import com.expensetracker.offline.util.click
@@ -81,7 +82,7 @@ fun EditTransactionSheet(
         mutableStateOf(prefs.getStringSet("key_custom_categories", emptySet()) ?: emptySet())
     }
 
-    val defaultCategories = listOf("Food & Dining", "Groceries", "Shopping", "Travel", "Bills & Utilities", "Entertainment", "Health")
+    val defaultCategories = CategoryClassifier.PREDEFINED_CATEGORIES
 
     val allCategories = remember(availableCategories, savedCustomCategories, transaction.category) {
         val all = (defaultCategories + availableCategories + savedCustomCategories + listOf(transaction.category))
@@ -100,7 +101,12 @@ fun EditTransactionSheet(
 
     var selectedCategory by rememberSaveable { mutableStateOf(transaction.category) }
     var transactionType by rememberSaveable { mutableStateOf(transaction.type) }
-    var itemsSummary by rememberSaveable { mutableStateOf(transaction.itemsSummary.orEmpty()) }
+
+    val initialNoteText = remember(transaction.itemsSummary, transaction.note) {
+        transaction.itemsSummary?.takeIf { it.isNotBlank() } ?: transaction.note.orEmpty()
+    }
+    var itemsSummary by rememberSaveable { mutableStateOf(initialNoteText) }
+
     var receiptImageUri by rememberSaveable { mutableStateOf(transaction.receiptImageUri) }
     var applyToAllPast by rememberSaveable { mutableStateOf(false) }
 
@@ -124,7 +130,7 @@ fun EditTransactionSheet(
                     payee.trim() != transaction.payee.trim() ||
                     selectedCategory != transaction.category ||
                     transactionType != transaction.type ||
-                    itemsSummary.trim() != (transaction.itemsSummary ?: "").trim() ||
+                    itemsSummary.trim() != initialNoteText.trim() ||
                     note.trim() != (transaction.note ?: "").trim() ||
                     transactionDateMillis != transaction.timestamp ||
                     receiptImageUri != transaction.receiptImageUri ||
@@ -546,7 +552,7 @@ fun EditTransactionSheet(
                             category = selectedCategory,
                             type = transactionType,
                             timestamp = transactionDateMillis,
-                            note = note.trim().ifBlank { null },
+                            note = null,
                             itemsSummary = itemsSummary.trim().ifBlank { null },
                             receiptImageUri = receiptImageUri,
                             bankName = editedBankName,

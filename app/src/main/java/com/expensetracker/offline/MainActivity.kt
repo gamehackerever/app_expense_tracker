@@ -64,6 +64,11 @@ class MainActivity : FragmentActivity() {
     private var isRequestingPermissions = false
     private var lastUnlockTime = 0L
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -132,7 +137,7 @@ class MainActivity : FragmentActivity() {
                     }
 
                     Box(modifier = Modifier.fillMaxSize()) {
-                        AppNavigation(viewModel = viewModel)
+                        AppNavigation(viewModel = viewModel, isAppLocked = isAppLocked)
 
                         if (isAppLocked) {
                             AppLockScreen(onUnlock = {
@@ -326,30 +331,35 @@ fun ProminentDisclosureScreen(onAccept: () -> Unit, onDecline: () -> Unit) {
 }
 
 @Composable
-fun AppNavigation(viewModel: MainViewModel) {
+fun AppNavigation(
+    viewModel: MainViewModel,
+    isAppLocked: Boolean = false
+) {
     val navController = rememberNavController()
 
     NavHost(navController = navController, startDestination = "dashboard") {
         composable("dashboard") {
             DashboardScreen(
                 viewModel = viewModel,
+                isAppLocked = isAppLocked,
                 onNavigateToReview = { navController.navigate("review") },
                 onNavigateToSettings = { target ->
                     navController.navigate("settings?target=${target ?: ""}")
                 },
                 onNavigateToInsights = { navController.navigate("insights") },
-                onNavigateToNecessities = { navController.navigate("Necessities") } // <-- 4. ADD THIS LINE
+                onNavigateToNecessities = { navController.navigate("necessities") }
             )
         }
 
         composable("insights") {
             InsightsScreen(
                 viewModel = viewModel,
+                isAppLocked = isAppLocked,
                 onBack = { navController.popBackStack() },
-                onNavigateToNecessities = { navController.navigate("Necessities") },
+                onNavigateToNecessities = { navController.navigate("necessities") },
                 onNavigateToSettings = { target ->
                     navController.navigate("settings?target=${target ?: ""}")
-                } // <-- Update this line
+                }
             )
         }
 
@@ -371,20 +381,24 @@ fun AppNavigation(viewModel: MainViewModel) {
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() },
                 onNavigateToDebug = { navController.navigate("debug") },
-                onNavigateToNecessities = { navController.navigate("Necessities") }            )
+                onNavigateToNecessities = { navController.navigate("necessities") }
+            )
         }
 
-        composable("Necessities") {
-            val context = androidx.compose.ui.platform.LocalContext.current
+        composable("necessities") {
+            val context = LocalContext.current
             val sharedPrefs = remember {
-                context.getSharedPreferences("expense_tracker_prefs", android.content.Context.MODE_PRIVATE)
+                context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
             }
             val initialItems = remember { NecessityManager.loadNecessities(sharedPrefs) }
             val txns by viewModel.allTransactionsWithDebts.collectAsState()
+            val prefill by viewModel.pendingNecessityPrefill.collectAsState()
 
             ManageNecessitiesScreen(
                 items = initialItems,
                 transactions = txns,
+                prefill = prefill,
+                onPrefillConsumed = { viewModel.consumeNecessityPrefill() },
                 onSave = { newList: List<NecessityItem> ->
                     NecessityManager.saveNecessities(sharedPrefs, newList)
 
@@ -413,13 +427,13 @@ fun AppNavigation(viewModel: MainViewModel) {
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() },
                 onNavigateToDebug = { navController.navigate("debug") },
-                // MAKE SURE IT IS HERE TOO:
-                onNavigateToNecessities = { navController.navigate("Necessities") },
+                onNavigateToNecessities = { navController.navigate("necessities") },
                 scrollToSection = backStackEntry.arguments?.getString("target")
             )
         }
     }
 }
+
 
 /** Safely unwraps a [ContextWrapper] chain to find the [FragmentActivity], returning null
  *  if the context is not backed by one (e.g. TintContextWrapper in Compose previews). */

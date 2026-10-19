@@ -1,6 +1,7 @@
 package com.expensetracker.offline.data.local
 
 import androidx.room.TypeConverter
+import com.expensetracker.offline.data.local.entity.DebtStatus
 import com.expensetracker.offline.data.local.entity.ReviewStatus
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
@@ -29,4 +30,12 @@ class Converters {
     fun toReviewStatus(value: String): ReviewStatus = runCatching {
         ReviewStatus.valueOf(value)
     }.getOrDefault(ReviewStatus.PENDING)
+
+    @TypeConverter
+    fun fromDebtStatus(value: DebtStatus): String = value.name
+
+    @TypeConverter
+    fun toDebtStatus(value: String): DebtStatus = runCatching {
+        DebtStatus.valueOf(value)
+    }.getOrDefault(DebtStatus.OPEN)
 }

@@ -115,6 +115,7 @@ class TransactionRepository(
             // Recompute status for every debt on this bill (covers raised/lowered amounts and new rows).
             splitDebtDao.getDebtsForTransaction(transactionId).forEach { reconcileDebt(it.id) }
         }
+        refreshWidget()
     }
 
     suspend fun resetSplit(transactionId: Long) {
@@ -125,6 +126,7 @@ class TransactionRepository(
                 splitDebtDao.deleteDebtsForTransaction(transactionId)
             }
         }
+        refreshWidget()
     }
 
     suspend fun markDebtAsSettled(debtId: Long, timestamp: Long) {
@@ -153,6 +155,7 @@ class TransactionRepository(
             transactionDao.linkRepayment(creditId, debtId)
             reconcileDebt(debtId)
         }
+        refreshWidget()
     }
 
     suspend fun logCashRepayment(debtId: Long, amount: Long, timestamp: Long) {
@@ -181,6 +184,7 @@ class TransactionRepository(
             )
             reconcileDebt(debtId)
         }
+        refreshWidget()
     }
 
     suspend fun unlinkRepayment(creditId: Long) {
@@ -191,6 +195,7 @@ class TransactionRepository(
             transactionDao.unlinkRepayment(creditId)
             reconcileDebt(debtId) // This will reopen the debt automatically
         }
+        refreshWidget()
     }
 
     suspend fun undoRepayment(credit: TransactionEntity) {
@@ -202,11 +207,13 @@ class TransactionRepository(
                 transactionDao.deleteTransactionById(credit.id)
             }
         }
+        refreshWidget()
     }
 
     suspend fun updatePayeeAndCategoryBulk(oldPayee: String, newPayee: String, newCategory: String) {
         database.transactionDao().updatePayeeAndCategoryBulk(oldPayee, newPayee, newCategory)
         settingsRepo?.setMerchantAlias(oldPayee, newPayee)
+        refreshWidget()
     }
 
     fun searchAndFilterTransactionsFlow(search: String, category: String, startTime: Long, limit: Int): Flow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> {
@@ -228,6 +235,7 @@ class TransactionRepository(
         val trimmedNew = newPayee.trim()
         transactionDao.renamePayeeForAll(trimmedOld, trimmedNew)
         settingsRepo?.setMerchantAlias(trimmedOld, trimmedNew)
+        refreshWidget()
     }
 
     suspend fun insertTransaction(transaction: TransactionEntity): Long {
@@ -256,6 +264,7 @@ class TransactionRepository(
                 )
             )
             NaiveBayesCategorizer.invalidate()
+            CategoryClassifier.clearCache()
         }
     }
 
@@ -337,6 +346,7 @@ class TransactionRepository(
             transactionDao.reassignCategory(oldCategory, newCategory)
             categoryRuleDao.reassignRuleCategory(oldCategory, newCategory)
         }
+        refreshWidget()
     }
 
     /**
@@ -370,6 +380,7 @@ class TransactionRepository(
 
     suspend fun renameAllPayees(oldPayee: String, newPayee: String) {
         transactionDao.renameAllPayees(oldPayee, newPayee)
+        refreshWidget()
     }
 
     fun getLinkedAccountsFlow() = transactionDao.getLinkedAccountsFlow()
@@ -483,7 +494,7 @@ class TransactionRepository(
             }
 
             val isHighValue = type == TransactionType.DEBIT && amount > reviewThreshold
-            val isMissingPayee = parsed.payee.isNullOrBlank() || parsed.payee.equals("Unknown", ignoreCase = true) || parsed.payee.matches(Regex("""^\d{8,12}.*"""))
+            val isMissingPayee = parsed.payee.isNullOrBlank() || parsed.payee.equals("Unknown", ignoreCase = true) || parsed.payee.matches(NUMERIC_PAYEE_REGEX)
 
             if (!skipReview && (isHighValue || isMissingPayee)) {
                 return@withTransaction queueForReview(parsed, sender, timestamp, source)
@@ -497,7 +508,7 @@ class TransactionRepository(
                 TransactionEntity(
                     amount = amount, payee = aliasedPayee, timestamp = timestamp, type = type,
                     source = source, referenceId = parsed.referenceId, rawContent = parsed.rawText,
-                    category = category, balance = parsed.balance, bankName = parsed.bankName,
+                    category = category, note = parsed.note, balance = parsed.balance, bankName = parsed.bankName,
                     accountNumber = parsed.accountNumber, excludeFromSpend = parsed.excludeFromSpend
                 )
             )
@@ -511,5 +522,6 @@ class TransactionRepository(
         /** Debits above Rs 1,000 (amounts are stored in PAISE) go to the review queue. */
         const val REVIEW_THRESHOLD_PAISE = 100_000L
         private const val DEDUPE_WINDOW_MS = 300_000L
+        private val NUMERIC_PAYEE_REGEX = Regex("""^\d{8,12}.*""")
     }
 }

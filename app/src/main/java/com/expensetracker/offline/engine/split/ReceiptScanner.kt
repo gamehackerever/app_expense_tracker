@@ -28,17 +28,18 @@ object ReceiptScanner {
             .addOnCompleteListener { recognizer.close() }
     }
 
+    private val LINE_PRICE_REGEX = Regex("""^(.+?)(?:Rs\.?|₹|inr)?\s*(\d+(?:,\d{3})*[\.,]\d{2})\s*$""", RegexOption.MULTILINE)
+    private val COMMA_DECIMAL_REGEX = Regex(""".*,\d{2}$""")
+
     private fun parseRegex(rawText: String): List<ScannedItem> {
-        // Looks for "Chicken Shawarma 120.00" or "Pasta Rs 350" or "1,200.50"
-        val regex = Regex("""^(.+?)(?:Rs\.?|₹|inr)?\s*(\d+(?:,\d{3})*[\.,]\d{2})\s*$""", RegexOption.MULTILINE)
         val results = mutableListOf<ScannedItem>()
 
-        regex.findAll(rawText).forEach { match ->
+        LINE_PRICE_REGEX.findAll(rawText).forEach { match ->
             val name = match.groupValues[1].trim().takeIf { it.length > 2 && !it.contains("total", true) && !it.contains("tax", true) }
             val priceStrRaw = match.groupValues[2]
             
             // Normalize European comma-decimals (e.g. 100,50 -> 100.50) and strip thousands separators
-            val normalizedPrice = if (priceStrRaw.matches(Regex(""".*,\d{2}$"""))) {
+            val normalizedPrice = if (priceStrRaw.matches(COMMA_DECIMAL_REGEX)) {
                 priceStrRaw.replace(".", "").replace(",", ".")
             } else {
                 priceStrRaw.replace(",", "")

@@ -35,7 +35,7 @@ object NecessityManager {
     const val KEY_NECESSITIES_MIGRATED = "key_necessities_migrated_v1"
 
     data class SinkingProgress(val saved: Long, val target: Long) {
-        val fraction: Float get() = if (target > 0) (saved / target).toFloat().coerceIn(0f, 1f) else 0f
+        val fraction: Float get() = if (target > 0) (saved.toFloat() / target.toFloat()).coerceIn(0f, 1f) else 0f
     }
 
     data class BillSuggestion(
@@ -50,12 +50,19 @@ object NecessityManager {
         return "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH) + 1}"
     }
 
-    fun matches(item: NecessityItem, payee: String, category: String): Boolean {
-        val wordBoundaryRegex = { word: String -> Regex("(?i)\\b${Regex.escape(word)}\\b") }
+    private val regexCache = java.util.concurrent.ConcurrentHashMap<String, Regex>()
 
-        return wordBoundaryRegex(item.name).containsMatchIn(payee) ||
-                wordBoundaryRegex(item.name).containsMatchIn(category) ||
-                item.aliases.any { wordBoundaryRegex(it).containsMatchIn(payee) }
+    private fun getWordBoundaryRegex(word: String): Regex {
+        return regexCache.getOrPut(word) {
+            Regex("(?i)\\b${Regex.escape(word)}\\b")
+        }
+    }
+
+    fun matches(item: NecessityItem, payee: String, category: String): Boolean {
+        if (item.name.isBlank()) return false
+        val nameRegex = getWordBoundaryRegex(item.name)
+        if (nameRegex.containsMatchIn(payee) || nameRegex.containsMatchIn(category)) return true
+        return item.aliases.any { alias -> alias.isNotBlank() && getWordBoundaryRegex(alias).containsMatchIn(payee) }
     }
 
     fun getMonthlyReserveAmount(item: NecessityItem): Long {

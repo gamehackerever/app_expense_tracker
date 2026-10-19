@@ -68,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.expensetracker.offline.data.local.entity.DebtStatus
 import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
@@ -691,7 +692,7 @@ private fun settledLabel(settledBy: String?): String {
 
 // FIXED: Receives Long and uses updated CurrencyFormat logic
 private fun owedLabel(debts: List<SplitDebtEntity>, owes: Long): String {
-    val unsettled = debts.filter { it.settledAt == null }
+    val unsettled = debts.filter { it.status == DebtStatus.OPEN && it.settledAt == null }
     val firstName = unsettled.singleOrNull()
         ?.debtorName?.trim()?.split(" ")?.firstOrNull { it.isNotBlank() }
         .orEmpty()

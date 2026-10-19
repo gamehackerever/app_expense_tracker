@@ -85,7 +85,9 @@ class DailySummaryReceiver : BroadcastReceiver() {
                 )
                 .build()
 
-            manager.notify(NOTIF_ID, notification)
+            if (androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+                manager.notify(NOTIF_ID, notification)
+            }
         }
     }
 

@@ -24,7 +24,7 @@ import com.expensetracker.offline.data.local.entity.SplitDebtEntity
         SplitDebtEntity::class
     ],
     version = AppDatabase.DATABASE_VERSION,
-    exportSchema = false
+    exportSchema = true
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {

@@ -100,6 +100,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 @Composable
 fun InsightsScreen(
     viewModel: MainViewModel,
+    isAppLocked: Boolean = false,
     onBack: () -> Unit,
     onNavigateToSettings: (String?) -> Unit = {},
     onNavigateToNecessities: () -> Unit = {}
@@ -183,7 +184,7 @@ fun InsightsScreen(
     val payeeInsights by produceState<List<PayeeInsight>?>(initialValue = null, filteredTransactions) {
         value = withContext(Dispatchers.Default) {
             filteredTransactions
-                .filter { it.transaction.type == TransactionType.DEBIT }
+                .filter { isSpendDebit(it.transaction) }
                 .groupBy { it.transaction.payee }
                 .map { (payee, txns) ->
                     PayeeInsight(
@@ -200,7 +201,7 @@ fun InsightsScreen(
     val categoryInsights by produceState<List<CategoryInsight>?>(initialValue = null, filteredTransactions) {
         value = withContext(Dispatchers.Default) {
             filteredTransactions
-                .filter { it.transaction.type == TransactionType.DEBIT }
+                .filter { isSpendDebit(it.transaction) }
                 .groupBy { it.transaction.category }
                 .map { (category, txns) ->
                     CategoryInsight(
@@ -213,7 +214,6 @@ fun InsightsScreen(
         }
     }
 
-    // Previous cycle up to the same point in time, plus the single biggest expense
     val stats by produceState(
         initialValue = CycleStats(),
         filteredTransactions, allTransactions, accountFilter, cycleStartMillis, cycleEndMillis
@@ -228,7 +228,7 @@ fun InsightsScreen(
 
             val prevSpent = allTransactions
                 .filter {
-                    it.transaction.type == TransactionType.DEBIT &&
+                    isSpendDebit(it.transaction) &&
                             matchesAccount(it.transaction, accountFilter) &&
                             it.transaction.timestamp >= prevStart &&
                             it.transaction.timestamp < prevEnd
@@ -236,7 +236,7 @@ fun InsightsScreen(
                 .sumOf { myShareOf(it) }
 
             val largest = filteredTransactions
-                .filter { it.transaction.type == TransactionType.DEBIT }
+                .filter { isSpendDebit(it.transaction) }
                 .maxByOrNull { myShareOf(it) }
 
             CycleStats(
@@ -259,27 +259,38 @@ fun InsightsScreen(
 
     var selectedCategoryForBreakdown by remember { mutableStateOf<String?>(null) }
 
+    var isAnimationTriggered by remember { mutableStateOf(false) }
+    LaunchedEffect(isAppLocked) {
+        if (!isAppLocked) {
+            isAnimationTriggered = false
+            delay(180)
+            isAnimationTriggered = true
+        } else {
+            isAnimationTriggered = false
+        }
+    }
+
     val animatedGrandTotal by animateFloatAsState(
-        targetValue = grandTotalDebit.toFloat(),
+        targetValue = if (isAnimationTriggered) grandTotalDebit.toFloat() else 0f,
         animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
         label = "grandTotalAnimation"
     )
 
     val animatedDaily by animateFloatAsState(
-        targetValue = dailyAverage.toFloat(),
+        targetValue = if (isAnimationTriggered) dailyAverage.toFloat() else 0f,
         animationSpec = tween(800, easing = FastOutSlowInEasing),
         label = "dailyAverageAnimation"
     )
     val animatedLargest by animateFloatAsState(
-        targetValue = stats.largestAmount.toFloat(),
+        targetValue = if (isAnimationTriggered) stats.largestAmount.toFloat() else 0f,
         animationSpec = tween(800, easing = FastOutSlowInEasing),
         label = "largestExpenseAnimation"
     )
 
     val cycleProgress = (elapsedDays.toFloat() / cycleLengthDays).coerceIn(0f, 1f)
     val animatedCycle by animateFloatAsState(
-        targetValue = cycleProgress,
-        animationSpec = tween(800, easing = FastOutSlowInEasing),
+        targetValue = if (isAnimationTriggered) cycleProgress else 0f,
+        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
         label = "cycleProgressAnimation"
     )
 

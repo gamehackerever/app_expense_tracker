@@ -662,7 +662,6 @@ fun SheetFixedCostSuggestion(suggestion: NecessityManager.BillSuggestion, onClic
     val haptic = LocalHapticFeedback.current
     val primary = MaterialTheme.colorScheme.primary
 
-    // Muted the card background, normalized the visual hierarchy
     SheetCard(
         onClick = {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -675,9 +674,8 @@ fun SheetFixedCostSuggestion(suggestion: NecessityManager.BillSuggestion, onClic
             icon = Icons.Default.Event,
             tint = primary,
             title = "Add ${NecessityManager.cleanBillName(suggestion.payee)} to Fixed Costs",
-            subtitle = "₹${formatSheetAmount(suggestion.amount.toDouble())} · ${suggestion.frequency.label}",
+            subtitle = "₹${formatSheetAmount(suggestion.amount / 100.0)} · ${suggestion.frequency.label}",
             trailing = {
-                // FIX: Solid, grounded background pill to remain visible in pure dark mode
                 Surface(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
                     shape = RoundedCornerShape(AppRadius.pill)

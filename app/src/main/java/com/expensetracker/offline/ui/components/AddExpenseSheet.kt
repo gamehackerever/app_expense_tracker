@@ -27,6 +27,7 @@ import com.expensetracker.offline.data.local.dao.AccountInfo
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.util.NecessityManager
 import com.expensetracker.offline.util.tick
@@ -60,7 +61,7 @@ fun AddExpenseSheet(
         mutableStateOf(prefs.getStringSet("key_custom_categories", emptySet()) ?: emptySet())
     }
 
-    val defaultCategories = listOf("Food & Dining", "Groceries", "Shopping", "Travel", "Bills & Utilities", "Entertainment", "Health", "Investments", "Uncategorized")
+    val defaultCategories = CategoryClassifier.PREDEFINED_CATEGORIES
     val allCategories = remember(availableCategories, savedCustomCategories) {
         (availableCategories + savedCustomCategories + defaultCategories).filter { it.isNotBlank() }.distinct()
     }
@@ -143,6 +144,19 @@ fun AddExpenseSheet(
             )
             fixedCostSuggestion = NecessityManager.suggestionFor(dummyTxn, transactionsHistory)
         }
+    }
+
+    if (showNewCategoryDialog) {
+        NewCategoryDialog(
+            onDismiss = { showNewCategoryDialog = false },
+            onAdd = { newCategory ->
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                savedCustomCategories = savedCustomCategories + newCategory
+                prefs.edit().putStringSet("key_custom_categories", savedCustomCategories).apply()
+                selectedCategory = newCategory
+                showNewCategoryDialog = false
+            }
+        )
     }
 
     ModalBottomSheet(

@@ -128,6 +128,11 @@ internal fun matchesAccount(txn: TransactionEntity, filter: AccountInfo?): Boole
 internal fun myShareOf(item: TransactionWithDebts): Long =
     (item.transaction.amount - item.debts.sumOf { it.amountOwed.toLong() }).coerceAtLeast(0L)
 
+internal fun isSpendDebit(txn: TransactionEntity): Boolean =
+    txn.type == TransactionType.DEBIT &&
+            !txn.excludeFromSpend &&
+            txn.category != "Split Settlement"
+
 // ─────────────────────────────── Category breakdown ───────────────────────────────
 
 @Composable
@@ -470,8 +475,8 @@ fun CategoryTransactionsSheet(
     allTransactions: List<TransactionWithDebts>,
     onDismiss: () -> Unit
 ) {
-    val categoryTxns = remember(allTransactions) {
-        allTransactions.filter { it.transaction.category == categoryName && it.transaction.type == TransactionType.DEBIT }
+    val categoryTxns = remember(allTransactions, categoryName) {
+        allTransactions.filter { it.transaction.category == categoryName && isSpendDebit(it.transaction) }
             .sortedByDescending { it.transaction.timestamp }
     }
 

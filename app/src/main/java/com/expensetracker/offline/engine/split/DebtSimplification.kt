@@ -1,6 +1,7 @@
 package com.expensetracker.offline.engine.split
 
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
+import com.expensetracker.offline.data.local.entity.DebtStatus
 import java.util.PriorityQueue
 
 object DebtSimplification {
@@ -29,7 +30,7 @@ object DebtSimplification {
         transactions.forEach { txnWithDebts ->
             val payerKey = keyOf(txnWithDebts.transaction.paidBy ?: "You")
 
-            txnWithDebts.debts.filter { it.settledAt == null }.forEach { debt ->
+            txnWithDebts.debts.filter { it.status == DebtStatus.OPEN && it.settledAt == null }.forEach { debt ->
                 val debtorKey = keyOf(debt.debtorName)
                 val amount = outstandingByDebtId[debt.id] ?: debt.amountOwed
                 if (amount <= 0L || debtorKey == payerKey) return@forEach
