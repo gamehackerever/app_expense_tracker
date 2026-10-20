@@ -3,6 +3,7 @@ package com.expensetracker.offline.ui.components
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -14,13 +15,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.dao.AccountInfo
@@ -30,14 +34,11 @@ import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.util.NecessityManager
-import com.expensetracker.offline.util.tick
-import com.expensetracker.offline.util.click
-import com.expensetracker.offline.util.confirm
-import com.expensetracker.offline.util.delete
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.round
 
@@ -49,11 +50,13 @@ fun AddExpenseSheet(
     availableCategories: List<String> = emptyList(),
     onDismiss: () -> Unit,
     linkedAccounts: List<AccountInfo>,
+    initialSplitPeople: List<String> = listOf("You"),
     onSave: (
         amount: Long, payee: String, category: String, type: TransactionType,
         timestamp: Long, itemsSummary: String?, receiptUri: String?,
         bankName: String?, accountNumber: String?
-    ) -> Unit
+    ) -> Unit,
+    onSaveSplit: ((List<SplitParticipant>) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -72,8 +75,13 @@ fun AddExpenseSheet(
     var payee by rememberSaveable { mutableStateOf("") }
     var amountStr by rememberSaveable { mutableStateOf("") }
     var selectedCategory by rememberSaveable { mutableStateOf("Uncategorized") }
+    var lastNonTransferCategory by rememberSaveable { mutableStateOf("Uncategorized") }
+    var userManuallyPickedCategory by rememberSaveable { mutableStateOf(false) }
 
     var transactionType by rememberSaveable { mutableStateOf(TransactionType.DEBIT) }
+    var isTransferMode by rememberSaveable { mutableStateOf(false) }
+    var excludeFromSpend by rememberSaveable { mutableStateOf(false) }
+    var lastNonTransferExclude by rememberSaveable { mutableStateOf(false) }
 
     var itemsSummary by rememberSaveable { mutableStateOf("") }
     var receiptImageUri by rememberSaveable { mutableStateOf<String?>(null) }
@@ -85,41 +93,77 @@ fun AddExpenseSheet(
     var showNewCategoryDialog by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
+    var itemizedSplitShares by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    val hasItemizedFriendsAssigned = remember(itemizedSplitShares) {
+        itemizedSplitShares.any { (person, paise) -> !person.equals("You", ignoreCase = true) && paise > 0L }
+    }
+
+    // Smart auto-categorization as the user types a payee (if they haven't manually picked a category yet)
+    LaunchedEffect(payee, isTransferMode, userManuallyPickedCategory) {
+        if (isTransferMode || userManuallyPickedCategory) return@LaunchedEffect
+        val clean = payee.trim()
+        if (clean.length < 2) return@LaunchedEffect
+        delay(120)
+        val inferred = withContext(Dispatchers.Default) {
+            val fromHistory = transactionsHistory.asSequence()
+                .take(400)
+                .firstOrNull {
+                    it.payee.equals(clean, ignoreCase = true) &&
+                            !it.category.equals("Uncategorized", ignoreCase = true) &&
+                            !it.category.equals("Transfer", ignoreCase = true)
+                }?.category
+            fromHistory ?: CategoryClassifier.classifySync(clean, clean)
+                .takeUnless { it.equals("Uncategorized", ignoreCase = true) || it.equals("Transfer", ignoreCase = true) }
+        }
+        if (inferred != null) {
+            selectedCategory = inferred
+            lastNonTransferCategory = inferred
+        }
+    }
 
     val calculatedAmount = remember(amountStr) { evaluateBasicMath(amountStr) }
     val hasUnsavedChanges by remember {
         derivedStateOf {
             amountStr.isNotBlank() || payee.isNotBlank() || itemsSummary.isNotBlank() ||
-                    receiptImageUri != null || transactionType != TransactionType.DEBIT || selectedBankName != null
+                    receiptImageUri != null || transactionType != TransactionType.DEBIT || isTransferMode ||
+                    excludeFromSpend || selectedBankName != null || hasItemizedFriendsAssigned
         }
     }
     val dirty by rememberUpdatedState(hasUnsavedChanges)
 
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
-        confirmValueChange = { target -> target != SheetValue.Hidden || !dirty }
+        confirmValueChange = { target ->
+            if (target == SheetValue.Hidden && dirty) {
+                showDiscardDialog = true
+                false
+            } else {
+                true
+            }
+        }
     )
 
-    BackHandler(enabled = hasUnsavedChanges) { showDiscardDialog = true }
-
-    // A blocked swipe-down snaps back without calling onDismissRequest, so surface the dialog here.
-    LaunchedEffect(sheetState) {
-        snapshotFlow { sheetState.targetValue }.collect { target ->
-            if (target == SheetValue.Hidden && dirty) showDiscardDialog = true
+    LaunchedEffect(showDiscardDialog, sheetState.currentValue) {
+        if (!showDiscardDialog && sheetState.currentValue == SheetValue.Hidden && !isSaving) {
+            runCatching { sheetState.show() }
         }
     }
+
+    BackHandler(enabled = hasUnsavedChanges) { showDiscardDialog = true }
 
     if (showDiscardDialog) {
         AppDialog(
             title = "Discard transaction?",
             onDismiss = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 showDiscardDialog = false
-                scope.launch { sheetState.show() }
+                scope.launch { runCatching { sheetState.show() } }
             },
             dismissText = "Keep editing",
             confirmText = "Discard",
             destructive = true,
             onConfirm = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 showDiscardDialog = false
                 deleteReceiptFile(context, receiptImageUri)
                 onDismiss()
@@ -135,8 +179,8 @@ fun AddExpenseSheet(
     }
 
     var fixedCostSuggestion by remember { mutableStateOf<NecessityManager.BillSuggestion?>(null) }
-    LaunchedEffect(payee, calculatedAmount, transactionType, selectedCategory, transactionsHistory) {
-        if (transactionType != TransactionType.DEBIT || payee.isBlank()) {
+    LaunchedEffect(payee, calculatedAmount, transactionType, isTransferMode, selectedCategory, transactionsHistory) {
+        if (transactionType != TransactionType.DEBIT || isTransferMode || payee.isBlank()) {
             fixedCostSuggestion = null
         } else {
             delay(250)
@@ -159,6 +203,10 @@ fun AddExpenseSheet(
                 savedCustomCategories = savedCustomCategories + newCategory
                 prefs.edit().putStringSet("key_custom_categories", savedCustomCategories).apply()
                 selectedCategory = newCategory
+                userManuallyPickedCategory = true
+                if (!newCategory.equals("Transfer", ignoreCase = true)) {
+                    lastNonTransferCategory = newCategory
+                }
                 showNewCategoryDialog = false
             }
         )
@@ -171,21 +219,59 @@ fun AddExpenseSheet(
         containerColor = MaterialTheme.colorScheme.background,
         dragHandle = { BottomSheetDefaults.DragHandle() }
     ) {
+        BackHandler(enabled = hasUnsavedChanges) { showDiscardDialog = true }
+
         Column(modifier = Modifier.fillMaxWidth().imePadding()) {
             Column(
                 modifier = Modifier
                     .weight(1f, fill = false)
                     .padding(horizontal = 24.dp)
-                    .padding(top = 8.dp, bottom = 16.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp) // Uniform spacing, no dividers
+                    .padding(top = 8.dp, bottom = 28.dp)
+                    .verticalScroll(rememberScrollState())
+                    .animateContentSize(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                SheetHeader(title = "Add transaction", subtitle = "Record an expense or income")
+                SheetHeader(title = "Add transaction", subtitle = "Record an expense, income, or self-transfer")
 
                 SheetSegmentedControl(
-                    options = listOf("Expense", "Income"),
-                    selectedIndex = if (transactionType == TransactionType.DEBIT) 0 else 1,
-                    onSelect = { transactionType = if (it == 0) TransactionType.DEBIT else TransactionType.CREDIT }
+                    options = listOf("Expense", "Income", "Transfer"),
+                    selectedIndex = when {
+                        isTransferMode -> 2
+                        transactionType == TransactionType.DEBIT -> 0
+                        else -> 1
+                    },
+                    onSelect = { idx ->
+                        when (idx) {
+                            0 -> {
+                                if (isTransferMode) {
+                                    selectedCategory = lastNonTransferCategory
+                                    excludeFromSpend = lastNonTransferExclude
+                                }
+                                isTransferMode = false
+                                transactionType = TransactionType.DEBIT
+                            }
+                            1 -> {
+                                if (isTransferMode) {
+                                    selectedCategory = lastNonTransferCategory
+                                    excludeFromSpend = false
+                                }
+                                isTransferMode = false
+                                transactionType = TransactionType.CREDIT
+                            }
+                            2 -> {
+                                if (!isTransferMode) {
+                                    if (!selectedCategory.equals("Transfer", ignoreCase = true)) {
+                                        lastNonTransferCategory = selectedCategory
+                                    }
+                                    lastNonTransferExclude = excludeFromSpend
+                                }
+                                isTransferMode = true
+                                transactionType = TransactionType.DEBIT
+                                selectedCategory = "Transfer"
+                                excludeFromSpend = true
+                            }
+                        }
+                    }
                 )
 
                 SheetAmountCard(
@@ -201,8 +287,8 @@ fun AddExpenseSheet(
                 SheetTextField(
                     value = payee,
                     onValueChange = { payee = it.take(80) },
-                    label = "Payee / store name",
-                    placeholder = "e.g., Supermarket, Rent, Client",
+                    label = if (isTransferMode) "Destination account / note" else "Payee / store name",
+                    placeholder = if (isTransferMode) "e.g., Savings A/c, Credit Card Bill" else "e.g., Supermarket, Restaurant, Client",
                     leadingIcon = Icons.Default.Storefront,
                     singleLine = true
                 )
@@ -218,25 +304,97 @@ fun AddExpenseSheet(
                     nullLabel = "Cash"
                 )
 
-                // Category Group (Tightly coupled with fixed cost suggestions)
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SheetCategoryPicker(
-                        categories = allCategories,
-                        selected = selectedCategory,
-                        onSelect = { selectedCategory = it },
-                        onAddCustom = { showNewCategoryDialog = true }
-                    )
+                AnimatedVisibility(
+                    visible = isTransferMode,
+                    enter = fadeIn(tween(180)) + expandVertically(tween(180)),
+                    exit = fadeOut(tween(140)) + shrinkVertically(tween(140))
+                ) {
+                    SheetCard(contentPadding = 14.dp) {
+                        SheetInfoRow(
+                            icon = Icons.Default.SwapHoriz,
+                            title = "Self-transfer / CC bill payment",
+                            subtitle = "Automatically excluded from monthly spending totals",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
 
-                    AnimatedVisibility(
-                        visible = transactionType == TransactionType.DEBIT && fixedCostSuggestion != null,
-                        enter = fadeIn(tween(200)) + expandVertically(tween(200)),
-                        exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
-                    ) {
-                        fixedCostSuggestion?.let { suggestion ->
-                            SheetFixedCostSuggestion(
-                                suggestion = suggestion,
-                                onClick = { onAddToFixedCosts(suggestion) }
-                            )
+                AnimatedVisibility(
+                    visible = !isTransferMode,
+                    enter = fadeIn(tween(180)) + expandVertically(tween(180)),
+                    exit = fadeOut(tween(140)) + shrinkVertically(tween(140))
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SheetCategoryPicker(
+                            categories = allCategories,
+                            selected = selectedCategory,
+                            onSelect = {
+                                selectedCategory = it
+                                userManuallyPickedCategory = true
+                                if (it.equals("Transfer", ignoreCase = true)) {
+                                    isTransferMode = true
+                                    excludeFromSpend = true
+                                } else {
+                                    isTransferMode = false
+                                    lastNonTransferCategory = it
+                                }
+                            },
+                            onAddCustom = { showNewCategoryDialog = true }
+                        )
+
+                        if (transactionType == TransactionType.DEBIT) {
+                            SheetCard(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    val next = !excludeFromSpend
+                                    excludeFromSpend = next
+                                    lastNonTransferExclude = next
+                                },
+                                contentPadding = 12.dp
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "Exclude from monthly spend",
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            "For pass-through expenses or reimbursable payments",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = excludeFromSpend,
+                                        onCheckedChange = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            excludeFromSpend = it
+                                            lastNonTransferExclude = it
+                                        },
+                                        colors = appSwitchColors()
+                                    )
+                                }
+                            }
+                        }
+
+                        AnimatedVisibility(
+                            visible = transactionType == TransactionType.DEBIT && !isTransferMode && !excludeFromSpend && fixedCostSuggestion != null,
+                            enter = fadeIn(tween(200)) + expandVertically(tween(200)),
+                            exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
+                        ) {
+                            val suggestion = fixedCostSuggestion
+                        if (suggestion != null) {
+                                SheetFixedCostSuggestion(
+                                    suggestion = suggestion,
+                                    onClick = { onAddToFixedCosts(suggestion) }
+                                )
+                            }
                         }
                     }
                 }
@@ -249,22 +407,58 @@ fun AddExpenseSheet(
                         if (receiptImageUri != new) deleteReceiptFile(context, receiptImageUri)
                         receiptImageUri = new
                     },
-                    receiptFilePrefix = "receipt_new"
+                    receiptFilePrefix = "receipt_new",
+                    currentBillAmountPaise = calculatedAmount,
+                    initialPeople = initialSplitPeople,
+                    onReceiptScanned = { _, scannedTotalPaise ->
+                        if (scannedTotalPaise != null && scannedTotalPaise > 0L) {
+                            amountStr = String.format(Locale.US, "%.2f", scannedTotalPaise / 100.0)
+                        }
+                    },
+                    onItemizedSplitComputed = { participants, _ ->
+                        itemizedSplitShares = participants.associate { p ->
+                            val paise = (p.exactAmountStr.toDoubleOrNull() ?: 0.0) * 100.0
+                            p.name to round(paise).toLong()
+                        }
+                    }
                 )
             }
 
             SheetFooter {
                 SheetPrimaryButton(
-                    text = "Save transaction",
+                    text = when {
+                        isTransferMode -> "Save transfer"
+                        hasItemizedFriendsAssigned -> "Save transaction & split"
+                        else -> "Save transaction"
+                    },
                     enabled = (calculatedAmount ?: 0L) > 0L && !isSaving,
                     onClick = {
                         val finalAmount = calculatedAmount ?: 0L
-                        val finalPayee = payee.trim().ifBlank { if (transactionType == TransactionType.DEBIT) "Cash Expense" else "Income" }
+                        val finalPayee = payee.trim().ifBlank {
+                            when {
+                                isTransferMode -> "Self Transfer"
+                                transactionType == TransactionType.DEBIT -> "Cash Expense"
+                                else -> "Income"
+                            }
+                        }
+                        val finalCategory = if (isTransferMode) "Transfer" else selectedCategory
                         if (finalAmount > 0 && !isSaving) {
                             isSaving = true
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (hasItemizedFriendsAssigned && onSaveSplit != null) {
+                                val splitParticipants = itemizedSplitShares.map { (person, paise) ->
+                                    val isMe = person.equals("You", ignoreCase = true)
+                                    SplitParticipant(
+                                        id = if (isMe) "0" else person.hashCode().toString(),
+                                        name = if (isMe) "You" else person,
+                                        isMe = isMe,
+                                        exactAmountStr = String.format(Locale.US, "%.2f", paise / 100.0)
+                                    )
+                                }
+                                onSaveSplit(splitParticipants)
+                            }
                             onSave(
-                                finalAmount, finalPayee, selectedCategory, transactionType,
+                                finalAmount, finalPayee, finalCategory, transactionType,
                                 transactionDateMillis, itemsSummary.ifBlank { null }, receiptImageUri,
                                 selectedBankName, selectedAccountNumber
                             )
@@ -277,13 +471,11 @@ fun AddExpenseSheet(
     }
 }
 
-// Ensure the math parser remains available locally so compilation doesn't fail
 private const val MAX_EXPRESSION_LENGTH = 64
 private const val MAX_NESTING_DEPTH = 16
 private const val MAX_AMOUNT = 1_000_000_000_000L
 
 fun evaluateBasicMath(input: String): Long? {
-    // FIXED: Sanitize commas before evaluating math to allow pasting "1,200.50" (PO-I)
     val str = input
         .filterNot { it.isWhitespace() }
         .replace(",", "")

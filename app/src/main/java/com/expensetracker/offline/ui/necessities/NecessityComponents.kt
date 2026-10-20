@@ -553,30 +553,43 @@ internal fun NecessityFormSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         suggestions.forEach { s ->
-                            AssistChip(
-                                onClick = {
-                                    nameInput = s.payee
-                                    amountInput = String.format(Locale.US, "%.2f", s.amount / 100.0).removeSuffix(".00")
-                                    frequency = s.frequency
-                                    s.category?.let { categoryName = it }
-                                    s.validityDays?.let { validityDaysInput = it.toString() }
-                                    if (s.frequency != NecessityFrequency.MONTHLY) {
-                                        dueTimestamp = Calendar.getInstance().apply {
-                                            timeInMillis = s.lastTimestamp
-                                            add(Calendar.MONTH, s.frequency.months)
-                                        }.timeInMillis
+                            Surface(
+                                shape = RoundedCornerShape(AppRadius.pill),
+                                color = colors.onSurface.copy(alpha = 0.05f),
+                                border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.6f)),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(AppRadius.pill))
+                                    .clickable {
+                                        nameInput = s.payee
+                                        amountInput = String.format(Locale.US, "%.2f", s.amount / 100.0).removeSuffix(".00")
+                                        frequency = s.frequency
+                                        s.category?.let { categoryName = it }
+                                        s.validityDays?.let { validityDaysInput = it.toString() }
+                                        if (s.frequency != NecessityFrequency.MONTHLY) {
+                                            dueTimestamp = Calendar.getInstance().apply {
+                                                timeInMillis = s.lastTimestamp
+                                                add(Calendar.MONTH, s.frequency.months)
+                                            }.timeInMillis
+                                        }
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     }
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                },
-                                label = {
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(Icons.Default.AutoAwesome, null, Modifier.size(15.dp), tint = colors.onSurface)
                                     Text(
                                         "Found ${s.payee} (${CurrencyFormat.withSymbol(s.amount, 0)}" +
                                                 "${if (s.frequency == NecessityFrequency.MONTHLY) "/mo" else ""}) · Tap to autofill",
-                                        maxLines = 1
+                                        maxLines = 1,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colors.onSurface
                                     )
-                                },
-                                leadingIcon = { Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp)) }
-                            )
+                                }
+                            }
                         }
                     }
                 }

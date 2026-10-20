@@ -491,7 +491,8 @@ fun ManageNecessitiesScreen(
         )
     }
 
-    itemToLink?.let { target ->
+    val target = itemToLink
+    if (target != null) {
         val current = localItems.find { it.id == target.id } ?: target
         LinkTransactionSheet(
             item = current,

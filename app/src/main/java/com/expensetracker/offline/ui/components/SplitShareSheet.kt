@@ -1,27 +1,26 @@
 package com.expensetracker.offline.ui.components
 
+import android.content.Context
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.border
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import android.content.Context
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -32,6 +31,7 @@ import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,28 +42,38 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
+import com.expensetracker.offline.engine.split.ReceiptScanner
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.util.SplitPresetManager
 import com.expensetracker.offline.util.UserSplitPreset
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.abs
 
 enum class SplitMode(val label: String) {
     EQUAL("Equal"), SHARES("Shares"), EXACT("Exact"), PERCENTAGE("Percent")
@@ -126,17 +136,27 @@ private fun computeShares(participants: List<SplitParticipant>, mode: SplitMode,
     return participants.mapIndexed { i, p -> p.id to values[i] }.toMap()
 }
 
-private data class InitialSplit(val mode: SplitMode, val includeMe: Boolean, val participants: List<SplitParticipant>)
+private data class InitialSplit(
+    val mode: SplitMode,
+    val includeMe: Boolean,
+    val paidBy: String,
+    val participants: List<SplitParticipant>
+)
 
-private fun buildInitialSplit(totalPaise: Long, debts: List<SplitDebtEntity>, contextualNames: List<String>): InitialSplit {
+private fun buildInitialSplit(
+    totalPaise: Long,
+    initialPaidBy: String?,
+    debts: List<SplitDebtEntity>,
+    contextualNames: List<String>
+): InitialSplit {
+    val payer = initialPaidBy?.trim()?.takeIf { it.isNotBlank() } ?: "You"
     if (debts.isEmpty()) {
-        // NEW: Context-Aware Auto-fill. Pre-populate the first empty slot with the #1 matching contextual name
         val prefilledP2 = if (contextualNames.isNotEmpty()) {
             SplitParticipant(name = contextualNames.first())
         } else {
             SplitParticipant()
         }
-        return InitialSplit(SplitMode.EQUAL, true, listOf(SplitParticipant(isMe = true, name = "You"), prefilledP2))
+        return InitialSplit(SplitMode.EQUAL, true, payer, listOf(SplitParticipant(isMe = true, name = "You"), prefilledP2))
     }
     val merged = LinkedHashMap<String, Triple<String, Long, Long?>>()
     debts.forEach { d ->
@@ -146,22 +166,41 @@ private fun buildInitialSplit(totalPaise: Long, debts: List<SplitDebtEntity>, co
         val prev = merged[key]
         merged[key] = if (prev == null) Triple(name, paise, d.id) else Triple(prev.first, prev.second + paise, prev.third)
     }
-    val others = merged.values.toList()
-    val myShare = (totalPaise - others.sumOf { it.second }).coerceAtLeast(0L)
-    val names = listOf("You") + others.map { it.first }
-    val amounts = listOf(myShare) + others.map { it.second }
-    val debtIds = listOf(null) + others.map { it.third }
-    val includeMe = myShare > 0L
-    val activeIdx = amounts.indices.filter { it != 0 || includeMe }
-    val looksEqual = activeIdx.size >= 2 && allocate(totalPaise, activeIdx.map { 1L }) == activeIdx.map { amounts[it] }
-    val participants = names.mapIndexed { i, n ->
-        SplitParticipant(isMe = i == 0, name = n, debtId = debtIds[i], isIncludedInEqual = true, exactAmountStr = if (amounts[i] > 0L) plain(amounts[i]) else "")
+
+    val isPaidByMe = payer.equals("You", ignoreCase = true)
+    if (isPaidByMe) {
+        val others = merged.values.filter { !it.first.equals("You", ignoreCase = true) }
+        val myShare = (totalPaise - others.sumOf { it.second }).coerceAtLeast(0L)
+        val names = listOf("You") + others.map { it.first }
+        val amounts = listOf(myShare) + others.map { it.second }
+        val debtIds = listOf(null) + others.map { it.third }
+        val includeMe = myShare > 0L
+        val activeIdx = amounts.indices.filter { it != 0 || includeMe }
+        val looksEqual = activeIdx.size >= 2 && allocate(totalPaise, activeIdx.map { 1L }) == activeIdx.map { amounts[it] }
+        val participants = names.mapIndexed { i, n ->
+            SplitParticipant(isMe = i == 0, name = n, debtId = debtIds[i], isIncludedInEqual = true, exactAmountStr = if (amounts[i] > 0L) plain(amounts[i]) else "")
+        }
+        return InitialSplit(if (looksEqual) SplitMode.EQUAL else SplitMode.EXACT, includeMe, "You", participants)
+    } else {
+        val myEntry = merged["you"]
+        val myShare = myEntry?.second ?: 0L
+        val nonMeDebts = merged.values.filter { !it.first.equals("You", ignoreCase = true) && !it.first.equals(payer, ignoreCase = true) }
+        val payerShare = (totalPaise - myShare - nonMeDebts.sumOf { it.second }).coerceAtLeast(0L)
+        val names = listOf("You", payer) + nonMeDebts.map { it.first }
+        val amounts = listOf(myShare, payerShare) + nonMeDebts.map { it.second }
+        val debtIds = listOf(myEntry?.third, null) + nonMeDebts.map { it.third }
+        val includeMe = myShare > 0L
+        val activeIdx = amounts.indices.filter { it != 0 || includeMe }
+        val looksEqual = activeIdx.size >= 2 && allocate(totalPaise, activeIdx.map { 1L }) == activeIdx.map { amounts[it] }
+        val participants = names.mapIndexed { i, n ->
+            SplitParticipant(isMe = i == 0, name = n, debtId = debtIds[i], isIncludedInEqual = true, exactAmountStr = if (amounts[i] > 0L) plain(amounts[i]) else "")
+        }
+        return InitialSplit(if (looksEqual) SplitMode.EQUAL else SplitMode.EXACT, includeMe, payer, participants)
     }
-    return InitialSplit(if (looksEqual) SplitMode.EQUAL else SplitMode.EXACT, includeMe, participants)
 }
 
-private fun splitSignature(mode: SplitMode, includeMe: Boolean, participants: List<SplitParticipant>): String =
-    mode.name + "#" + includeMe + "#" + participants.joinToString("|") {
+private fun splitSignature(mode: SplitMode, includeMe: Boolean, paidBy: String, participants: List<SplitParticipant>): String =
+    mode.name + "#" + includeMe + "#" + paidBy.trim().lowercase() + "#" + participants.joinToString("|") {
         "${it.isMe}:${it.name.trim()}:${it.exactAmountStr}:${it.percentageStr}:${it.sharesStr}"
     }
 
@@ -188,19 +227,21 @@ private val ParticipantsSaver = listSaver<List<SplitParticipant>, Any>(
 )
 
 private data class Hint(val text: String, val isError: Boolean)
+private data class QuickFixAction(val label: String, val onClick: () -> Unit)
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun MultiSplitShareSheet(
     transaction: TransactionEntity,
     onDismiss: () -> Unit,
-    onSaveSplit: (participants: List<SplitParticipant>) -> Unit,
+    onSaveSplit: (participants: List<SplitParticipant>, paidBy: String) -> Unit,
     initialDebts: List<SplitDebtEntity> = emptyList(),
     onResetSplit: (() -> Unit)? = null,
-    contextualNames: List<String> = emptyList(), // NEW
-    recentNames: List<String> = emptyList()      // NEW
+    contextualNames: List<String> = emptyList(),
+    recentNames: List<String> = emptyList()
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val prefs = remember(context) { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
     var userPresets by remember { mutableStateOf(SplitPresetManager.loadPresets(prefs)) }
     var showSavePresetDialog by remember { mutableStateOf(false) }
@@ -212,19 +253,26 @@ fun MultiSplitShareSheet(
     val isEditing = initialDebts.isNotEmpty()
 
     val totalPaise = remember(transaction.amount) { transaction.amount }
-    val initial = remember { buildInitialSplit(totalPaise, initialDebts, contextualNames) }
-    val initialSignature = remember(initial) { splitSignature(initial.mode, initial.includeMe, initial.participants) }
+    val initial = remember { buildInitialSplit(totalPaise, transaction.paidBy, initialDebts, contextualNames) }
+    val initialSignature = remember(initial) { splitSignature(initial.mode, initial.includeMe, initial.paidBy, initial.participants) }
 
     var selectedMode by rememberSaveable { mutableStateOf(initial.mode) }
     var participants by rememberSaveable(stateSaver = ParticipantsSaver) { mutableStateOf(initial.participants) }
     var includeMe by rememberSaveable { mutableStateOf(initial.includeMe) }
+    var paidBy by rememberSaveable { mutableStateOf(initial.paidBy) }
     var exactTouched by rememberSaveable { mutableStateOf(isEditing && initial.mode == SplitMode.EXACT) }
     var percentTouched by rememberSaveable { mutableStateOf(false) }
+
+    // Itemized Receipt OCR Splitting state
+    var scannedReceiptItems by remember { mutableStateOf<List<ReceiptScanner.ScannedItem>>(emptyList()) }
+    var itemAssignmentsVersion by remember { mutableIntStateOf(0) }
+    var isScanningReceipt by remember { mutableStateOf(false) }
 
     var pendingFocusId by remember { mutableStateOf<String?>(null) }
     var nudgeId by remember { mutableStateOf<String?>(null) }
     var showDiscardDialog by remember { mutableStateOf(false) }
     var showRemoveDialog by remember { mutableStateOf(false) }
+    var isClosing by remember { mutableStateOf(false) }
 
     fun tick() = haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
     fun update(id: String, transform: (SplitParticipant) -> SplitParticipant) {
@@ -241,6 +289,65 @@ fun MultiSplitShareSheet(
     val myShare = active.firstOrNull { it.isMe }?.let { shares[it.id] } ?: 0L
     val othersOwe = active.filter { !it.isMe }.sumOf { shares[it.id] ?: 0L }
 
+    val availablePayers = remember(active) {
+        listOf("You") + active.filter { !it.isMe && it.name.trim().isNotEmpty() }.map { it.name.trim() }.distinct()
+    }
+    LaunchedEffect(availablePayers) {
+        if (availablePayers.none { it.equals(paidBy, ignoreCase = true) }) {
+            paidBy = "You"
+        }
+    }
+
+    fun applyProRataReceiptSplit(items: List<ReceiptScanner.ScannedItem>) {
+        val validPeople = active.mapNotNull { p ->
+            if (p.isMe) "You" else p.name.trim().takeIf { it.isNotEmpty() }
+        }
+        if (items.isEmpty() || validPeople.isEmpty()) return
+        val proRataMap = ReceiptScanner.calculateProRataShares(items, totalPaise, validPeople).toMutableMap()
+
+        // Zero-cognitive-load helper: if the user assigned specific items to friends and hasn't explicitly
+        // tapped "You" on the remaining items yet, automatically assign the remaining bill balance to "You"
+        // so the total always sums to totalPaise without requiring 10 extra taps!
+        val youExplicitlyAssigned = items.any { item -> item.assignedTo.any { it.equals("You", ignoreCase = true) } }
+        val othersSum = proRataMap.entries.filterNot { it.key.equals("You", ignoreCase = true) }.sumOf { it.value }
+        if (includeMe && !youExplicitlyAssigned && othersSum in 1L..totalPaise) {
+            proRataMap["You"] = (totalPaise - othersSum).coerceAtLeast(0L)
+        }
+
+        selectedMode = SplitMode.EXACT
+        exactTouched = true
+        participants = participants.map { p ->
+            val key = if (p.isMe) "You" else p.name.trim()
+            val share = proRataMap[key] ?: 0L
+            p.copy(exactAmountStr = if (share > 0L) plain(share) else "")
+        }
+    }
+
+    fun scanReceiptUri(pathOrUri: String) {
+        isScanningReceipt = true
+        scope.launch {
+            try {
+                val file = File(pathOrUri)
+                val uri = if (file.exists()) Uri.fromFile(file) else Uri.parse(pathOrUri)
+                val extracted = withContext(Dispatchers.IO) {
+                    ReceiptScanner.extractReceipt(context, uri).items
+                }
+                if (extracted.isNotEmpty()) {
+                    scannedReceiptItems = extracted
+                    Toast.makeText(context, "Found ${extracted.size} items! Tap names under each item to assign.", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Could not detect priced items on receipt.", Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                isScanningReceipt = false
+            }
+        }
+    }
+
+    val pickReceiptForSplit = rememberReceiptPicker("split_receipt_${transaction.id}") { path ->
+        scanReceiptUri(path)
+    }
+
     val blankNameCount = active.count { !it.isMe && it.name.isBlank() }
     val badNames: Set<String> = remember(active) {
         active.filter { !it.isMe }.map { it.name.trim().lowercase() }.filter { it.isNotEmpty() }
@@ -250,24 +357,43 @@ fun MultiSplitShareSheet(
 
     val blocking: Hint? = when {
         totalPaise <= 0L -> Hint("This transaction has no amount to split.", true)
-        blankNameCount == 1 -> Hint("Enter a name for the person you're splitting with.", false)
-        blankNameCount > 1 -> Hint("Enter a name for everyone you're splitting with.", false)
+        blankNameCount == 1 -> Hint("Enter a name for the person you're splitting with (or remove the empty row).", false)
+        blankNameCount > 1 -> Hint("Enter names for everyone you're splitting with (or remove empty rows).", false)
         badNames.isNotEmpty() -> Hint("Each person needs a unique name.", true)
-        selectedMode == SplitMode.EXACT && remaining > 0L -> Hint("${money(remaining)} still needs to be assigned.", false)
-        selectedMode == SplitMode.EXACT && remaining < 0L -> Hint("Shares exceed the bill by ${money(-remaining)}.", true)
-        selectedMode == SplitMode.PERCENTAGE && bpRemaining > 0L -> Hint("${fmtBp(bpRemaining)}% still needs to be assigned.", false)
-        selectedMode == SplitMode.PERCENTAGE && bpRemaining < 0L -> Hint("Percentages exceed 100% by ${fmtBp(-bpRemaining)}.", true)
-        !hasDebtor -> Hint("At least one other person needs a share.", false)
+        selectedMode == SplitMode.EXACT && remaining > 0L -> Hint("${money(remaining)} left unassigned — pick a quick fix below:", false)
+        selectedMode == SplitMode.EXACT && remaining < 0L -> Hint("Shares exceed the bill by ${money(-remaining)} — pick a quick fix below:", true)
+        selectedMode == SplitMode.PERCENTAGE && bpRemaining > 0L -> Hint("${fmtBp(bpRemaining)}% left unassigned — pick a quick fix below:", false)
+        selectedMode == SplitMode.PERCENTAGE && bpRemaining < 0L -> Hint("Percentages exceed 100% by ${fmtBp(-bpRemaining)}% — pick a quick fix below:", true)
+        !hasDebtor -> Hint("At least one other person needs a share greater than ₹0.", false)
         else -> null
     }
 
-    val isDirty = splitSignature(selectedMode, includeMe, participants) != initialSignature
+    val isDirty = splitSignature(selectedMode, includeMe, paidBy, participants) != initialSignature
     val dirtyState = rememberUpdatedState(isDirty)
 
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
-        confirmValueChange = { target -> if (target == SheetValue.Hidden && dirtyState.value) { showDiscardDialog = true; false } else true }
+        confirmValueChange = { target ->
+            if (target == SheetValue.Hidden && dirtyState.value) {
+                showDiscardDialog = true
+                false
+            } else {
+                true
+            }
+        }
     )
+
+    // Safety net: if ModalBottomSheet animated to Hidden (e.g. scrim tap or system back) before showing
+    // the discard dialog, and the user tapped "Keep Editing", immediately re-show the sheet so the UI never freezes!
+    LaunchedEffect(showDiscardDialog, sheetState.currentValue) {
+        if (!showDiscardDialog && sheetState.currentValue == SheetValue.Hidden && !isClosing) {
+            runCatching { sheetState.show() }
+        }
+    }
+
+    BackHandler(enabled = isDirty) {
+        showDiscardDialog = true
+    }
 
     fun switchMode(target: SplitMode) {
         if (target == selectedMode) return
@@ -288,25 +414,247 @@ fun MultiSplitShareSheet(
         selectedMode = target
     }
 
-    fun addPerson(name: String = "") {
+    fun addPerson(name: String = "", initialExactPaise: Long = 0L, initialPercentBp: Long = 0L) {
+        val exactFill = if (initialExactPaise > 0L) plain(initialExactPaise) else ""
+        val pctFill = if (initialPercentBp > 0L) fmtBp(initialPercentBp) else ""
         val blank = participants.firstOrNull { !it.isMe && it.name.isBlank() }
         when {
-            blank != null && name.isNotBlank() -> update(blank.id) { it.copy(name = name) }
+            blank != null && name.isNotBlank() -> update(blank.id) {
+                it.copy(
+                    name = name,
+                    exactAmountStr = exactFill.ifEmpty { it.exactAmountStr },
+                    percentageStr = pctFill.ifEmpty { it.percentageStr }
+                )
+            }
             blank != null -> {
                 tick()
+                if (exactFill.isNotEmpty() || pctFill.isNotEmpty()) {
+                    update(blank.id) {
+                        it.copy(
+                            exactAmountStr = exactFill.ifEmpty { it.exactAmountStr },
+                            percentageStr = pctFill.ifEmpty { it.percentageStr }
+                        )
+                    }
+                }
                 pendingFocusId = blank.id
                 nudgeId = blank.id
             }
             active.size < MAX_PEOPLE -> {
-                val p = SplitParticipant(name = name)
+                val p = SplitParticipant(
+                    name = name,
+                    exactAmountStr = exactFill,
+                    percentageStr = pctFill
+                )
                 participants = participants + p
                 if (name.isBlank()) pendingFocusId = p.id
             }
         }
     }
 
+    // Build 1-tap Smart Fix actions whenever there is a blocking condition so users never have to think or do mental math
+    val quickFixes: List<QuickFixAction> = remember(
+        blocking, selectedMode, remaining, bpRemaining, active, shares, includeMe, myShare, blankNameCount, otherCount, totalPaise
+    ) {
+        if (blocking == null || totalPaise <= 0L) return@remember emptyList()
+        val fixes = mutableListOf<QuickFixAction>()
+
+        if (blankNameCount > 0) {
+            val firstBlank = active.firstOrNull { !it.isMe && it.name.isBlank() }
+            if (firstBlank != null) {
+                fixes += QuickFixAction("Type name") {
+                    tick()
+                    pendingFocusId = firstBlank.id
+                    nudgeId = firstBlank.id
+                }
+            }
+            if (otherCount > blankNameCount) {
+                fixes += QuickFixAction(if (blankNameCount == 1) "Remove empty row" else "Remove $blankNameCount empty rows") {
+                    tick()
+                    participants = participants.filter { it.isMe || it.name.isNotBlank() }
+                }
+            }
+            return@remember fixes
+        }
+
+        if (badNames.isNotEmpty()) {
+            val dup = active.lastOrNull { !it.isMe && it.name.trim().lowercase() in badNames }
+            if (dup != null) {
+                fixes += QuickFixAction("Edit duplicate \"${dup.name.trim()}\"") {
+                    tick()
+                    pendingFocusId = dup.id
+                }
+            }
+            return@remember fixes
+        }
+
+        if (selectedMode == SplitMode.EXACT && remaining != 0L) {
+            // 1. Adjust "You" if included and resulting share >= 0
+            val meParticipant = active.firstOrNull { it.isMe }
+            if (meParticipant != null && myShare + remaining >= 0L) {
+                val newMyShare = myShare + remaining
+                val actionLabel = if (remaining > 0L) {
+                    "Add ${money(remaining)} to You (→ ${money(newMyShare)})"
+                } else {
+                    "Reduce You by ${money(-remaining)} (→ ${money(newMyShare)})"
+                }
+                fixes += QuickFixAction(actionLabel) {
+                    tick()
+                    exactTouched = true
+                    update(meParticipant.id) { it.copy(exactAmountStr = if (newMyShare > 0L) plain(newMyShare) else "") }
+                }
+            }
+
+            // 2. Adjust named friend(s) if their share + remaining >= 0
+            active.filter { !it.isMe && it.name.isNotBlank() }.forEach { friend ->
+                val fShare = shares[friend.id] ?: 0L
+                val newFriendShare = fShare + remaining
+                if (newFriendShare >= 0L && fixes.size < 4) {
+                    val fName = friend.name.trim()
+                    val label = if (remaining > 0L) {
+                        "Add ${money(remaining)} to $fName (→ ${money(newFriendShare)})"
+                    } else {
+                        "Reduce $fName by ${money(-remaining)} (→ ${money(newFriendShare)})"
+                    }
+                    fixes += QuickFixAction(label) {
+                        tick()
+                        exactTouched = true
+                        update(friend.id) { it.copy(exactAmountStr = if (newFriendShare > 0L) plain(newFriendShare) else "") }
+                    }
+                }
+            }
+
+            // 3. Split difference equally across all active people
+            if (active.size >= 2) {
+                val deltas = allocate(abs(remaining), active.map { 1L })
+                val canApplyEqualDelta = active.indices.all { i ->
+                    val cur = shares[active[i].id] ?: 0L
+                    val next = if (remaining > 0L) cur + deltas[i] else cur - deltas[i]
+                    next >= 0L
+                }
+                if (canApplyEqualDelta) {
+                    val perPerson = abs(remaining) / active.size
+                    val label = if (remaining > 0L) {
+                        "Split +${money(remaining)} equally (+${money(perPerson)}/each)"
+                    } else {
+                        "Reduce ${money(-remaining)} equally (−${money(perPerson)}/each)"
+                    }
+                    fixes += QuickFixAction(label) {
+                        tick()
+                        exactTouched = true
+                        val newById = active.indices.associate { i ->
+                            val p = active[i]
+                            val cur = shares[p.id] ?: 0L
+                            val next = if (remaining > 0L) cur + deltas[i] else cur - deltas[i]
+                            p.id to next
+                        }
+                        participants = participants.map { p ->
+                            val updatedPaise = newById[p.id] ?: return@map p
+                            p.copy(exactAmountStr = if (updatedPaise > 0L) plain(updatedPaise) else "")
+                        }
+                    }
+                }
+            }
+
+            // 4. Add another person for the unassigned remainder
+            if (remaining > 0L && active.size < MAX_PEOPLE) {
+                fixes += QuickFixAction("+ Add person for ${money(remaining)}") {
+                    tick()
+                    exactTouched = true
+                    addPerson(initialExactPaise = remaining)
+                }
+            }
+
+            // 5. Scale current amounts proportionally to totalPaise
+            val nonZeroCount = active.count { (shares[it.id] ?: 0L) > 0L }
+            if (assigned > 0L && nonZeroCount >= 2) {
+                fixes += QuickFixAction("Scale proportionally to ${money(totalPaise)}") {
+                    tick()
+                    exactTouched = true
+                    val scaled = allocate(totalPaise, active.map { (shares[it.id] ?: 0L).coerceAtLeast(0L) })
+                    val scaledMap = active.indices.associate { i -> active[i].id to scaled[i] }
+                    participants = participants.map { p ->
+                        val s = scaledMap[p.id] ?: return@map p
+                        p.copy(exactAmountStr = if (s > 0L) plain(s) else "")
+                    }
+                }
+            }
+        } else if (selectedMode == SplitMode.PERCENTAGE && bpRemaining != 0L) {
+            val meParticipant = active.firstOrNull { it.isMe }
+            val myBp = meParticipant?.percentageStr?.toMinorUnits() ?: 0L
+            if (meParticipant != null && myBp + bpRemaining in 0L..FULL_BP) {
+                val newBp = myBp + bpRemaining
+                val label = if (bpRemaining > 0L) {
+                    "Add ${fmtBp(bpRemaining)}% to You (→ ${fmtBp(newBp)}%)"
+                } else {
+                    "Reduce You by ${fmtBp(-bpRemaining)}% (→ ${fmtBp(newBp)}%)"
+                }
+                fixes += QuickFixAction(label) {
+                    tick()
+                    percentTouched = true
+                    update(meParticipant.id) { it.copy(percentageStr = if (newBp > 0L) fmtBp(newBp) else "") }
+                }
+            }
+
+            if (active.size >= 2) {
+                val deltas = allocate(abs(bpRemaining), active.map { 1L })
+                val canApply = active.indices.all { i ->
+                    val cur = active[i].percentageStr.toMinorUnits()
+                    val next = if (bpRemaining > 0L) cur + deltas[i] else cur - deltas[i]
+                    next in 0L..FULL_BP
+                }
+                if (canApply) {
+                    fixes += QuickFixAction(
+                        if (bpRemaining > 0L) "Split +${fmtBp(bpRemaining)}% equally" else "Reduce ${fmtBp(-bpRemaining)}% equally"
+                    ) {
+                        tick()
+                        percentTouched = true
+                        val newById = active.indices.associate { i ->
+                            val p = active[i]
+                            val cur = p.percentageStr.toMinorUnits()
+                            val next = if (bpRemaining > 0L) cur + deltas[i] else cur - deltas[i]
+                            p.id to next
+                        }
+                        participants = participants.map { p ->
+                            val updatedBp = newById[p.id] ?: return@map p
+                            p.copy(percentageStr = if (updatedBp > 0L) fmtBp(updatedBp) else "")
+                        }
+                    }
+                }
+            }
+
+            if (bpSum > 0L) {
+                fixes += QuickFixAction("Scale proportionally to 100%") {
+                    tick()
+                    percentTouched = true
+                    val scaled = allocate(FULL_BP, active.map { it.percentageStr.toMinorUnits().coerceAtLeast(0L) })
+                    val scaledMap = active.indices.associate { i -> active[i].id to scaled[i] }
+                    participants = participants.map { p ->
+                        val s = scaledMap[p.id] ?: return@map p
+                        p.copy(percentageStr = if (s > 0L) fmtBp(s) else "")
+                    }
+                }
+            }
+
+            if (bpRemaining > 0L && active.size < MAX_PEOPLE) {
+                fixes += QuickFixAction("+ Add person for ${fmtBp(bpRemaining)}%") {
+                    tick()
+                    percentTouched = true
+                    addPerson(initialPercentBp = bpRemaining)
+                }
+            }
+        } else if (!hasDebtor && active.size >= 2) {
+            fixes += QuickFixAction("Split equally (${money(totalPaise / active.size)}/each)") {
+                tick()
+                switchMode(SplitMode.EQUAL)
+            }
+        }
+
+        fixes
+    }
+
     fun save() {
         if (blocking != null) return
+        isClosing = true
         focusManager.clearFocus()
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         val me = participants.first { it.isMe }.let {
@@ -315,11 +663,10 @@ fun MultiSplitShareSheet(
         val others = active.filter { !it.isMe && (shares[it.id] ?: 0L) > 0L }.map {
             it.copy(name = it.name.trim().replace(Regex("\\s+"), " "), isIncludedInEqual = true, exactAmountStr = plain(shares[it.id] ?: 0L))
         }
-        onSaveSplit(listOf(me) + others)
+        onSaveSplit(listOf(me) + others, paidBy)
         onDismiss()
     }
 
-    // NEW: Smart filtering out of people already in the active list
     val contextNamesFiltered = remember(contextualNames, active) {
         contextualNames.filter { s -> s.isNotEmpty() && active.none { it.name.trim().equals(s, true) } }.take(4)
     }
@@ -337,6 +684,7 @@ fun MultiSplitShareSheet(
             confirmText = "Save Preset",
             confirmEnabled = newPresetNameInput.isNotBlank() && nonBlankMembers.isNotEmpty(),
             onConfirm = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 val newPreset = UserSplitPreset(
                     id = UUID.randomUUID().toString(),
                     name = newPresetNameInput.trim(),
@@ -361,6 +709,8 @@ fun MultiSplitShareSheet(
                     label = { Text("Preset Group Name") },
                     placeholder = { Text("e.g., Flatmates, Goa Trip") },
                     singleLine = true,
+                    colors = sheetFieldColors(),
+                    shape = RoundedCornerShape(AppRadius.small),
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -368,32 +718,78 @@ fun MultiSplitShareSheet(
     }
 
     if (showDiscardDialog) {
-        AppDialog(title = "Discard changes?", onDismiss = { showDiscardDialog = false }, dismissText = "Keep Editing", confirmText = "Discard", destructive = true, onConfirm = { showDiscardDialog = false; onDismiss() }) {
-            Text("Your split hasn't been saved yet.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AppDialog(
+            title = "Discard changes?",
+            onDismiss = {
+                tick()
+                showDiscardDialog = false
+                scope.launch { runCatching { sheetState.show() } }
+            },
+            dismissText = "Keep editing",
+            confirmText = "Discard",
+            destructive = true,
+            onConfirm = {
+                isClosing = true
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                showDiscardDialog = false
+                onDismiss()
+            }
+        ) {
+            Text(
+                "Your split hasn't been saved yet. Discard your changes?",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 20.sp
+            )
         }
     }
 
     if (showRemoveDialog) {
-        AppDialog(title = "Remove split?", onDismiss = { showRemoveDialog = false }, confirmText = "Remove", destructive = true, onConfirm = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); showRemoveDialog = false; onResetSplit?.invoke(); onDismiss() }) {
-            Text("All shares on this bill will be cleared, and any repayments already logged against them will be unlinked.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp)
+        AppDialog(
+            title = "Remove split?",
+            onDismiss = {
+                tick()
+                showRemoveDialog = false
+            },
+            confirmText = "Remove",
+            destructive = true,
+            onConfirm = {
+                isClosing = true
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                showRemoveDialog = false
+                onResetSplit?.invoke()
+                onDismiss()
+            }
+        ) {
+            Text(
+                "All shares on this bill will be cleared, and any repayments already logged against them will be unlinked.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 20.sp
+            )
         }
     }
 
     ModalBottomSheet(
-        onDismissRequest = { if (isDirty) showDiscardDialog = true else onDismiss() },
+        onDismissRequest = { if (isDirty) showDiscardDialog = true else { isClosing = true; onDismiss() } },
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
         containerColor = MaterialTheme.colorScheme.background,
         dragHandle = { BottomSheetDefaults.DragHandle() }
     ) {
+        // Intercept Back presses inside the ModalBottomSheet window so the sheet stays visible while asking to discard
+        BackHandler(enabled = isDirty) {
+            showDiscardDialog = true
+        }
+
         Column(modifier = Modifier.fillMaxWidth().imePadding()) {
             Column(
                 modifier = Modifier
                     .weight(1f, fill = false)
                     .verticalScroll(scrollState)
                     .padding(horizontal = 24.dp)
-                    .padding(top = 8.dp, bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp)
+                    .padding(top = 8.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
@@ -404,25 +800,213 @@ fun MultiSplitShareSheet(
                     if (onResetSplit != null && isEditing) {
                         Spacer(modifier = Modifier.width(12.dp))
                         FilledTonalButton(
-                            onClick = { showRemoveDialog = true },
+                            onClick = { tick(); showRemoveDialog = true },
                             contentPadding = PaddingValues(horizontal = 16.dp),
+                            shape = RoundedCornerShape(AppRadius.pill),
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.10f),
                                 contentColor = MaterialTheme.colorScheme.error
                             )
                         ) {
-                            Text("Clear Split", fontWeight = FontWeight.SemiBold)
+                            Text("Clear Split", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         }
                     }
                 }
 
-                SplitSummaryCard(totalPaise, selectedMode, assigned, bpSum, includeMe, myShare, othersOwe)
+                SplitSummaryCard(totalPaise, selectedMode, assigned, bpSum, includeMe, myShare, othersOwe, paidBy)
+
+                if (availablePayers.size > 1) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Paid by",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 0.3.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            availablePayers.forEach { payerName ->
+                                val selected = paidBy.equals(payerName, ignoreCase = true)
+                                SheetChip(
+                                    text = if (payerName.equals("You", ignoreCase = true)) "You paid" else "$payerName paid",
+                                    isSelected = selected,
+                                    icon = if (selected) Icons.Default.Check else Icons.Default.Person,
+                                    onClick = {
+                                        tick()
+                                        paidBy = payerName
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
 
                 SheetSegmentedControl(
                     options = SplitMode.entries.map { it.label },
                     selectedIndex = SplitMode.entries.indexOf(selectedMode),
                     onSelect = { switchMode(SplitMode.entries[it]) }
                 )
+
+                // Monochromatic Itemized Receipt OCR Split Card
+                Surface(
+                    shape = RoundedCornerShape(AppRadius.medium),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column {
+                                    Text("Split by Bill Items (OCR)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    Text("Assign who ate what · tax splits proportionally", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(AppRadius.pill),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(AppRadius.pill))
+                                    .clickable(enabled = !isScanningReceipt) {
+                                        tick()
+                                        val existingUri = transaction.receiptImageUri
+                                        if (!existingUri.isNullOrBlank() && scannedReceiptItems.isEmpty()) {
+                                            scanReceiptUri(existingUri)
+                                        } else {
+                                            pickReceiptForSplit()
+                                        }
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isScanningReceipt) {
+                                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.surface)
+                                    } else {
+                                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.surface, modifier = Modifier.size(14.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            if (!transaction.receiptImageUri.isNullOrBlank() && scannedReceiptItems.isEmpty()) "Scan Attached" else "Scan Bill",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.surface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (scannedReceiptItems.isNotEmpty()) {
+                            key(itemAssignmentsVersion) {
+                                val assignableNames = remember(active) {
+                                    active.mapNotNull { p -> if (p.isMe) "You" else p.name.trim().takeIf { it.isNotEmpty() } }
+                                }
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    scannedReceiptItems.forEach { item ->
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(AppRadius.small))
+                                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f))
+                                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f), RoundedCornerShape(AppRadius.small))
+                                                .padding(10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = if (item.qty > 1) "${item.name} ×${item.qty}" else item.name,
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    modifier = Modifier.weight(1f),
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(money(item.pricePaise), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                            }
+                                            FlowRow(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                val allAssigned = assignableNames.isNotEmpty() && item.assignedTo.containsAll(assignableNames)
+                                                Surface(
+                                                    shape = RoundedCornerShape(AppRadius.pill),
+                                                    color = if (allAssigned) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
+                                                    border = if (allAssigned) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(AppRadius.pill))
+                                                        .clickable {
+                                                            tick()
+                                                            if (allAssigned) item.assignedTo.clear() else item.assignedTo.addAll(assignableNames)
+                                                            itemAssignmentsVersion++
+                                                            applyProRataReceiptSplit(scannedReceiptItems)
+                                                        }
+                                                ) {
+                                                    Text(
+                                                        text = "All",
+                                                        fontSize = 12.sp,
+                                                        fontWeight = if (allAssigned) FontWeight.Bold else FontWeight.Medium,
+                                                        color = if (allAssigned) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                    )
+                                                }
+
+                                                assignableNames.forEach { personName ->
+                                                    val isAssigned = item.assignedTo.contains(personName)
+                                                    Surface(
+                                                        shape = RoundedCornerShape(AppRadius.pill),
+                                                        color = if (isAssigned) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
+                                                        border = if (isAssigned) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(AppRadius.pill))
+                                                            .clickable {
+                                                                tick()
+                                                                if (isAssigned) item.assignedTo.remove(personName) else item.assignedTo.add(personName)
+                                                                itemAssignmentsVersion++
+                                                                applyProRataReceiptSplit(scannedReceiptItems)
+                                                            }
+                                                    ) {
+                                                        Text(
+                                                            text = personName,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = if (isAssigned) FontWeight.Bold else FontWeight.Medium,
+                                                            color = if (isAssigned) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -433,7 +1017,7 @@ fun MultiSplitShareSheet(
                     Surface(
                         shape = RoundedCornerShape(AppRadius.medium),
                         color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         val dividerColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
@@ -441,8 +1025,11 @@ fun MultiSplitShareSheet(
                             active.forEachIndexed { index, p ->
                                 key(p.id) {
                                     if (index > 0) HorizontalDivider(modifier = Modifier.padding(start = 66.dp), color = dividerColor)
+                                    val pDisplayName = if (p.isMe) "You" else p.name.trim()
+                                    val isThisPersonPayer = pDisplayName.isNotEmpty() && pDisplayName.equals(paidBy, ignoreCase = true)
                                     ParticipantRow(
                                         participant = p, mode = selectedMode, sharePaise = shares[p.id] ?: 0L,
+                                        isPayer = isThisPersonPayer,
                                         nameError = when {
                                             p.isMe || p.name.trim().lowercase().isEmpty() -> null
                                             p.name.trim().lowercase() == "you" -> "\"You\" already added"
@@ -480,13 +1067,21 @@ fun MultiSplitShareSheet(
                             Text("Group presets", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             val nonBlankMembers = active.filter { !it.isMe && it.name.isNotBlank() }
                             if (nonBlankMembers.isNotEmpty()) {
-                                TextButton(
-                                    onClick = { showSavePresetDialog = true },
-                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                                Surface(
+                                    shape = RoundedCornerShape(AppRadius.pill),
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(AppRadius.pill))
+                                        .clickable { tick(); showSavePresetDialog = true }
                                 ) {
-                                    Icon(Icons.Default.Add, null, modifier = Modifier.size(14.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Save as preset", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(13.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Save as preset", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    }
                                 }
                             }
                         }
@@ -497,27 +1092,44 @@ fun MultiSplitShareSheet(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 userPresets.forEach { preset ->
-                                    AssistChip(
-                                        onClick = {
-                                            preset.members.forEach { name -> addPerson(name) }
-                                            tick()
-                                        },
-                                        label = { Text("${preset.name} (${preset.members.size})") },
-                                        leadingIcon = { Icon(Icons.Default.Group, null, Modifier.size(16.dp)) },
-                                        trailingIcon = {
+                                    Surface(
+                                        shape = RoundedCornerShape(AppRadius.pill),
+                                        color = MaterialTheme.colorScheme.surface,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(AppRadius.pill))
+                                            .clickable {
+                                                preset.members.forEach { memberName ->
+                                                    if (active.none { it.name.trim().equals(memberName, ignoreCase = true) }) {
+                                                        addPerson(memberName)
+                                                    }
+                                                }
+                                                tick()
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Default.Group, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("${preset.name} (${preset.members.size})", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                                            Spacer(Modifier.width(8.dp))
                                             Icon(
                                                 Icons.Default.Close,
                                                 contentDescription = "Delete preset",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier
-                                                    .size(16.dp)
+                                                    .size(15.dp)
                                                     .clickable {
+                                                        tick()
                                                         val updated = userPresets.filter { it.id != preset.id }
                                                         userPresets = updated
                                                         SplitPresetManager.savePresets(prefs, updated)
                                                     }
                                             )
                                         }
-                                    )
+                                    }
                                 }
                             }
                         } else {
@@ -529,16 +1141,15 @@ fun MultiSplitShareSheet(
                         }
                     }
 
-                    // NEW: Premium Context-Aware Auto-fill Section
                     if (active.size < MAX_PEOPLE && (contextNamesFiltered.isNotEmpty() || recentNamesFiltered.isNotEmpty())) {
-                        Column(modifier = Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
 
                             if (contextNamesFiltered.isNotEmpty()) {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                                        Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(6.dp))
-                                        Text("Usually splits this", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                        Text("Usually splits this", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                                     }
                                     Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         contextNamesFiltered.forEach { name ->
@@ -546,8 +1157,7 @@ fun MultiSplitShareSheet(
                                                 text = name,
                                                 isSelected = false,
                                                 onClick = { addPerson(name) },
-                                                icon = Icons.Default.Person,
-                                                accent = MaterialTheme.colorScheme.primary
+                                                icon = Icons.Default.Person
                                             )
                                         }
                                     }
@@ -563,8 +1173,7 @@ fun MultiSplitShareSheet(
                                                 text = name,
                                                 isSelected = false,
                                                 onClick = { addPerson(name) },
-                                                icon = Icons.Default.Person,
-                                                accent = MaterialTheme.colorScheme.onSurfaceVariant
+                                                icon = Icons.Default.Person
                                             )
                                         }
                                     }
@@ -577,22 +1186,71 @@ fun MultiSplitShareSheet(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 16.dp, bottom = 28.dp).animateContentSize(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(top = 14.dp, bottom = 24.dp)
+                    .animateContentSize(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (blocking != null) {
                     val tint = if (blocking.isError) AppColors.negative else MaterialTheme.colorScheme.onSurfaceVariant
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(AppRadius.small))
                             .background(tint.copy(alpha = 0.08f))
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(if (blocking.isError) Icons.Default.Warning else Icons.Default.Info, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(blocking.text, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = tint)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                if (blocking.isError) Icons.Default.Warning else Icons.Default.Info,
+                                contentDescription = null,
+                                tint = tint,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(blocking.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = tint)
+                        }
+
+                        if (quickFixes.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                quickFixes.forEachIndexed { idx, fix ->
+                                    val isPrimaryFix = idx == 0
+                                    Surface(
+                                        shape = RoundedCornerShape(AppRadius.pill),
+                                        color = if (isPrimaryFix) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
+                                        border = if (isPrimaryFix) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(AppRadius.pill))
+                                            .clickable { fix.onClick() }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                if (isPrimaryFix) Icons.Default.AutoAwesome else Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = if (isPrimaryFix) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(Modifier.width(5.dp))
+                                            Text(
+                                                text = fix.label,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isPrimaryFix) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 SheetPrimaryButton(
@@ -606,7 +1264,17 @@ fun MultiSplitShareSheet(
 }
 
 @Composable
-private fun SplitSummaryCard(totalPaise: Long, mode: SplitMode, assignedPaise: Long, bpSum: Long, includeMe: Boolean, myShare: Long, othersOwe: Long) {
+private fun SplitSummaryCard(
+    totalPaise: Long,
+    mode: SplitMode,
+    assignedPaise: Long,
+    bpSum: Long,
+    includeMe: Boolean,
+    myShare: Long,
+    othersOwe: Long,
+    paidBy: String = "You"
+) {
+    val isPaidByMe = paidBy.equals("You", ignoreCase = true)
     val remaining = totalPaise - assignedPaise
     val balanced: Boolean; val over: Boolean; val progress: Float; val statusText: String
     when (mode) {
@@ -628,7 +1296,7 @@ private fun SplitSummaryCard(totalPaise: Long, mode: SplitMode, assignedPaise: L
     val statusColor = when { over -> AppColors.negative; balanced -> AppColors.positive; else -> AppColors.warning }
     val animatedProgress by animateFloatAsState(progress, animationSpec = tween(300), label = "splitProgress")
 
-    Surface(shape = RoundedCornerShape(AppRadius.medium), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)), modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = RoundedCornerShape(AppRadius.medium), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)), modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -654,9 +1322,20 @@ private fun SplitSummaryCard(totalPaise: Long, mode: SplitMode, assignedPaise: L
                     Text(if (includeMe) money(myShare) else "Not included", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (includeMe) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Others owe you", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
+                    Text(
+                        if (isPaidByMe) "Others owe you" else "You owe $paidBy",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium
+                    )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(money(othersOwe), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (othersOwe > 0L) AppColors.positive else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val displayOwed = if (isPaidByMe) othersOwe else if (includeMe) myShare else 0L
+                    val displayColor = when {
+                        displayOwed <= 0L -> MaterialTheme.colorScheme.onSurface
+                        isPaidByMe -> AppColors.positive
+                        else -> AppColors.warning
+                    }
+                    Text(money(displayOwed), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = displayColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -665,7 +1344,23 @@ private fun SplitSummaryCard(totalPaise: Long, mode: SplitMode, assignedPaise: L
 
 @Composable
 private fun ParticipantRow(
-    participant: SplitParticipant, mode: SplitMode, sharePaise: Long, nameError: String?, showNameNudge: Boolean, isLast: Boolean, canRemove: Boolean, remainingPaise: Long, remainingBp: Long, requestFocus: Boolean, onFocusRequested: () -> Unit, onNameChange: (String) -> Unit, onExactChange: (String) -> Unit, onPercentChange: (String) -> Unit, onSharesChange: (String) -> Unit, onRemove: () -> Unit
+    participant: SplitParticipant,
+    mode: SplitMode,
+    sharePaise: Long,
+    isPayer: Boolean = false,
+    nameError: String?,
+    showNameNudge: Boolean,
+    isLast: Boolean,
+    canRemove: Boolean,
+    remainingPaise: Long,
+    remainingBp: Long,
+    requestFocus: Boolean,
+    onFocusRequested: () -> Unit,
+    onNameChange: (String) -> Unit,
+    onExactChange: (String) -> Unit,
+    onPercentChange: (String) -> Unit,
+    onSharesChange: (String) -> Unit,
+    onRemove: () -> Unit
 ) {
     val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
@@ -705,8 +1400,8 @@ private fun ParticipantRow(
             when {
                 nameError != null -> SubLabel(nameError, AppColors.negative)
                 showNameNudge && participant.name.isBlank() -> SubLabel("Enter a name before adding someone else", AppColors.negative)
-                (mode == SplitMode.PERCENTAGE || mode == SplitMode.SHARES) && sharePaise > 0L -> SubLabel(money(sharePaise), variant)
-                participant.isMe -> SubLabel("Paid the bill", variant)
+                (mode == SplitMode.PERCENTAGE || mode == SplitMode.SHARES) && sharePaise > 0L -> SubLabel(if (isPayer) "${money(sharePaise)} · Paid the bill" else money(sharePaise), variant)
+                isPayer -> SubLabel("Paid the bill", AppColors.positive, bold = true)
             }
 
             AnimatedVisibility(visible = canFillExact) {

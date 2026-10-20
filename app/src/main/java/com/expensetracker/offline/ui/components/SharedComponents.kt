@@ -6,6 +6,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -26,6 +28,7 @@ fun AppDialog(
     content: @Composable ColumnScope.() -> Unit = {}
 ) {
     val colors = MaterialTheme.colorScheme
+    val haptic = LocalHapticFeedback.current
     val buttonShape = RoundedCornerShape(AppRadius.small)
 
     Dialog(onDismissRequest = onDismiss) {
@@ -48,7 +51,10 @@ fun AppDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (dismissText != null) {
                         FilledTonalButton(
-                            onClick = onDismiss,
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onDismiss()
+                            },
                             shape = buttonShape,
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 containerColor = colors.onSurface.copy(alpha = 0.06f),
@@ -68,10 +74,12 @@ fun AppDialog(
                         }
                     }
                     Button(
-                        onClick = onConfirm,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onConfirm()
+                        },
                         enabled = confirmEnabled,
                         colors = ButtonDefaults.buttonColors(
-                            // FIX: Stark neutral for standard actions, keep error for destructive
                             containerColor = if (destructive) colors.error else colors.onSurface,
                             contentColor = if (destructive) colors.onError else colors.surface,
                             disabledContainerColor = colors.onSurface.copy(alpha = 0.08f),

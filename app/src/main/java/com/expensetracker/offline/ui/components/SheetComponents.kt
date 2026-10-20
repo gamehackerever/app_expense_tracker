@@ -10,7 +10,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -19,28 +18,33 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Fastfood
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -66,11 +70,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.expensetracker.offline.engine.split.ReceiptScanner
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.getCategoryColor
@@ -85,8 +91,19 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToLong
 
 private fun HapticFeedback.tap() = performHapticFeedback(HapticFeedbackType.TextHandleMove)
+
+/** Unified monochromatic switch styling across all sheets and dialogs (no M3 purple track/border). */
+@Composable
+fun appSwitchColors() = SwitchDefaults.colors(
+    checkedThumbColor = MaterialTheme.colorScheme.surface,
+    checkedTrackColor = MaterialTheme.colorScheme.onSurface,
+    uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+    uncheckedBorderColor = Color.Transparent
+)
 
 @Composable
 fun SheetHeader(
@@ -148,7 +165,7 @@ fun SheetCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     containerColor: Color = MaterialTheme.colorScheme.surface,
-    borderColor: Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f), // Softened borders
+    borderColor: Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
     shape: Shape = RoundedCornerShape(AppRadius.medium),
     contentPadding: Dp = 16.dp,
     verticalArrangement: Arrangement.Vertical = Arrangement.Top,
@@ -182,7 +199,7 @@ fun SheetIconTile(
     val shape = RoundedCornerShape(10.dp)
     Surface(
         shape = shape,
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f), // Premium neutral background
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
         modifier = modifier
             .size(40.dp)
             .clip(shape)
@@ -211,7 +228,7 @@ fun SheetInfoRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
             if (subtitle != null) {
-                Text(subtitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(subtitle, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         if (trailing != null) trailing()
@@ -220,14 +237,15 @@ fun SheetInfoRow(
 
 @Composable
 fun SheetBadge(text: String, color: Color, icon: ImageVector? = null) {
-    Surface(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), shape = RoundedCornerShape(AppRadius.pill)) {        Row(
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (icon != null) Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(14.dp))
-        Text(text, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = color)
-    }
+    Surface(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), shape = RoundedCornerShape(AppRadius.pill)) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (icon != null) Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(14.dp))
+            Text(text, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = color)
+        }
     }
 }
 
@@ -242,11 +260,8 @@ fun SheetSegmentedControl(
     val pill = RoundedCornerShape(AppRadius.pill)
     val colors = MaterialTheme.colorScheme
 
-    // 1. Measure pixel width directly (avoids heavy subcomposition)
     var segmentWidthPx by remember { mutableFloatStateOf(0f) }
 
-    // 2. Animate the index, NOT the raw pixels.
-    // This prevents the thumb from accidentally "sliding in" on first mount.
     val animatedIndex by animateFloatAsState(
         targetValue = selectedIndex.toFloat(),
         animationSpec = tween(220),
@@ -264,7 +279,6 @@ fun SheetSegmentedControl(
                 segmentWidthPx = size.width.toFloat() / options.size
             }
     ) {
-        // Animated Thumb (Hardware Accelerated)
         Box(
             Modifier
                 .fillMaxWidth(1f / options.size)
@@ -274,12 +288,9 @@ fun SheetSegmentedControl(
                 .background(colors.surface, pill)
         )
 
-        // Labels
-        // Inside your SheetSegmentedControl Box:
         Row(modifier = Modifier.fillMaxSize()) {
             options.forEachIndexed { index, label ->
                 val isSelected = index == selectedIndex
-                // FIX: Use stark neutral (onSurface) instead of the primary color for active text
                 val textColor by animateColorAsState(
                     targetValue = if (isSelected) colors.onSurface else colors.onSurface.copy(alpha = 0.7f),
                     label = "segText"
@@ -299,11 +310,9 @@ fun SheetSegmentedControl(
                 ) {
                     Text(
                         text = label,
-                        // 1. Drop the font size to give longer labels like "Half-yearly" breathing room
-                        fontSize = 13.sp, // Changed from 15.sp
+                        fontSize = 13.sp,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         color = textColor,
-                        // 2. Force a single line and add an ellipsis fallback for very narrow screens
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -319,19 +328,18 @@ fun SheetChip(
     isSelected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    accent: Color = MaterialTheme.colorScheme.primary,
+    accent: Color = MaterialTheme.colorScheme.onSurface,
     icon: ImageVector? = null
 ) {
     val haptic = LocalHapticFeedback.current
     val pill = RoundedCornerShape(AppRadius.pill)
 
-    // FIX: Active state is a solid neutral dark, inactive is surface
     val bg by animateColorAsState(
         targetValue = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
         label = "chipBg"
     )
     val border by animateColorAsState(
-        targetValue = if (isSelected) Color.Transparent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+        targetValue = if (isSelected) Color.Transparent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
         label = "chipBorder"
     )
     val fg by animateColorAsState(
@@ -366,12 +374,19 @@ fun SheetChip(
 
 @Composable
 fun sheetFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = MaterialTheme.colorScheme.onSurface, // Swapped to stark neutral
-    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+    focusedBorderColor = MaterialTheme.colorScheme.onSurface,
+    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
     focusedContainerColor = MaterialTheme.colorScheme.surface,
-    unfocusedContainerColor = MaterialTheme.colorScheme.surface
+    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+    cursorColor = MaterialTheme.colorScheme.onSurface,
+    focusedLabelColor = MaterialTheme.colorScheme.onSurface,
+    unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
 )
 
+/**
+ * Unified input card field: matches SheetCategoryPicker and SheetCard with a crisp `surface`
+ * background, `AppRadius.medium` corners, and a 1.dp border that darkens on focus.
+ */
 @Composable
 fun SheetTextField(
     value: String,
@@ -388,11 +403,10 @@ fun SheetTextField(
     val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(AppRadius.small)
+    val shape = RoundedCornerShape(AppRadius.medium)
 
-    // FIX: Soft translucent border when focused, completely transparent when unfocused
     val borderColor by animateColorAsState(
-        targetValue = if (focused) colors.onSurface.copy(alpha = 0.15f) else Color.Transparent,
+        targetValue = if (focused) colors.onSurface else colors.outlineVariant.copy(alpha = 0.35f),
         label = "fieldBorder"
     )
 
@@ -405,15 +419,14 @@ fun SheetTextField(
         maxLines = if (singleLine) 1 else maxLines,
         keyboardOptions = keyboardOptions,
         textStyle = TextStyle(color = colors.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Medium),
-        cursorBrush = SolidColor(colors.primary),
+        cursorBrush = SolidColor(colors.onSurface),
         interactionSource = interaction,
         decorationBox = { inner ->
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(shape)
-                    // FIX: Replaced explicit colors.surface background with a soft tinted fill
-                    .background(colors.onSurface.copy(alpha = 0.04f))
+                    .background(colors.surface)
                     .border(1.dp, borderColor, shape)
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -423,7 +436,7 @@ fun SheetTextField(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(colors.onSurface.copy(alpha = 0.04f)), // Unified neutral background
+                            .background(colors.onSurface.copy(alpha = 0.04f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(leadingIcon, contentDescription = null, tint = colors.onSurfaceVariant, modifier = Modifier.size(20.dp))
@@ -435,7 +448,7 @@ fun SheetTextField(
                         label,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
-                        color = if (focused) colors.onSurface else colors.onSurfaceVariant, // Swapped to onSurface
+                        color = if (focused) colors.onSurface else colors.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -462,10 +475,8 @@ fun SheetAmountCard(
     trailing: (@Composable () -> Unit)? = null
 ) {
     val accent = if (isDebit) MaterialTheme.colorScheme.onSurface else AppColors.positive
-    // FIXED: Include comma in allowed symbols so the keyboard doesn't reject pastes (PO-I)
     val allowedSymbols = remember { setOf('.', '+', '-', '*', '/', '(', ')', ' ', ',') }
 
-    // Fintech typographic scale: massive, confident, tight tracking
     val bigStyle = TextStyle(fontSize = 48.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, letterSpacing = (-1).sp)
 
     SheetCard(
@@ -516,7 +527,7 @@ fun SheetAmountCard(
                 text = "= ₹${String.format(Locale.US, "%.2f", calculatedAmount)}",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(start = 36.dp, top = 2.dp)
             )
         }
@@ -543,7 +554,7 @@ fun SheetCategoryPicker(
         contentPadding = 12.dp
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp), // match SheetTextField's 14dp inner inset
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -551,13 +562,10 @@ fun SheetCategoryPicker(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    // FIX: Force a pure neutral background, overriding any theme tint
                     .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)),
                 contentAlignment = Alignment.Center
             ) {
-                if (selectedIcon != null) {
-                    Icon(selectedIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
-                }
+                Icon(selectedIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text("Category", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -660,7 +668,7 @@ fun NewCategoryDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
 @Composable
 fun SheetFixedCostSuggestion(suggestion: NecessityManager.BillSuggestion, onClick: () -> Unit) {
     val haptic = LocalHapticFeedback.current
-    val primary = MaterialTheme.colorScheme.primary
+    val onSurface = MaterialTheme.colorScheme.onSurface
 
     SheetCard(
         onClick = {
@@ -668,23 +676,23 @@ fun SheetFixedCostSuggestion(suggestion: NecessityManager.BillSuggestion, onClic
             onClick()
         },
         containerColor = MaterialTheme.colorScheme.surface,
-        borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+        borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
     ) {
         SheetInfoRow(
             icon = Icons.Default.Event,
-            tint = primary,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
             title = "Add ${NecessityManager.cleanBillName(suggestion.payee)} to Fixed Costs",
             subtitle = "₹${formatSheetAmount(suggestion.amount / 100.0)} · ${suggestion.frequency.label}",
             trailing = {
                 Surface(
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                    color = onSurface.copy(alpha = 0.08f),
                     shape = RoundedCornerShape(AppRadius.pill)
                 ) {
                     Text(
                         "Add",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = primary,
+                        color = onSurface,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                     )
                 }
@@ -726,7 +734,6 @@ fun SheetDatePill(millis: Long, onDateSelected: (Long) -> Unit) {
         val pickerState = rememberDatePickerState(
             initialSelectedDateMillis = millis,
             selectableDates = object : SelectableDates {
-                // FIXED: Prevent selecting dates in the future
                 override fun isSelectableDate(utcTimeMillis: Long): Boolean {
                     return utcTimeMillis <= System.currentTimeMillis()
                 }
@@ -737,8 +744,6 @@ fun SheetDatePill(millis: Long, onDateSelected: (Long) -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     pickerState.selectedDateMillis?.let { pickedUtc ->
-                        // FIXED: Convert picked UTC midnight to local time, keeping the original hour/minute
-                        // This prevents 00:00 - 05:30 IST from jumping back to yesterday (PO-I)
                         val cal = Calendar.getInstance()
                         val currentHour = cal.get(Calendar.HOUR_OF_DAY)
                         val currentMin = cal.get(Calendar.MINUTE)
@@ -767,39 +772,78 @@ fun SheetDetailsSection(
     onNoteChange: (String) -> Unit,
     receiptUri: String?,
     onReceiptChange: (String?) -> Unit,
-    receiptFilePrefix: String
+    receiptFilePrefix: String,
+    currentBillAmountPaise: Long? = null,
+    initialPeople: List<String> = emptyList(),
+    onReceiptScanned: ((itemsSummary: String, totalPaise: Long?) -> Unit)? = null,
+    onItemizedSplitComputed: ((participants: List<SplitParticipant>, totalPaise: Long?) -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var noteOpen by rememberSaveable { mutableStateOf(note.isNotBlank()) }
     var receiptOpen by rememberSaveable { mutableStateOf(receiptUri != null) }
     var focusNoteOnOpen by remember { mutableStateOf(false) }
+    var isScanningOcr by remember { mutableStateOf(false) }
+
+    var scannedItems by remember { mutableStateOf<List<ReceiptScanner.ScannedItem>>(emptyList()) }
+    var scannedGrandTotalPaise by remember { mutableStateOf<Long?>(null) }
+    var scannedTaxPaise by remember { mutableStateOf<Long?>(null) }
+    var lastAutoScannedUri by rememberSaveable { mutableStateOf<String?>(null) }
+
+    fun triggerScan(path: String, autoTriggered: Boolean = false) {
+        isScanningOcr = true
+        scope.launch {
+            try {
+                val file = File(path)
+                val uri = if (file.exists()) Uri.fromFile(file) else Uri.parse(path)
+                val receipt = withContext(Dispatchers.IO) {
+                    ReceiptScanner.extractReceipt(context, uri)
+                }
+                if (receipt.items.isNotEmpty()) {
+                    scannedItems = receipt.items
+                    scannedGrandTotalPaise = receipt.grandTotalPaise ?: receipt.subtotalPaise ?: receipt.items.sumOf { it.pricePaise }
+                    scannedTaxPaise = receipt.taxPaise
+                    val summary = ReceiptScanner.formatItemsSummary(receipt.items)
+                    onNoteChange(summary)
+                    onReceiptScanned?.invoke(summary, scannedGrandTotalPaise)
+                    if (!autoTriggered) {
+                        Toast.makeText(context, "Extracted ${receipt.items.size} items from bill", Toast.LENGTH_SHORT).show()
+                    }
+                } else if (!autoTriggered) {
+                    Toast.makeText(context, "Could not detect priced items on this photo. You can add items manually below.", Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                isScanningOcr = false
+            }
+        }
+    }
 
     val pickReceipt = rememberReceiptPicker(receiptFilePrefix) { path ->
         onReceiptChange(path)
         receiptOpen = true
+        lastAutoScannedUri = path
+        triggerScan(path, autoTriggered = true)
     }
     val receiptBitmap = rememberReceiptBitmap(receiptUri)
 
     val noteActive = noteOpen || note.isNotBlank()
     val receiptActive = receiptUri != null
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            // Checkboxes removed. Pills now act as clean tab-like expanders.
             SheetChip(
                 text = if (noteActive) "Note" else "Add note",
                 isSelected = noteActive,
-                icon = if (noteActive) null else Icons.Default.Add,
-                accent = MaterialTheme.colorScheme.primary,
+                icon = if (noteActive) Icons.Default.Check else Icons.Default.Add,
                 onClick = {
                     noteOpen = !noteOpen
                     focusNoteOnOpen = noteOpen
                 }
             )
             SheetChip(
-                text = if (receiptActive) "Receipt" else "Add receipt",
+                text = if (receiptActive) "Bill / Receipt" else "Attach bill",
                 isSelected = receiptActive,
-                icon = if (receiptActive) null else Icons.Default.Add,
-                accent = MaterialTheme.colorScheme.primary,
+                icon = if (receiptActive) Icons.Default.ReceiptLong else Icons.Default.Add,
                 onClick = {
                     if (receiptUri == null) pickReceipt() else receiptOpen = !receiptOpen
                 }
@@ -810,18 +854,17 @@ fun SheetDetailsSection(
             val focusRequester = remember { FocusRequester() }
             val bringIntoViewRequester = remember { BringIntoViewRequester() }
             val coroutineScope = rememberCoroutineScope()
-            
+
             LaunchedEffect(Unit) {
                 if (focusNoteOnOpen) runCatching { focusRequester.requestFocus() }
             }
             Box(
                 modifier = Modifier
-                    .padding(top = 16.dp)
                     .bringIntoViewRequester(bringIntoViewRequester)
-                    .onFocusChanged { 
+                    .onFocusChanged {
                         if (it.isFocused) {
-                            coroutineScope.launch { 
-                                bringIntoViewRequester.bringIntoView() 
+                            coroutineScope.launch {
+                                bringIntoViewRequester.bringIntoView()
                             }
                         }
                     }
@@ -830,25 +873,479 @@ fun SheetDetailsSection(
                     value = note,
                     onValueChange = onNoteChange,
                     label = "Notes / Items Summary",
-                    placeholder = "e.g., Shawarma, Lime Juice, Groceries",
+                    placeholder = "e.g., Peri Peri Chicken, Kerala Paratta",
                     leadingIcon = Icons.Default.Fastfood,
                     minLines = 2,
-                    maxLines = 3,
+                    maxLines = 4,
                     modifier = Modifier.focusRequester(focusRequester)
                 )
             }
         }
 
         AnimatedVisibility(visible = receiptOpen && receiptUri != null) {
-            Box(modifier = Modifier.padding(top = 16.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SheetReceiptCard(
                     receiptBitmap = receiptBitmap,
+                    isScanningOcr = isScanningOcr,
+                    hasScannedItems = scannedItems.isNotEmpty(),
+                    onScanItems = {
+                        val path = receiptUri ?: return@SheetReceiptCard
+                        triggerScan(path, autoTriggered = false)
+                    },
                     onPick = pickReceipt,
                     onRemove = {
+                        scannedItems = emptyList()
+                        scannedGrandTotalPaise = null
                         onReceiptChange(null)
                         receiptOpen = false
                     }
                 )
+
+                // Interactive Itemized Food List + "Who Ate What" Assignment Card
+                if (scannedItems.isNotEmpty()) {
+                    ItemizedBillSplitCard(
+                        items = scannedItems,
+                        taxPaise = scannedTaxPaise,
+                        receiptTotalPaise = scannedGrandTotalPaise,
+                        currentBillAmountPaise = currentBillAmountPaise,
+                        initialPeople = initialPeople,
+                        onItemsModified = { updatedItems ->
+                            scannedItems = updatedItems
+                            val summary = ReceiptScanner.formatItemsSummary(updatedItems)
+                            onNoteChange(summary)
+                        },
+                        onSyncBillTotal = { newTotalPaise ->
+                            onReceiptScanned?.invoke(ReceiptScanner.formatItemsSummary(scannedItems), newTotalPaise)
+                        },
+                        onComputedSplitChanged = { splitParticipants, effectiveTotal ->
+                            val summary = ReceiptScanner.formatItemsSummary(scannedItems)
+                            onNoteChange(summary)
+                            onItemizedSplitComputed?.invoke(splitParticipants, effectiveTotal)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ItemizedBillSplitCard(
+    items: List<ReceiptScanner.ScannedItem>,
+    taxPaise: Long? = null,
+    receiptTotalPaise: Long? = null,
+    currentBillAmountPaise: Long? = null,
+    initialPeople: List<String> = emptyList(),
+    onItemsModified: (List<ReceiptScanner.ScannedItem>) -> Unit,
+    onSyncBillTotal: ((Long) -> Unit)? = null,
+    onComputedSplitChanged: ((List<SplitParticipant>, Long) -> Unit)? = null
+) {
+    val haptic = LocalHapticFeedback.current
+    val scheme = MaterialTheme.colorScheme
+
+    var people by remember {
+        val base = (listOf("You") + initialPeople.map { it.trim() }.filter { it.isNotEmpty() && !it.equals("You", true) }).distinct()
+        mutableStateOf(if (base.size == 1) listOf("You") else base)
+    }
+    var showAddPersonDialog by remember { mutableStateOf(false) }
+    var newPersonName by remember { mutableStateOf("") }
+
+    var showAddItemDialog by remember { mutableStateOf(false) }
+    var newItemName by remember { mutableStateOf("") }
+    var newItemPriceStr by remember { mutableStateOf("") }
+
+    var assignmentTick by remember { mutableIntStateOf(0) }
+
+    val itemsSubtotalPaise = remember(items, assignmentTick) { items.sumOf { it.pricePaise } }
+    val effectiveBillTotalPaise = remember(receiptTotalPaise, itemsSubtotalPaise, taxPaise) {
+        val withTax = itemsSubtotalPaise + (taxPaise ?: 0L)
+        maxOf(receiptTotalPaise ?: 0L, withTax, itemsSubtotalPaise)
+    }
+
+    val perPersonShares = remember(items, people, effectiveBillTotalPaise, assignmentTick) {
+        val anyAssigned = items.any { it.assignedTo.isNotEmpty() }
+        if (!anyAssigned) emptyMap()
+        else ReceiptScanner.calculateProRataShares(items, effectiveBillTotalPaise, people)
+    }
+
+    fun notifySplitUpdate(currentItems: List<ReceiptScanner.ScannedItem>, currentPeople: List<String>) {
+        val anyAssigned = currentItems.any { it.assignedTo.isNotEmpty() }
+        if (!anyAssigned) return
+        val shares = ReceiptScanner.calculateProRataShares(currentItems, effectiveBillTotalPaise, currentPeople)
+        val participants = currentPeople.map { person ->
+            val sharePaise = shares[person] ?: 0L
+            SplitParticipant(
+                isMe = person.equals("You", ignoreCase = true),
+                name = person,
+                isIncludedInEqual = sharePaise > 0L,
+                exactAmountStr = if (sharePaise > 0L) String.format(Locale.US, "%.2f", sharePaise / 100.0) else ""
+            )
+        }
+        onComputedSplitChanged?.invoke(participants, effectiveBillTotalPaise)
+    }
+
+    if (showAddPersonDialog) {
+        AppDialog(
+            title = "Add person to bill",
+            onDismiss = { showAddPersonDialog = false; newPersonName = "" },
+            confirmText = "Add",
+            confirmEnabled = newPersonName.trim().isNotEmpty(),
+            onConfirm = {
+                val trimmed = newPersonName.trim()
+                if (trimmed.isNotEmpty() && people.none { it.equals(trimmed, ignoreCase = true) }) {
+                    val updated = people + trimmed
+                    people = updated
+                    notifySplitUpdate(items, updated)
+                }
+                newPersonName = ""
+                showAddPersonDialog = false
+            }
+        ) {
+            OutlinedTextField(
+                value = newPersonName,
+                onValueChange = { newPersonName = it.take(25) },
+                label = { Text("Name") },
+                placeholder = { Text("e.g., Adhil, Rahul") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                colors = sheetFieldColors(),
+                shape = RoundedCornerShape(AppRadius.small),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+
+    if (showAddItemDialog) {
+        val parsedPricePaise = remember(newItemPriceStr) {
+            newItemPriceStr.trim().replace(",", "").toDoubleOrNull()?.times(100.0)?.roundToLong()
+        }
+        AppDialog(
+            title = "Add bill item",
+            onDismiss = { showAddItemDialog = false; newItemName = ""; newItemPriceStr = "" },
+            confirmText = "Add item",
+            confirmEnabled = newItemName.trim().isNotEmpty() && (parsedPricePaise ?: 0L) > 0L,
+            onConfirm = {
+                val price = parsedPricePaise ?: 0L
+                if (newItemName.trim().isNotEmpty() && price > 0L) {
+                    val updated = items + ReceiptScanner.ScannedItem(name = newItemName.trim(), pricePaise = price)
+                    onItemsModified(updated)
+                }
+                newItemName = ""
+                newItemPriceStr = ""
+                showAddItemDialog = false
+            }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = newItemName,
+                    onValueChange = { newItemName = it.take(40) },
+                    label = { Text("Food / Item name") },
+                    placeholder = { Text("e.g., Al-fahm Chicken") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                    colors = sheetFieldColors(),
+                    shape = RoundedCornerShape(AppRadius.small),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = newItemPriceStr,
+                    onValueChange = { newItemPriceStr = it.filter { c -> c.isDigit() || c == '.' }.take(10) },
+                    label = { Text("Price (₹)") },
+                    placeholder = { Text("e.g., 290") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    colors = sheetFieldColors(),
+                    shape = RoundedCornerShape(AppRadius.small),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+
+    SheetCard(
+        modifier = Modifier.animateContentSize(),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // Header row: Itemized count + subtotal + optional 1-tap Sync Total pill
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Scanned Bill Items (${items.size})",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = scheme.onSurface
+                )
+                val taxNote = if (taxPaise != null && taxPaise > 0L) " + ₹${formatSheetAmount(taxPaise / 100.0)} tax" else ""
+                Text(
+                    "Items ₹${formatSheetAmount(itemsSubtotalPaise / 100.0)}$taxNote · Tap who ate each item",
+                    fontSize = 12.sp,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+
+            if (onSyncBillTotal != null && effectiveBillTotalPaise > 0L && currentBillAmountPaise != effectiveBillTotalPaise) {
+                Spacer(Modifier.width(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(AppRadius.pill),
+                    color = scheme.onSurface,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(AppRadius.pill))
+                        .clickable {
+                            haptic.tap()
+                            onSyncBillTotal(effectiveBillTotalPaise)
+                        }
+                ) {
+                    Text(
+                        "Use ₹${formatSheetAmount(effectiveBillTotalPaise / 100.0)}",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.surface,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+        }
+
+        // People bar: "Who's splitting?"
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "People on this bill",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.onSurfaceVariant
+                )
+                Surface(
+                    shape = RoundedCornerShape(AppRadius.pill),
+                    color = scheme.onSurface.copy(alpha = 0.06f),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(AppRadius.pill))
+                        .clickable {
+                            haptic.tap()
+                            showAddPersonDialog = true
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.PersonAdd, contentDescription = null, tint = scheme.onSurface, modifier = Modifier.size(13.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Add person", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = scheme.onSurface)
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                people.forEach { person ->
+                    val share = perPersonShares[person] ?: 0L
+                    Surface(
+                        shape = RoundedCornerShape(AppRadius.pill),
+                        color = scheme.onSurface.copy(alpha = 0.05f),
+                        border = BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (share > 0L) "$person · ₹${formatSheetAmount(share / 100.0)}" else person,
+                                fontSize = 12.sp,
+                                fontWeight = if (share > 0L) FontWeight.Bold else FontWeight.Medium,
+                                color = scheme.onSurface
+                            )
+                            if (!person.equals("You", ignoreCase = true)) {
+                                Spacer(Modifier.width(6.dp))
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Remove $person",
+                                    tint = scheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .size(14.dp)
+                                        .clickable {
+                                            haptic.tap()
+                                            val updatedPeople = people.filter { it != person }
+                                            people = updatedPeople
+                                            items.forEach { it.assignedTo.remove(person) }
+                                            assignmentTick++
+                                            onItemsModified(items)
+                                            notifySplitUpdate(items, updatedPeople)
+                                        }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.35f))
+
+        // Individual Scanned Food Items
+        key(assignmentTick) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items.forEach { item ->
+                    Surface(
+                        shape = RoundedCornerShape(AppRadius.small),
+                        color = scheme.onSurface.copy(alpha = 0.03f),
+                        border = BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.28f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = item.name,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = scheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (item.qty > 1) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(AppRadius.pill),
+                                            color = scheme.onSurface.copy(alpha = 0.08f)
+                                        ) {
+                                            Text(
+                                                "×${item.qty}",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = scheme.onSurface,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "₹${formatSheetAmount(item.pricePaise / 100.0)}",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = scheme.onSurface
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Remove item",
+                                    tint = scheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .clickable {
+                                            haptic.tap()
+                                            val updated = items.filter { it.id != item.id }
+                                            onItemsModified(updated)
+                                            notifySplitUpdate(updated, people)
+                                        }
+                                )
+                            }
+
+                            // "Who ate this?" chips
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                val allSelected = people.isNotEmpty() && item.assignedTo.containsAll(people)
+                                Surface(
+                                    shape = RoundedCornerShape(AppRadius.pill),
+                                    color = if (allSelected) scheme.onSurface else scheme.surface,
+                                    border = if (allSelected) null else BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.45f)),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(AppRadius.pill))
+                                        .clickable {
+                                            haptic.tap()
+                                            if (allSelected) item.assignedTo.clear() else item.assignedTo.addAll(people)
+                                            assignmentTick++
+                                            onItemsModified(items)
+                                            notifySplitUpdate(items, people)
+                                        }
+                                ) {
+                                    Text(
+                                        text = "All",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = if (allSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (allSelected) scheme.surface else scheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+
+                                people.forEach { person ->
+                                    val isAssigned = item.assignedTo.contains(person)
+                                    Surface(
+                                        shape = RoundedCornerShape(AppRadius.pill),
+                                        color = if (isAssigned) scheme.onSurface else scheme.surface,
+                                        border = if (isAssigned) null else BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.45f)),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(AppRadius.pill))
+                                            .clickable {
+                                                haptic.tap()
+                                                if (isAssigned) item.assignedTo.remove(person) else item.assignedTo.add(person)
+                                                assignmentTick++
+                                                onItemsModified(items)
+                                                notifySplitUpdate(items, people)
+                                            }
+                                    ) {
+                                        Text(
+                                            text = person,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = if (isAssigned) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isAssigned) scheme.surface else scheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add custom item button
+        Surface(
+            shape = RoundedCornerShape(AppRadius.small),
+            color = scheme.onSurface.copy(alpha = 0.04f),
+            border = BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.35f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(AppRadius.small))
+                .clickable {
+                    haptic.tap()
+                    showAddItemDialog = true
+                }
+        ) {
+            Row(
+                modifier = Modifier.padding(vertical = 10.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, tint = scheme.onSurface, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Add missing item manually", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface)
             }
         }
     }
@@ -857,6 +1354,9 @@ fun SheetDetailsSection(
 @Composable
 fun SheetReceiptCard(
     receiptBitmap: Bitmap?,
+    isScanningOcr: Boolean = false,
+    hasScannedItems: Boolean = false,
+    onScanItems: (() -> Unit)? = null,
     onPick: () -> Unit,
     onRemove: () -> Unit
 ) {
@@ -865,12 +1365,12 @@ fun SheetReceiptCard(
 
     SheetCard(
         modifier = Modifier.animateContentSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         SheetInfoRow(
             icon = Icons.Default.ReceiptLong,
             title = "Bill / Receipt Photo",
-            subtitle = if (receiptBitmap == null) "Optional" else null,
+            subtitle = if (receiptBitmap == null) "Optional" else if (hasScannedItems) "Items extracted below" else "Extract line items & split by dish",
             trailing = if (receiptBitmap != null) {
                 { SheetBadge("Attached", AppColors.positive, Icons.Default.CheckCircle) }
             } else null
@@ -884,7 +1384,7 @@ fun SheetReceiptCard(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(180.dp)
+                    .height(160.dp)
                     .clip(previewShape)
                     .clickable {
                         haptic.tap()
@@ -901,9 +1401,9 @@ fun SheetReceiptCard(
                     Surface(
                         shape = RoundedCornerShape(AppRadius.pill),
                         color = Color.Black.copy(alpha = 0.7f),
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp)
                     ) {
-                        Text("Tap to view full", color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                        Text("Tap to view full", color = Color.White, fontSize = 11.5.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
                     }
                 }
             }
@@ -912,42 +1412,65 @@ fun SheetReceiptCard(
                 FullScreenImageViewer(bitmap = receiptBitmap, onDismiss = { showFull = false })
             }
 
+            if (onScanItems != null) {
+                Button(
+                    onClick = { haptic.tap(); onScanItems() },
+                    enabled = !isScanningOcr,
+                    shape = RoundedCornerShape(AppRadius.small),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.onSurface,
+                        contentColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    if (isScanningOcr) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.surface)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scanning bill items…", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    } else {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(if (hasScannedItems) "Rescan Bill Items (OCR)" else "Scan Bill Items (OCR)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(
                     onClick = { haptic.tap(); onPick() },
                     shape = RoundedCornerShape(AppRadius.small),
-                    modifier = Modifier.weight(1f).height(48.dp),
+                    modifier = Modifier.weight(1f).height(44.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
-
                 ) {
-                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Change", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Change", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
                 }
-                OutlinedButton( // Swapped from TextButton
+                OutlinedButton(
                     onClick = { haptic.tap(); onRemove() },
                     shape = RoundedCornerShape(AppRadius.small),
-                    modifier = Modifier.weight(1f).height(48.dp),
+                    modifier = Modifier.weight(1f).height(44.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                    // Added the 0.3f border to perfectly match the visual weight of the 'Change' button
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f))
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f))
                 ) {
-                    Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Remove", color = MaterialTheme.colorScheme.error, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Remove", color = MaterialTheme.colorScheme.error, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         } else {
             OutlinedButton(
                 onClick = { haptic.tap(); onPick() },
                 shape = RoundedCornerShape(AppRadius.small),
-                modifier = Modifier.fillMaxWidth().height(48.dp), // or Modifier.weight(1f) for the Change button
-                // FIX: Neutral text/icon instead of default primary
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
             ) {
-                Icon(Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(20.dp)) // or Edit
+                Icon(Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Upload Bill Photo", fontSize = 14.sp, fontWeight = FontWeight.SemiBold) // or "Change"
+                Text("Upload Bill Photo", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -966,19 +1489,32 @@ fun SheetFooter(content: @Composable ColumnScope.() -> Unit) {
 
 @Composable
 fun SheetPrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed && enabled) 0.98f else 1f,
+        animationSpec = tween(100),
+        label = "primaryBtnScale"
+    )
     Button(
         onClick = onClick,
         enabled = enabled,
+        interactionSource = interactionSource,
         shape = RoundedCornerShape(AppRadius.small),
         elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = MaterialTheme.colorScheme.onSurface,
             contentColor = MaterialTheme.colorScheme.surface,
-            // Drastically increased opacity for confident disabled states
             disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
             disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
         ),
-        modifier = Modifier.fillMaxWidth().height(56.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
     ) {
         Text(text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
     }
@@ -1004,7 +1540,6 @@ private suspend fun copyReceipt(context: Context, uri: Uri, prefix: String): Str
     val dir = File(context.filesDir, "receipts").apply { mkdirs() }
     val target = File(dir, "${prefix}_${System.currentTimeMillis()}.jpg")
     return@withContext try {
-        // FIXED: Re-encode as JPEG Q80 to strip EXIF GPS location data and bound storage size (PO-I)
         val bitmap = ImageUtil.loadScaledBitmap(context, uri.toString(), 1600) ?: return@withContext null
         target.outputStream().use { out ->
             bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
@@ -1029,9 +1564,6 @@ fun rememberReceiptBitmap(path: String?): Bitmap? {
     val context = LocalContext.current
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    // FIXED: Load bitmap asynchronously off-thread to prevent UI freezing (PO-I)
-    // REMOVED: bitmap.recycle() on dispose, as Compose manages bitmap memory internally.
-    // Manual recycling causes "Canvas: trying to use a recycled bitmap" crashes.
     LaunchedEffect(path) {
         bitmap = if (path != null) {
             withContext(Dispatchers.IO) { ImageUtil.loadScaledBitmap(context, path, 1024) }

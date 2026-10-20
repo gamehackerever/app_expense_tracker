@@ -10,7 +10,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +23,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -41,14 +41,11 @@ import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.ui.theme.AppRadius
-import com.expensetracker.offline.util.tick
-import com.expensetracker.offline.util.click
-import com.expensetracker.offline.util.confirm
-import com.expensetracker.offline.util.delete
 import com.expensetracker.offline.util.NecessityManager
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.round
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,7 +68,9 @@ fun EditTransactionSheet(
     onUpdateAllPast: (oldPayee: String, newPayee: String, newCategory: String) -> Unit = { _, _, _ -> },
     suggestedSettlementName: String? = null,
     suggestedSettlementAmount: Long? = null,
-    onSettleSuggested: (() -> Unit)? = null
+    onSettleSuggested: (() -> Unit)? = null,
+    initialSplitPeople: List<String> = listOf("You"),
+    onSaveSplit: ((List<SplitParticipant>) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -101,6 +100,19 @@ fun EditTransactionSheet(
 
     var selectedCategory by rememberSaveable { mutableStateOf(transaction.category) }
     var transactionType by rememberSaveable { mutableStateOf(transaction.type) }
+    var excludeFromSpend by rememberSaveable { mutableStateOf(transaction.excludeFromSpend) }
+
+    // Remember the last non-Transfer category and excludeFromSpend state so toggling Transfer -> Expense/Income restores them!
+    var lastNonTransferCategory by rememberSaveable {
+        val initialNonTransfer = transaction.category.takeUnless { it.equals("Transfer", ignoreCase = true) }
+            ?: CategoryClassifier.classifySync(transaction.payee, transaction.rawContent)
+                .takeUnless { it.equals("Transfer", ignoreCase = true) }
+            ?: "Uncategorized"
+        mutableStateOf(initialNonTransfer)
+    }
+    var lastNonTransferExclude by rememberSaveable {
+        mutableStateOf(if (transaction.category.equals("Transfer", ignoreCase = true)) false else transaction.excludeFromSpend)
+    }
 
     val initialNoteText = remember(transaction.itemsSummary, transaction.note) {
         transaction.itemsSummary?.takeIf { it.isNotBlank() } ?: transaction.note.orEmpty()
@@ -116,12 +128,16 @@ fun EditTransactionSheet(
     var transactionDateMillis by rememberSaveable { mutableLongStateOf(transaction.timestamp) }
 
     var showNewCategoryDialog by remember { mutableStateOf(false) }
+    var itemizedSplitShares by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
 
     val calculatedAmount = remember(amountStr) { evaluateBasicMath(amountStr) }
 
     val isPayeeRenamed = payee.trim().isNotBlank() && payee.trim() != transaction.payee.trim()
     val isCategoryChanged = selectedCategory != transaction.category
     val shouldApplyToAllPast = applyToAllPast && (isPayeeRenamed || isCategoryChanged)
+    val hasItemizedFriendsAssigned = remember(itemizedSplitShares) {
+        itemizedSplitShares.any { (person, paise) -> !person.equals("You", ignoreCase = true) && paise > 0L }
+    }
 
     val hasUnsavedChanges by remember {
         derivedStateOf {
@@ -130,12 +146,14 @@ fun EditTransactionSheet(
                     payee.trim() != transaction.payee.trim() ||
                     selectedCategory != transaction.category ||
                     transactionType != transaction.type ||
+                    excludeFromSpend != transaction.excludeFromSpend ||
                     itemsSummary.trim() != initialNoteText.trim() ||
                     note.trim() != (transaction.note ?: "").trim() ||
                     transactionDateMillis != transaction.timestamp ||
                     receiptImageUri != transaction.receiptImageUri ||
                     editedBankName != transaction.bankName ||
-                    editedAccountNumber != transaction.accountNumber
+                    editedAccountNumber != transaction.accountNumber ||
+                    hasItemizedFriendsAssigned
         }
     }
 
@@ -145,8 +163,23 @@ fun EditTransactionSheet(
 
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
-        confirmValueChange = { target -> target != SheetValue.Hidden || !dirty }
+        confirmValueChange = { target ->
+            if (target == SheetValue.Hidden && dirty) {
+                showUnsavedDialog = true
+                false
+            } else {
+                true
+            }
+        }
     )
+
+    // Safety net: if ModalBottomSheet hid the sheet before firing onDismissRequest and the user chose "Keep editing",
+    // ensure the sheet immediately re-expands so the screen is never frozen.
+    LaunchedEffect(showUnsavedDialog, sheetState.currentValue) {
+        if (!showUnsavedDialog && sheetState.currentValue == SheetValue.Hidden && !isSaving) {
+            runCatching { sheetState.show() }
+        }
+    }
 
     BackHandler(enabled = hasUnsavedChanges) {
         showUnsavedDialog = true
@@ -156,13 +189,15 @@ fun EditTransactionSheet(
         AppDialog(
             title = "Discard changes?",
             onDismiss = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 showUnsavedDialog = false
-                scope.launch { sheetState.show() }
+                scope.launch { runCatching { sheetState.show() } }
             },
             dismissText = "Keep editing",
             confirmText = "Discard",
             destructive = true,
             onConfirm = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 showUnsavedDialog = false
                 receiptImageUri?.takeIf { it != transaction.receiptImageUri }?.let { deleteReceiptFile(context, it) }
                 onDismiss()
@@ -185,6 +220,9 @@ fun EditTransactionSheet(
                 savedCustomCategories = savedCustomCategories + newCategory
                 prefs.edit().putStringSet("key_custom_categories", savedCustomCategories).apply()
                 selectedCategory = newCategory
+                if (!newCategory.equals("Transfer", ignoreCase = true)) {
+                    lastNonTransferCategory = newCategory
+                }
                 showNewCategoryDialog = false
             }
         )
@@ -199,20 +237,23 @@ fun EditTransactionSheet(
         containerColor = MaterialTheme.colorScheme.background,
         dragHandle = { BottomSheetDefaults.DragHandle() }
     ) {
-        Column(modifier = Modifier.fillMaxWidth().imePadding()) {
+        BackHandler(enabled = hasUnsavedChanges) {
+            showUnsavedDialog = true
+        }
 
+        Column(modifier = Modifier.fillMaxWidth().imePadding()) {
             Column(
                 modifier = Modifier
                     .weight(1f, fill = false)
                     .padding(horizontal = 24.dp)
-                    .padding(top = 8.dp, bottom = 16.dp)
+                    .padding(top = 8.dp, bottom = 28.dp)
                     .verticalScroll(rememberScrollState())
                     .animateContentSize(),
-                verticalArrangement = Arrangement.spacedBy(16.dp) // Uniform spacing, no dividers
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 SheetHeader(
                     title = "Edit transaction",
-                    subtitle = "Update items, receipt, or category",
+                    subtitle = "Update details, receipt, or category",
                     trailing = {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             SheetIconTile(
@@ -243,7 +284,7 @@ fun EditTransactionSheet(
                     exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
                 ) {
                     SheetCard(
-                        containerColor = MaterialTheme.colorScheme.onSurface, // Inverted premium card
+                        containerColor = MaterialTheme.colorScheme.onSurface,
                         borderColor = Color.Transparent,
                         contentPadding = 16.dp
                     ) {
@@ -315,12 +356,41 @@ fun EditTransactionSheet(
                     }
                 }
 
+                val isTransferSelected = selectedCategory.equals("Transfer", ignoreCase = true)
                 SheetSegmentedControl(
-                    options = listOf("Expense", "Income"),
-                    selectedIndex = if (transactionType == TransactionType.DEBIT) 0 else 1,
-                    onSelect = {
+                    options = listOf("Expense", "Income", "Transfer"),
+                    selectedIndex = when {
+                        isTransferSelected -> 2
+                        transactionType == TransactionType.DEBIT -> 0
+                        else -> 1
+                    },
+                    onSelect = { idx ->
                         if (transaction.linkedDebtId == null) {
-                            transactionType = if (it == 0) TransactionType.DEBIT else TransactionType.CREDIT
+                            when (idx) {
+                                0 -> {
+                                    transactionType = TransactionType.DEBIT
+                                    if (isTransferSelected) {
+                                        selectedCategory = lastNonTransferCategory
+                                        excludeFromSpend = lastNonTransferExclude
+                                    }
+                                }
+                                1 -> {
+                                    transactionType = TransactionType.CREDIT
+                                    if (isTransferSelected) {
+                                        selectedCategory = lastNonTransferCategory
+                                        excludeFromSpend = false
+                                    }
+                                }
+                                2 -> {
+                                    if (!isTransferSelected) {
+                                        lastNonTransferCategory = selectedCategory
+                                        lastNonTransferExclude = excludeFromSpend
+                                    }
+                                    transactionType = TransactionType.DEBIT
+                                    selectedCategory = "Transfer"
+                                    excludeFromSpend = true
+                                }
+                            }
                         }
                     }
                 )
@@ -335,12 +405,12 @@ fun EditTransactionSheet(
                     }
                 )
 
-                // ── Payee Group (Tightly coupled) ──
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SheetTextField(
                         value = payee,
-                        onValueChange = { payee = it },
-                        label = "Payee / store name",
+                        onValueChange = { payee = it.take(80) },
+                        label = if (isTransferSelected) "Destination account / note" else "Payee / store name",
+                        placeholder = if (isTransferSelected) "e.g., Savings A/c, Credit Card Bill" else "e.g., Supermarket, Restaurant, Client",
                         leadingIcon = Icons.Default.Storefront,
                         singleLine = true
                     )
@@ -355,8 +425,8 @@ fun EditTransactionSheet(
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 applyToAllPast = !applyToAllPast
                             },
-                            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f),
-                            borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
+                            containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+                            borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
                             contentPadding = 8.dp
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -364,7 +434,7 @@ fun EditTransactionSheet(
                                     checked = applyToAllPast,
                                     onCheckedChange = null,
                                     modifier = Modifier.padding(8.dp),
-                                    colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
+                                    colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.onSurface)
                                 )
                                 val labelText = if (isPayeeRenamed) {
                                     "Rename all \"${transaction.payee}\" & apply \"$selectedCategory\""
@@ -373,7 +443,7 @@ fun EditTransactionSheet(
                                 }
                                 Text(
                                     labelText,
-                                    fontSize = 14.sp,
+                                    fontSize = 13.5.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.weight(1f).padding(end = 8.dp)
@@ -383,67 +453,118 @@ fun EditTransactionSheet(
                     }
                 }
 
-                if (linkedAccounts.size > 1) {
-                    SheetSection(title = "Paid from", trailing = editedBankName ?: "Unspecified") {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            SheetChip(
-                                text = "Unspecified",
-                                isSelected = editedBankName == null,
-                                accent = MaterialTheme.colorScheme.onSurfaceVariant,
-                                onClick = {
-                                    editedBankName = null
-                                    editedAccountNumber = null
-                                }
-                            )
-                            linkedAccounts.forEach { account ->
-                                val isSelected = editedBankName == account.bankName && editedAccountNumber == account.accountNumber
-                                val label = if (account.accountNumber != null) "${account.bankName} (..${account.accountNumber})" else account.bankName
-                                SheetChip(
-                                    text = label,
-                                    isSelected = isSelected,
-                                    onClick = {
-                                        editedBankName = account.bankName
-                                        editedAccountNumber = account.accountNumber
-                                    }
-                                )
-                            }
-                        }
+                // Unified payment method selector matching AddExpenseSheet
+                PaymentMethodSelector(
+                    linkedAccounts = linkedAccounts,
+                    selectedBankName = editedBankName,
+                    selectedAccountNumber = editedAccountNumber,
+                    onBankSelected = { bank, acc ->
+                        editedBankName = bank
+                        editedAccountNumber = acc
+                    },
+                    nullLabel = "Cash / Unspecified"
+                )
+
+                AnimatedVisibility(
+                    visible = isTransferSelected,
+                    enter = fadeIn(tween(180)) + expandVertically(tween(180)),
+                    exit = fadeOut(tween(140)) + shrinkVertically(tween(140))
+                ) {
+                    SheetCard(contentPadding = 14.dp) {
+                        SheetInfoRow(
+                            icon = Icons.Default.SwapHoriz,
+                            title = "Self-transfer / CC bill payment",
+                            subtitle = "Automatically excluded from monthly spending totals",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 }
 
-                // ── Category Group (Tightly coupled) ──
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SheetCategoryPicker(
-                        categories = allCategories,
-                        selected = selectedCategory,
-                        onSelect = { selectedCategory = it },
-                        onAddCustom = { showNewCategoryDialog = true }
-                    )
+                AnimatedVisibility(
+                    visible = !isTransferSelected,
+                    enter = fadeIn(tween(180)) + expandVertically(tween(180)),
+                    exit = fadeOut(tween(140)) + shrinkVertically(tween(140))
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SheetCategoryPicker(
+                            categories = allCategories,
+                            selected = selectedCategory,
+                            onSelect = {
+                                selectedCategory = it
+                                if (it.equals("Transfer", ignoreCase = true)) {
+                                    excludeFromSpend = true
+                                } else {
+                                    lastNonTransferCategory = it
+                                }
+                            },
+                            onAddCustom = { showNewCategoryDialog = true }
+                        )
 
-                    AnimatedVisibility(
-                        visible = transactionType == TransactionType.DEBIT && (fixedCostLabel != null || fixedCostSuggestion != null),
-                        enter = fadeIn(tween(200)) + expandVertically(tween(200)),
-                        exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
-                    ) {
-                        if (fixedCostLabel != null) {
+                        if (transactionType == TransactionType.DEBIT) {
                             SheetCard(
-                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f),
-                                borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
-                                onClick = onRemoveFromFixedCosts
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    val next = !excludeFromSpend
+                                    excludeFromSpend = next
+                                    lastNonTransferExclude = next
+                                },
+                                contentPadding = 12.dp
                             ) {
-                                SheetInfoRow(
-                                    icon = Icons.Default.CheckCircle,
-                                    title = "Counted toward $fixedCostLabel",
-                                    subtitle = "Tap to undo",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "Exclude from monthly spend",
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            "For pass-through expenses or reimbursable payments",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = excludeFromSpend,
+                                        onCheckedChange = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            excludeFromSpend = it
+                                            lastNonTransferExclude = it
+                                        },
+                                        colors = appSwitchColors()
+                                    )
+                                }
                             }
-                        } else if (fixedCostSuggestion != null) {
-                            SheetFixedCostSuggestion(suggestion = fixedCostSuggestion, onClick = onAddToFixedCosts)
+                        }
+
+                        AnimatedVisibility(
+                            visible = transactionType == TransactionType.DEBIT && !excludeFromSpend && (fixedCostLabel != null || fixedCostSuggestion != null),
+                            enter = fadeIn(tween(200)) + expandVertically(tween(200)),
+                            exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
+                        ) {
+                            if (fixedCostLabel != null) {
+                                SheetCard(
+                                    containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+                                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onRemoveFromFixedCosts()
+                                    }
+                                ) {
+                                    SheetInfoRow(
+                                        icon = Icons.Default.CheckCircle,
+                                        title = "Counted toward $fixedCostLabel",
+                                        subtitle = "Tap to undo",
+                                        tint = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            } else if (fixedCostSuggestion != null) {
+                                SheetFixedCostSuggestion(suggestion = fixedCostSuggestion, onClick = onAddToFixedCosts)
+                            }
                         }
                     }
                 }
@@ -457,7 +578,20 @@ fun EditTransactionSheet(
                         if (old != null && old != new && old != transaction.receiptImageUri) deleteReceiptFile(context, old)
                         receiptImageUri = new
                     },
-                    receiptFilePrefix = "receipt_${transaction.id}"
+                    receiptFilePrefix = "receipt_${transaction.id}",
+                    currentBillAmountPaise = calculatedAmount ?: transaction.amount,
+                    initialPeople = initialSplitPeople,
+                    onReceiptScanned = { _, scannedTotalPaise ->
+                        if (scannedTotalPaise != null && scannedTotalPaise > 0L) {
+                            amountStr = String.format(Locale.US, "%.2f", scannedTotalPaise / 100.0)
+                        }
+                    },
+                    onItemizedSplitComputed = { participants, _ ->
+                        itemizedSplitShares = participants.associate { p ->
+                            val paise = (p.exactAmountStr.toDoubleOrNull() ?: 0.0) * 100.0
+                            p.name to round(paise).toLong()
+                        }
+                    }
                 )
 
                 val canSplit = onSplit != null && transaction.type == TransactionType.DEBIT && transaction.linkedDebtId == null
@@ -476,14 +610,12 @@ fun EditTransactionSheet(
                             },
                             enabled = !hasUnsavedChanges,
                             shape = RoundedCornerShape(AppRadius.small),
-                            // FIX: Replaced transparent background with a soft, tactile premium fill
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
                                 contentColor = MaterialTheme.colorScheme.onSurface,
                                 disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
                                 disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                             ),
-                            // FIX: Removed the rigid border to let the shape and background color do the work
                             border = null,
                             modifier = Modifier.fillMaxWidth().height(52.dp)
                         ) {
@@ -496,7 +628,7 @@ fun EditTransactionSheet(
                             Text(
                                 when {
                                     canSplit && totalOwedByOthers > 0L -> "Edit split"
-                                    canSplit -> "Split this bill"
+                                    canSplit -> "Open full split sheet"
                                     else -> "Link to a bill"
                                 },
                                 fontWeight = FontWeight.SemiBold,
@@ -510,7 +642,7 @@ fun EditTransactionSheet(
                             exit = fadeOut() + shrinkVertically()
                         ) {
                             Text(
-                                "Save your changes first to use this.",
+                                "Save your changes first to open the full split sheet.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 4.dp).padding(top = 4.dp)
@@ -535,7 +667,7 @@ fun EditTransactionSheet(
                 }
 
                 SheetPrimaryButton(
-                    text = "Save changes",
+                    text = if (hasItemizedFriendsAssigned) "Save changes & split" else "Save changes",
                     enabled = (calculatedAmount ?: 0L) > 0L && coversDebts && hasUnsavedChanges && !isSaving,
                     onClick = {
                         isSaving = true
@@ -551,6 +683,7 @@ fun EditTransactionSheet(
                             amount = finalAmount,
                             category = selectedCategory,
                             type = transactionType,
+                            excludeFromSpend = excludeFromSpend,
                             timestamp = transactionDateMillis,
                             note = null,
                             itemsSummary = itemsSummary.trim().ifBlank { null },
@@ -560,6 +693,18 @@ fun EditTransactionSheet(
                         )
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onSave(updatedTxn)
+                        if (hasItemizedFriendsAssigned && onSaveSplit != null) {
+                            val splitParticipants = itemizedSplitShares.map { (person, paise) ->
+                                val isMe = person.equals("You", ignoreCase = true)
+                                SplitParticipant(
+                                    id = if (isMe) "0" else person.hashCode().toString(),
+                                    name = if (isMe) "You" else person,
+                                    isMe = isMe,
+                                    exactAmountStr = String.format(Locale.US, "%.2f", paise / 100.0)
+                                )
+                            }
+                            onSaveSplit(splitParticipants)
+                        }
                         onDismiss()
                     }
                 )

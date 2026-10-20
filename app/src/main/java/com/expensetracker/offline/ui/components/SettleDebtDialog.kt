@@ -1,13 +1,14 @@
 package com.expensetracker.offline.ui.components
 
 import android.content.Intent
-import android.net.Uri
+import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,59 +30,51 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Handshake
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.expensetracker.offline.util.tick
-import com.expensetracker.offline.util.click
-import com.expensetracker.offline.util.confirm
-import com.expensetracker.offline.util.delete
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
 import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.data.repository.isValidUpiVpa
 import com.expensetracker.offline.engine.split.DebtSimplification
 import com.expensetracker.offline.ui.dashboard.DebtInfo
+import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
+import com.expensetracker.offline.util.UpiUtils
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private data class PersonGroup(val name: String, val debts: List<DebtInfo>) {
+private data class PersonGroup(val name: String, val debts: List<DebtInfo>, val isYouOwe: Boolean = false) {
     val total: Long get() = debts.sumOf { it.outstanding }
 }
-
-/** UPI deep link with [vpa] as the payee. Amount is in paise; UPI wants rupees with two decimals. */
-private fun buildUpiRequestLink(vpa: String, amountPaise: Long, note: String): String =
-    Uri.Builder()
-        .scheme("upi")
-        .authority("pay")
-        .appendQueryParameter("pa", vpa)
-        .appendQueryParameter("pn", vpa.substringBefore('@'))
-        .appendQueryParameter("am", String.format(Locale.US, "%d.%02d", amountPaise / 100, amountPaise % 100))
-        .appendQueryParameter("cu", "INR")
-        .appendQueryParameter("tn", note)
-        .build()
-        .toString()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,12 +88,12 @@ fun SettleDebtDialog(
     var lastIntentTime by remember { mutableLongStateOf(0L) }
     var forgiveTarget by remember { mutableStateOf<Long?>(null) }
     var upiDialogDebt by remember { mutableStateOf<DebtInfo?>(null) }
+    var qrModalDebt by remember { mutableStateOf<Pair<DebtInfo, String>?>(null) }
     var upiIdInput by remember { mutableStateOf("") }
+    var openQrAfterVpaSave by remember { mutableStateOf(false) }
 
     val settingsRepo = remember { SettingsRepository(context) }
 
-    // A upi://pay link opens the *payer's* UPI app with `pa` as the payee. Launching it with our own
-    // VPA would just make us pay ourselves, so we share the request with the person who owes us.
     val shareUpiRequest: (DebtInfo, String) -> Unit = { targetDebt, vpa ->
         val now = System.currentTimeMillis()
         if (now - lastIntentTime > 1000) {
@@ -111,11 +104,17 @@ fun SettleDebtDialog(
             val bill = targetDebt.parentTransaction.payee
             val paise = targetDebt.outstanding
             val amount = CurrencyFormat.withSymbol(paise, if (paise % 100L == 0L) 0 else 2)
+            val upiUri = UpiUtils.buildUpiUri(
+                payeeVpa = vpa,
+                payeeName = vpa.substringBefore('@'),
+                amountPaise = paise,
+                note = "Settling $bill"
+            ).toString()
             val msg = "${greeting}You owe me $amount for $bill.\n\n" +
                     "Pay via UPI\n" +
                     "UPI ID: $vpa\n" +
                     "Amount: ${String.format(Locale.US, "%d.%02d", paise / 100, paise % 100)}\n\n" +
-                    "Tap to pay (on phone): ${buildUpiRequestLink(vpa, paise, "Settling $bill")}"
+                    "Tap to pay (on phone): $upiUri"
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_TEXT, msg)
@@ -128,15 +127,33 @@ fun SettleDebtDialog(
         }
     }
 
-    // Biggest balance first; bills inside a person stay newest-first.
-    val groups = remember(activeDebts) {
-        activeDebts
+    // Separate debts owed TO YOU vs debts YOU OWE to someone else
+    val (youOweList, owedToYouList) = remember(activeDebts) {
+        activeDebts.partition { info ->
+            val payer = info.parentTransaction.paidBy?.trim()
+            payer != null && !payer.equals("You", ignoreCase = true) &&
+                    info.debt.debtorName.trim().equals("You", ignoreCase = true)
+        }
+    }
+
+    val owedToYouGroups = remember(owedToYouList) {
+        owedToYouList
             .sortedByDescending { it.parentTransaction.timestamp }
             .groupBy { it.debt.debtorName.trim().lowercase() }
-            .map { (_, debts) -> PersonGroup(debts.first().debt.debtorName.trim(), debts) }
+            .map { (_, debts) -> PersonGroup(debts.first().debt.debtorName.trim(), debts, isYouOwe = false) }
             .sortedByDescending { it.total }
     }
-    val grandTotal = remember(groups) { groups.sumOf { it.total } }
+
+    val youOweGroups = remember(youOweList) {
+        youOweList
+            .sortedByDescending { it.parentTransaction.timestamp }
+            .groupBy { (it.parentTransaction.paidBy ?: "Friend").trim().lowercase() }
+            .map { (_, debts) -> PersonGroup((debts.first().parentTransaction.paidBy ?: "Friend").trim(), debts, isYouOwe = true) }
+            .sortedByDescending { it.total }
+    }
+
+    val totalOwedToYou = remember(owedToYouGroups) { owedToYouGroups.sumOf { it.total } }
+    val totalYouOwe = remember(youOweGroups) { youOweGroups.sumOf { it.total } }
     val dateFmt = remember { SimpleDateFormat("d MMM", Locale.getDefault()) }
 
     val neutralSelection = TextSelectionColors(
@@ -182,12 +199,16 @@ fun SettleDebtDialog(
                     Spacer(Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Settle debt", fontWeight = FontWeight.Bold, fontSize = 20.sp, letterSpacing = (-0.3).sp, color = MaterialTheme.colorScheme.onSurface)
-                        Text(
-                            if (groups.isEmpty()) "Nothing owed right now"
-                            else "${CurrencyFormat.withSymbol(grandTotal, 0)} owed by ${groups.size} ${if (groups.size == 1) "person" else "people"}",
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        val subtitle = when {
+                            owedToYouGroups.isEmpty() && youOweGroups.isEmpty() -> "Nothing owed right now"
+                            totalOwedToYou > 0L && totalYouOwe > 0L ->
+                                "${CurrencyFormat.withSymbol(totalOwedToYou, 0)} owed to you · ${CurrencyFormat.withSymbol(totalYouOwe, 0)} you owe"
+                            totalYouOwe > 0L ->
+                                "You owe ${CurrencyFormat.withSymbol(totalYouOwe, 0)} to ${youOweGroups.size} ${if (youOweGroups.size == 1) "person" else "people"}"
+                            else ->
+                                "${CurrencyFormat.withSymbol(totalOwedToYou, 0)} owed by ${owedToYouGroups.size} ${if (owedToYouGroups.size == 1) "person" else "people"}"
+                        }
+                        Text(subtitle, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -196,7 +217,7 @@ fun SettleDebtDialog(
 
                 Spacer(Modifier.height(20.dp))
 
-                if (groups.isEmpty()) {
+                if (owedToYouGroups.isEmpty() && youOweGroups.isEmpty()) {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(AppRadius.small),
@@ -271,7 +292,7 @@ fun SettleDebtDialog(
                                                         overflow = TextOverflow.Ellipsis
                                                     )
                                                     Text(
-                                                        "Simplified net balances",
+                                                        "Simplified net balances across all payers",
                                                         fontSize = 11.5.sp,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                         maxLines = 2,
@@ -361,55 +382,17 @@ fun SettleDebtDialog(
                                 }
                             }
                         }
-                        groups.forEachIndexed { index, group ->
-                            item(key = "header_${group.name}") {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = if (index == 0) 0.dp else 12.dp, bottom = 2.dp, start = 2.dp, end = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Box(
-                                        modifier = Modifier.size(28.dp).clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            group.name.take(1).uppercase().ifBlank { "?" },
-                                            fontWeight = FontWeight.Bold, fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                    Spacer(Modifier.width(10.dp))
-                                    Row(
-                                        modifier = Modifier.weight(1f),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            group.name.ifBlank { "Unknown" },
-                                            fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f, fill = false)
-                                        )
-                                        if (group.debts.size > 1) {
-                                            Spacer(Modifier.width(8.dp))
-                                            Text("${group.debts.size} bills", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                                        }
-                                    }
-                                    if (group.debts.size > 1) {
-                                        Text(
-                                            CurrencyFormat.withSymbol(group.total, 0),
-                                            fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-                            }
 
+                        // ── Debts Owed To You ──
+                        owedToYouGroups.forEachIndexed { index, group ->
+                            item(key = "header_owed_${group.name}") {
+                                PersonGroupHeader(group = group, isFirst = index == 0)
+                            }
                             items(group.debts, key = { it.debt.id }) { debtInfo ->
                                 DebtCard(
                                     debtInfo = debtInfo,
+                                    isYouOwe = false,
+                                    creditorName = null,
                                     dateLabel = dateFmt.format(Date(debtInfo.parentTransaction.timestamp)),
                                     isExpanded = expandedId == debtInfo.debt.id,
                                     onToggle = { expandedId = if (expandedId == debtInfo.debt.id) null else debtInfo.debt.id },
@@ -443,10 +426,50 @@ fun SettleDebtDialog(
                                         if (isValidUpiVpa(vpa)) {
                                             shareUpiRequest(debtInfo.copy(outstanding = amount), vpa)
                                         } else {
+                                            openQrAfterVpaSave = false
+                                            upiIdInput = vpa
+                                            upiDialogDebt = debtInfo.copy(outstanding = amount)
+                                        }
+                                    },
+                                    onShowQr = { amount ->
+                                        val vpa = settingsRepo.myUpiVpa
+                                        if (isValidUpiVpa(vpa)) {
+                                            qrModalDebt = debtInfo.copy(outstanding = amount) to vpa
+                                        } else {
+                                            openQrAfterVpaSave = true
                                             upiIdInput = vpa
                                             upiDialogDebt = debtInfo.copy(outstanding = amount)
                                         }
                                     }
+                                )
+                            }
+                        }
+
+                        // ── Debts You Owe Others ──
+                        youOweGroups.forEachIndexed { index, group ->
+                            item(key = "header_youowe_${group.name}") {
+                                PersonGroupHeader(group = group, isFirst = owedToYouGroups.isEmpty() && index == 0)
+                            }
+                            items(group.debts, key = { it.debt.id }) { debtInfo ->
+                                DebtCard(
+                                    debtInfo = debtInfo,
+                                    isYouOwe = true,
+                                    creditorName = group.name,
+                                    dateLabel = dateFmt.format(Date(debtInfo.parentTransaction.timestamp)),
+                                    isExpanded = expandedId == debtInfo.debt.id,
+                                    onToggle = { expandedId = if (expandedId == debtInfo.debt.id) null else debtInfo.debt.id },
+                                    onSettleFull = {
+                                        expandedId = null
+                                        onRepaymentLogged(debtInfo.debt.id, debtInfo.outstanding, false)
+                                    },
+                                    onLogCash = { amount ->
+                                        expandedId = null
+                                        onRepaymentLogged(debtInfo.debt.id, amount, false)
+                                    },
+                                    onForgive = { forgiveTarget = debtInfo.debt.id },
+                                    onRemind = {},
+                                    onPayUpi = {},
+                                    onShowQr = {}
                                 )
                             }
                         }
@@ -469,7 +492,7 @@ fun SettleDebtDialog(
             }
         ) {
             Text(
-                "The remaining amount is written off and won't count as owed to you. This can't be reversed.",
+                "The remaining amount is written off and won't count as owed. This can't be reversed.",
                 fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp
             )
         }
@@ -480,18 +503,22 @@ fun SettleDebtDialog(
         AppDialog(
             title = "Enter Your UPI ID",
             onDismiss = { upiDialogDebt = null },
-            confirmText = "Save & Share",
+            confirmText = if (openQrAfterVpaSave) "Save & Show QR" else "Save & Share",
             confirmEnabled = vpaValid,
             onConfirm = {
                 val vpa = upiIdInput.trim()
                 settingsRepo.myUpiVpa = vpa
                 upiDialogDebt = null
-                shareUpiRequest(targetDebt, vpa)
+                if (openQrAfterVpaSave) {
+                    qrModalDebt = targetDebt to vpa
+                } else {
+                    shareUpiRequest(targetDebt, vpa)
+                }
             }
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "Enter your own UPI ID (e.g. yourname@okaxis). It's saved and included in the payment requests you send to friends.",
+                    "Enter your own UPI ID (e.g. yourname@okaxis). It's saved and used to generate scan-to-pay QR codes and UPI payment links.",
                     fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp
                 )
                 OutlinedTextField(
@@ -507,11 +534,127 @@ fun SettleDebtDialog(
             }
         }
     }
+
+    // In-Person Scan-to-Pay UPI QR Code Modal (Quick Win 3: Wired UpiUtils.generateQrBitmap)
+    qrModalDebt?.let { (targetDebt, vpa) ->
+        var qrBitmap by remember(targetDebt, vpa) { mutableStateOf<Bitmap?>(null) }
+        val upiUri = remember(targetDebt, vpa) {
+            UpiUtils.buildUpiUri(
+                payeeVpa = vpa,
+                payeeName = vpa.substringBefore('@'),
+                amountPaise = targetDebt.outstanding,
+                note = "Settling ${targetDebt.parentTransaction.payee}"
+            ).toString()
+        }
+
+        LaunchedEffect(upiUri) {
+            qrBitmap = withContext(Dispatchers.Default) {
+                runCatching { UpiUtils.generateQrBitmap(upiUri, 512) }.getOrNull()
+            }
+        }
+
+        AppDialog(
+            title = "Scan to Pay via UPI",
+            onDismiss = { qrModalDebt = null },
+            dismissText = "Close",
+            confirmText = "Share Link",
+            onConfirm = {
+                qrModalDebt = null
+                shareUpiRequest(targetDebt, vpa)
+            }
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "${targetDebt.debt.debtorName} owes ${CurrencyFormat.withSymbol(targetDebt.outstanding, 2)} for ${targetDebt.parentTransaction.payee}",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+                Surface(
+                    shape = RoundedCornerShape(AppRadius.medium),
+                    color = Color.White,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                    modifier = Modifier.size(220.dp).padding(8.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        if (qrBitmap != null) {
+                            Image(
+                                bitmap = qrBitmap!!.asImageBitmap(),
+                                contentDescription = "UPI QR Code",
+                                modifier = Modifier.fillMaxSize().padding(8.dp),
+                                contentScale = ContentScale.Fit
+                            )
+                        } else {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
+                        }
+                    }
+                }
+                Text(
+                    "VPA: $vpa",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PersonGroupHeader(group: PersonGroup, isFirst: Boolean) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = if (isFirst) 0.dp else 12.dp, bottom = 2.dp, start = 2.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(28.dp).clip(CircleShape)
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                group.name.take(1).uppercase().ifBlank { "?" },
+                fontWeight = FontWeight.Bold, fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                if (group.isYouOwe) "You owe ${group.name}" else group.name.ifBlank { "Unknown" },
+                fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
+                color = if (group.isYouOwe) AppColors.warning else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
+            )
+            if (group.debts.size > 1) {
+                Spacer(Modifier.width(8.dp))
+                Text("${group.debts.size} bills", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+        }
+        if (group.debts.size > 1) {
+            Text(
+                CurrencyFormat.withSymbol(group.total, 0),
+                fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
+                color = if (group.isYouOwe) AppColors.warning else MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
 }
 
 @Composable
 private fun DebtCard(
     debtInfo: DebtInfo,
+    isYouOwe: Boolean = false,
+    creditorName: String? = null,
     dateLabel: String,
     isExpanded: Boolean,
     onToggle: () -> Unit,
@@ -519,9 +662,9 @@ private fun DebtCard(
     onLogCash: (Long) -> Unit,
     onForgive: () -> Unit,
     onRemind: (Long) -> Unit,
-    onPayUpi: (Long) -> Unit
+    onPayUpi: (Long) -> Unit,
+    onShowQr: (Long) -> Unit
 ) {
-    val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
     val tap = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
@@ -564,22 +707,31 @@ private fun DebtCard(
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        "$dateLabel · ${CurrencyFormat.withSymbol(debtInfo.parentTransaction.amount, 0)} bill",
+                        "$dateLabel · ${CurrencyFormat.withSymbol(debtInfo.parentTransaction.amount, 0)} bill" +
+                                (if (isYouOwe && creditorName != null) " · Paid by $creditorName" else ""),
                         fontSize = 13.sp, color = scheme.onSurfaceVariant,
                         maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(horizontalAlignment = Alignment.End) {
-                    Text("OWES", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp, color = scheme.onSurfaceVariant)
+                    Text(
+                        if (isYouOwe) "YOU OWE" else "OWES",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.8.sp,
+                        color = if (isYouOwe) AppColors.warning else scheme.onSurfaceVariant
+                    )
                     Text(
                         CurrencyFormat.withSymbol(debtInfo.outstanding, 0),
-                        fontWeight = FontWeight.Bold, fontSize = 18.sp, letterSpacing = (-0.3).sp, color = scheme.onSurface
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        letterSpacing = (-0.3).sp,
+                        color = if (isYouOwe) AppColors.warning else scheme.onSurface
                     )
                 }
             }
 
-            // Only show progress once something has actually been repaid (no empty bar / end dot).
             if (debtInfo.repaidSoFar > 0L) {
                 Spacer(Modifier.height(12.dp))
                 Box(
@@ -595,8 +747,6 @@ private fun DebtCard(
                 )
             }
 
-            // One AnimatedContent drives fade + size together (previously animateContentSize and
-            // two AnimatedVisibility blocks fought each other and caused the jerk).
             AnimatedContent(
                 targetState = isExpanded,
                 transitionSpec = {
@@ -620,7 +770,13 @@ private fun DebtCard(
                             contentPadding = PaddingValues(horizontal = 12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = scheme.onSurface, contentColor = scheme.surface)
                         ) {
-                            Text("Settle ${CurrencyFormat.withSymbol(debtInfo.outstanding, 0)}", fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                            Text(
+                                if (isYouOwe) "Mark Paid ${CurrencyFormat.withSymbol(debtInfo.outstanding, 0)}"
+                                else "Settle ${CurrencyFormat.withSymbol(debtInfo.outstanding, 0)}",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
                         }
                         OutlinedButton(
                             onClick = { tap(); onToggle() },
@@ -630,10 +786,9 @@ private fun DebtCard(
                             border = BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.7f)),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = scheme.onSurface)
                         ) {
-                            Text("Partial", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text(if (isYouOwe) "Options" else "Partial / QR", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                         }
                     }
-
                 } else {
                     var amountInput by remember {
                         val initial = String.format(Locale.US, "%.2f", debtInfo.outstanding / 100.0)
@@ -642,7 +797,7 @@ private fun DebtCard(
                     val amountFocus = remember { FocusRequester() }
                     val keyboard = LocalSoftwareKeyboardController.current
                     LaunchedEffect(Unit) {
-                        delay(320) // let the card finish growing before the keyboard pushes the sheet
+                        delay(320)
                         runCatching { amountFocus.requestFocus() }
                         keyboard?.show()
                     }
@@ -656,7 +811,7 @@ private fun DebtCard(
                             onValueChange = { if (it.text.isEmpty() || it.text.matches(Regex("""^\d*(\.\d{0,2})?$"""))) amountInput = it },
                             focusRequester = amountFocus,
                             onDone = { if (typedPaise > 0L && !exceedsOwed) { confirm(); onLogCash(typedPaise) } },
-                            label = "Amount received (₹)",
+                            label = if (isYouOwe) "Amount paid back (₹)" else "Amount received (₹)",
                             errorText = if (exceedsOwed) "Only ${CurrencyFormat.withSymbol(debtInfo.outstanding, 0)} is owed" else null
                         )
                         Spacer(Modifier.height(14.dp))
@@ -682,63 +837,63 @@ private fun DebtCard(
                                     disabledContainerColor = scheme.onSurface.copy(alpha = 0.08f),
                                     disabledContentColor = scheme.onSurface.copy(alpha = 0.40f)
                                 )
-                            ) { Text("Log cash", fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+                            ) { Text(if (isYouOwe) "Record paid" else "Log cash", fontSize = 15.sp, fontWeight = FontWeight.Bold) }
                         }
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            val reminderInteraction = remember { MutableInteractionSource() }
-                            val reminderPressed by reminderInteraction.collectIsPressedAsState()
-                            val reminderBg by animateColorAsState(
-                                scheme.onSurface.copy(alpha = if (reminderPressed) 0.08f else 0.04f),
-                                tween(120), label = "reminderBg"
-                            )
+
+                        if (!isYouOwe) {
+                            Spacer(Modifier.height(10.dp))
                             Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(AppRadius.small))
-                                    .background(reminderBg)
-                                    .clickable(interactionSource = reminderInteraction, indication = null) {
-                                        tap()
-                                        val amountToSend = if (typedPaise > 0L && !exceedsOwed) typedPaise else debtInfo.outstanding
-                                        onRemind(amountToSend)
-                                    }
-                                    .padding(vertical = 13.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = scheme.onSurface, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("WhatsApp", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface)
-                            }
-                            
-                            val upiInteraction = remember { MutableInteractionSource() }
-                            val upiPressed by upiInteraction.collectIsPressedAsState()
-                            val upiBg by animateColorAsState(
-                                scheme.onSurface.copy(alpha = if (upiPressed) 0.08f else 0.04f),
-                                tween(120), label = "upiBg"
-                            )
-                            Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(AppRadius.small))
-                                    .background(upiBg)
-                                    .clickable(interactionSource = upiInteraction, indication = null) {
-                                        tap()
-                                        val amountToSend = if (typedPaise > 0L && !exceedsOwed) typedPaise else debtInfo.outstanding
-                                        onPayUpi(amountToSend)
-                                    }
-                                    .padding(vertical = 13.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = scheme.onSurface, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("UPI Request", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface)
+                                val amountToSend = if (typedPaise > 0L && !exceedsOwed) typedPaise else debtInfo.outstanding
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(AppRadius.small))
+                                        .background(scheme.onSurface.copy(alpha = 0.04f))
+                                        .clickable { tap(); onRemind(amountToSend) }
+                                        .padding(vertical = 13.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = scheme.onSurface, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("WhatsApp", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface)
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(AppRadius.small))
+                                        .background(scheme.onSurface.copy(alpha = 0.04f))
+                                        .clickable { tap(); onPayUpi(amountToSend) }
+                                        .padding(vertical = 13.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = scheme.onSurface, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("UPI Link", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface)
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(AppRadius.small))
+                                        .background(scheme.onSurface.copy(alpha = 0.04f))
+                                        .clickable { tap(); onShowQr(amountToSend) }
+                                        .padding(vertical = 13.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.QrCode2, contentDescription = null, tint = scheme.onSurface, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Show QR", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface)
+                                }
                             }
                         }
+
                         Text(
                             "Cancel",
                             fontSize = 14.sp,

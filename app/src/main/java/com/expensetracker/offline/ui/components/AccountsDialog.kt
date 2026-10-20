@@ -33,18 +33,22 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -60,26 +64,34 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.SecureFlagPolicy
 import com.expensetracker.offline.data.local.dao.AccountBalanceInsight
 import com.expensetracker.offline.data.local.dao.AccountInfo
+import com.expensetracker.offline.data.local.entity.TransactionEntity
+import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.data.repository.CreditCardConfig
+import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.ui.dashboard.SafeToSpendBreakdown
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
+import com.expensetracker.offline.util.BillingCycleHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
-/** One soft, non-bouncy spring used for every size change in this sheet. */
 private fun <T> smoothSize() = spring<T>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,18 +102,22 @@ fun AccountsDialog(
     contextLabel: String,
     contextBalance: Long?,
     safeToSpendBreakdown: SafeToSpendBreakdown?,
+    transactions: List<TransactionEntity> = emptyList(),
     onAccountSelected: (AccountInfo?) -> Unit,
     onRefresh: () -> Unit,
     onManageNecessities: () -> Unit,
     onDismiss: () -> Unit,
     secure: Boolean = true
 ) {
+    val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
-    // Scale the account list with the screen so the sheet never overflows small or landscape displays.
-    val listMaxHeight = minOf(maxOf((LocalConfiguration.current.screenHeightDp * 0.32f).dp, 140.dp), 340.dp)
+    val settingsRepo = remember { SettingsRepository(context) }
+    var ccConfigVersion by remember { mutableIntStateOf(0) }
+    var editingCcAccount by remember { mutableStateOf<AccountBalanceInsight?>(null) }
+
+    val listMaxHeight = minOf(maxOf((LocalConfiguration.current.screenHeightDp * 0.36f).dp, 160.dp), 340.dp)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    // ── Inline refresh feedback (the dashboard snackbar is hidden behind a sheet) ──
     var syncing by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("") }
     var statusVisible by remember { mutableStateOf(false) }
@@ -151,7 +167,7 @@ fun AccountsDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 20.dp)
+                .padding(bottom = 24.dp)
         ) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -162,7 +178,7 @@ fun AccountsDialog(
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        if (accountBalances.size <= 1) "Linked account" else "Linked accounts",
+                        if (accountBalances.size <= 1) "Balance & Safe to Spend" else "Accounts & Safe to Spend",
                         fontWeight = FontWeight.Bold, fontSize = 22.sp, letterSpacing = (-0.3).sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -211,53 +227,352 @@ fun AccountsDialog(
                     Text("No accounts detected yet.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
-                val single = accountBalances.size <= 1
-                // No key(): the card keeps its flip/bills state when you switch accounts; values crossfade in place.
+                val single = accountBalances.size == 1
+                val activeAccountInsight = remember(accountBalances, selectedAccount, single) {
+                    if (single) accountBalances.first()
+                    else accountBalances.firstOrNull {
+                        it.bankName == selectedAccount?.bankName && it.accountNumber == selectedAccount?.accountNumber
+                    }
+                }
+
+                // Single hero card: shows Available Balance and flips to Safe to Spend (no duplicate balance card below!)
                 BalanceFlipCard(
-                    contextLabel = if (single) accountBalances.first().bankName else contextLabel,
-                    accountNumber = if (single) accountBalances.first().accountNumber else null,
-                    balance = contextBalance,
+                    contextLabel = activeAccountInsight?.bankName ?: contextLabel,
+                    accountNumber = activeAccountInsight?.accountNumber,
+                    balance = activeAccountInsight?.latestBalance ?: contextBalance,
                     breakdown = safeToSpendBreakdown,
-                    lastUpdated = if (single) accountBalances.first().lastUpdated else accountBalances.maxOfOrNull { it.lastUpdated },
+                    lastUpdated = activeAccountInsight?.lastUpdated ?: accountBalances.maxOfOrNull { it.lastUpdated },
                     onManageNecessities = onManageNecessities
                 )
 
-                if (!single) {
-                    Spacer(Modifier.height(18.dp))
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth().heightIn(max = listMaxHeight)
-                    ) {
-                        item {
-                            AccountListItem(
-                                title = "All accounts",
-                                subtitle = "Combined balance",
-                                icon = Icons.Default.AccountTree,
-                                isSelected = selectedAccount == null,
-                                onClick = {
+                key(ccConfigVersion) {
+                    if (single) {
+                        val account = accountBalances.first()
+                        val ccConfig = remember(account, ccConfigVersion) {
+                            settingsRepo.getCreditCardConfig(account.bankName, account.accountNumber)
+                        }
+                        val ccUnbilledPaise = remember(account, ccConfig, transactions) {
+                            if (ccConfig == null) 0L
+                            else {
+                                val (stmtStart, stmtEnd) = BillingCycleHelper.getCycleRange(ccConfig.statementDay)
+                                transactions.asSequence()
+                                    .filter {
+                                        it.type == TransactionType.DEBIT &&
+                                                !it.excludeFromSpend &&
+                                                it.bankName == account.bankName &&
+                                                it.accountNumber == account.accountNumber &&
+                                                it.timestamp in stmtStart..stmtEnd
+                                    }
+                                    .sumOf { it.amount }
+                            }
+                        }
+
+                        Spacer(Modifier.height(14.dp))
+                        if (ccConfig != null) {
+                            CreditCardUtilizationCard(
+                                bankName = account.bankName,
+                                accountNumber = account.accountNumber,
+                                ccConfig = ccConfig,
+                                ccUnbilledPaise = ccUnbilledPaise,
+                                onConfigureCc = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onAccountSelected(null)
+                                    editingCcAccount = account
                                 }
                             )
-                        }
-                        items(accountBalances, key = { "${it.bankName}|${it.accountNumber ?: "none"}" }) { account ->
-                            val isSelected = selectedAccount?.bankName == account.bankName && selectedAccount?.accountNumber == account.accountNumber
-                            AccountListItem(
-                                title = account.bankName,
-                                subtitle = account.accountNumber?.let { "··$it" },
-                                initial = account.bankName.take(1).uppercase(),
-                                isSelected = isSelected,
-                                balance = account.latestBalance,
-                                lastUpdated = account.lastUpdated,
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onAccountSelected(AccountInfo(account.bankName, account.accountNumber))
+                        } else {
+                            // Subtle 1-line Credit Card configuration trigger without repeating balance
+                            Surface(
+                                shape = RoundedCornerShape(AppRadius.medium),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(AppRadius.medium))
+                                    .quietClickable {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        editingCcAccount = account
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.CreditCard,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "Using ${account.bankName} as a credit card?",
+                                            fontSize = 13.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            "Configure credit limit, statement cycle & utilization alerts",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
+                            }
+                        }
+                    } else {
+                        Spacer(Modifier.height(18.dp))
+                        Text(
+                            "Switch account",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 0.3.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
+                        )
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(max = listMaxHeight)
+                        ) {
+                            item(key = "all_accounts") {
+                                val combinedBal = remember(accountBalances) {
+                                    accountBalances.mapNotNull { it.latestBalance }.takeIf { it.isNotEmpty() }?.sum()
+                                }
+                                AccountListItem(
+                                    title = "All accounts",
+                                    subtitle = "Combined across ${accountBalances.size} accounts",
+                                    icon = Icons.Default.AccountTree,
+                                    isSelected = selectedAccount == null,
+                                    balance = combinedBal,
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onAccountSelected(null)
+                                    }
+                                )
+                            }
+                            items(accountBalances, key = { "${it.bankName}|${it.accountNumber ?: "none"}" }) { account ->
+                                val isSelected = selectedAccount?.bankName == account.bankName && selectedAccount?.accountNumber == account.accountNumber
+                                val ccConfig = remember(account, ccConfigVersion) {
+                                    settingsRepo.getCreditCardConfig(account.bankName, account.accountNumber)
+                                }
+                                val ccUnbilledPaise = remember(account, ccConfig, transactions) {
+                                    if (ccConfig == null) 0L
+                                    else {
+                                        val (stmtStart, stmtEnd) = BillingCycleHelper.getCycleRange(ccConfig.statementDay)
+                                        transactions.asSequence()
+                                            .filter {
+                                                it.type == TransactionType.DEBIT &&
+                                                        !it.excludeFromSpend &&
+                                                        it.bankName == account.bankName &&
+                                                        it.accountNumber == account.accountNumber &&
+                                                        it.timestamp in stmtStart..stmtEnd
+                                            }
+                                            .sumOf { it.amount }
+                                    }
+                                }
+                                AccountListItem(
+                                    title = account.bankName,
+                                    subtitle = account.accountNumber?.let { "··$it" },
+                                    icon = if (ccConfig != null) Icons.Default.CreditCard else null,
+                                    initial = if (ccConfig == null) account.bankName.take(1).uppercase() else null,
+                                    isSelected = isSelected,
+                                    balance = account.latestBalance,
+                                    ccConfig = ccConfig,
+                                    ccUnbilledPaise = ccUnbilledPaise,
+                                    onConfigureCc = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        editingCcAccount = account
+                                    },
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onAccountSelected(AccountInfo(account.bankName, account.accountNumber))
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    val ccTarget = editingCcAccount
+    if (ccTarget != null) {
+        val existingConfig = settingsRepo.getCreditCardConfig(ccTarget.bankName, ccTarget.accountNumber)
+        var isCc by remember(ccTarget) { mutableStateOf(existingConfig != null) }
+        var limitRupeesStr by remember(ccTarget) {
+            mutableStateOf(((existingConfig?.creditLimitPaise ?: 10_000_000L) / 100L).toString())
+        }
+        var stmtDay by remember(ccTarget) { mutableIntStateOf(existingConfig?.statementDay ?: 15) }
+        var dueDay by remember(ccTarget) { mutableIntStateOf(existingConfig?.dueDay ?: 5) }
+
+        AppDialog(
+            title = "${ccTarget.bankName} Settings",
+            onDismiss = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                editingCcAccount = null
+            },
+            confirmText = "Save",
+            onConfirm = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                val limitPaise = ((limitRupeesStr.toLongOrNull() ?: 100_000L).coerceAtLeast(1000L)) * 100L
+                settingsRepo.saveCreditCardConfig(
+                    bankName = ccTarget.bankName,
+                    accountNumber = ccTarget.accountNumber,
+                    config = CreditCardConfig(
+                        accountKey = settingsRepo.accountKey(ccTarget.bankName, ccTarget.accountNumber),
+                        isCreditCard = isCc,
+                        creditLimitPaise = limitPaise,
+                        statementDay = stmtDay,
+                        dueDay = dueDay
+                    )
+                )
+                ccConfigVersion++
+                editingCcAccount = null
+            }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Track as Credit Card", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Text("Monitor statement cycle spend, credit limit & utilization", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = isCc,
+                        onCheckedChange = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            isCc = it
+                        },
+                        colors = appSwitchColors()
+                    )
+                }
+
+                AnimatedVisibility(visible = isCc) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(
+                            value = limitRupeesStr,
+                            onValueChange = { limitRupeesStr = it.filter { c -> c.isDigit() }.take(9) },
+                            label = { Text("Credit Limit (₹)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(AppRadius.small),
+                            colors = sheetFieldColors(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedTextField(
+                                value = stmtDay.toString(),
+                                onValueChange = { v -> v.toIntOrNull()?.let { stmtDay = it.coerceIn(1, 28) } },
+                                label = { Text("Statement Day (1-28)") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(AppRadius.small),
+                                colors = sheetFieldColors(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = dueDay.toString(),
+                                onValueChange = { v -> v.toIntOrNull()?.let { dueDay = it.coerceIn(1, 28) } },
+                                label = { Text("Bill Due Day (1-28)") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(AppRadius.small),
+                                colors = sheetFieldColors(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun CreditCardUtilizationCard(
+    bankName: String,
+    accountNumber: String?,
+    ccConfig: CreditCardConfig,
+    ccUnbilledPaise: Long,
+    onConfigureCc: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    val limit = ccConfig.creditLimitPaise.coerceAtLeast(1L)
+    val utilRatio = (ccUnbilledPaise.toFloat() / limit.toFloat()).coerceIn(0f, 1f)
+    val utilPct = ((ccUnbilledPaise.toDouble() / limit.toDouble()) * 100.0).roundToInt()
+    val utilColor = when {
+        utilPct >= 70 -> AppColors.negative
+        utilPct >= 30 -> AppColors.warning
+        else -> AppColors.positive
+    }
+    val daysToDue = remember(ccConfig.dueDay) {
+        val today = LocalDate.now()
+        val candidate = today.withDayOfMonth(ccConfig.dueDay.coerceIn(1, 28))
+        val nextDue = if (candidate.isBefore(today)) candidate.plusMonths(1) else candidate
+        ChronoUnit.DAYS.between(today, nextDue).toInt()
+    }
+
+    Surface(
+        shape = RoundedCornerShape(AppRadius.medium),
+        color = scheme.onSurface.copy(alpha = 0.03f),
+        border = BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.CreditCard, contentDescription = null, tint = scheme.onSurface, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = if (accountNumber != null) "$bankName ··$accountNumber Credit Card" else "$bankName Credit Card",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onConfigureCc, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.Settings, contentDescription = "Card settings", tint = scheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text("Cycle Unbilled Spend", fontSize = 12.sp, color = scheme.onSurfaceVariant)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "${CurrencyFormat.withSymbol(ccUnbilledPaise, 0)} / ${CurrencyFormat.withSymbol(limit, 0)}",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.onSurface
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("Utilization · Due Day ${ccConfig.dueDay}", fontSize = 12.sp, color = scheme.onSurfaceVariant)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "$utilPct% used · Due in ${daysToDue}d",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = utilColor
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { utilRatio },
+                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(AppRadius.pill)),
+                color = utilColor,
+                trackColor = scheme.onSurface.copy(alpha = 0.08f)
+            )
         }
     }
 }
@@ -270,25 +585,25 @@ private fun AccountListItem(
     initial: String? = null,
     isSelected: Boolean,
     balance: Long? = null,
-    lastUpdated: Long? = null,
+    ccConfig: CreditCardConfig? = null,
+    ccUnbilledPaise: Long = 0L,
+    onConfigureCc: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
-    val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
-    // No ripple: a soft tint on press and animated selection state instead.
     val interaction = remember { MutableInteractionSource() }
     val isPressed by interaction.collectIsPressedAsState()
     val bgColor by animateColorAsState(
         targetValue = when {
-            isSelected -> scheme.onSurface.copy(alpha = 0.04f)
+            isSelected -> scheme.onSurface.copy(alpha = 0.05f)
             isPressed -> scheme.onSurface.copy(alpha = 0.02f)
-            else -> scheme.surfaceVariant.copy(alpha = 0.3f)
+            else -> scheme.surfaceVariant.copy(alpha = 0.25f)
         },
-        animationSpec = tween(240), label = "accountItemBg"
+        animationSpec = tween(200), label = "accountItemBg"
     )
     val borderColor by animateColorAsState(
-        targetValue = if (isSelected) scheme.onSurface.copy(alpha = 0.55f) else Color.Transparent,
-        animationSpec = tween(240), label = "accountItemBorder"
+        targetValue = if (isSelected) scheme.onSurface.copy(alpha = 0.55f) else scheme.outlineVariant.copy(alpha = 0.30f),
+        animationSpec = tween(200), label = "accountItemBorder"
     )
 
     Surface(
@@ -306,9 +621,8 @@ private fun AccountListItem(
         color = bgColor,
         border = BorderStroke(1.dp, borderColor)
     ) {
-        Column(modifier = Modifier.animateContentSize(smoothSize()).padding(16.dp)) {
+        Column(modifier = Modifier.animateContentSize(smoothSize()).padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Avatar keeps its identity (icon / initial); selection is a small check badge.
                 Box(modifier = Modifier.size(40.dp)) {
                     Surface(shape = CircleShape, color = scheme.surfaceVariant, modifier = Modifier.fillMaxSize()) {
                         Box(contentAlignment = Alignment.Center) {
@@ -320,13 +634,13 @@ private fun AccountListItem(
                     }
                     androidx.compose.animation.AnimatedVisibility(
                         visible = isSelected,
-                        enter = fadeIn(tween(200)),
-                        exit = fadeOut(tween(150)),
+                        enter = fadeIn(tween(180)),
+                        exit = fadeOut(tween(140)),
                         modifier = Modifier.align(Alignment.BottomEnd)
                     ) {
                         Box(
                             modifier = Modifier
-                                .offset(x = 3.dp, y = 3.dp)
+                                .offset(x = 2.dp, y = 2.dp)
                                 .size(18.dp)
                                 .border(2.dp, scheme.surface, CircleShape)
                                 .padding(2.dp)
@@ -339,42 +653,103 @@ private fun AccountListItem(
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = title,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp,
-                        color = scheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = title,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.5.sp,
+                            color = scheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (ccConfig != null) {
+                            Spacer(Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(AppRadius.pill),
+                                color = scheme.onSurface.copy(alpha = 0.08f)
+                            ) {
+                                Text(
+                                    "Credit Card",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = scheme.onSurface,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
                     if (subtitle != null) {
-                        Text(subtitle, fontSize = 13.sp, color = scheme.onSurfaceVariant)
+                        Text(subtitle, fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
+                    }
+                }
+                if (balance != null && ccConfig == null) {
+                    Text(
+                        text = CurrencyFormat.smart(balance),
+                        fontSize = 15.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                        color = if (isSelected) scheme.onSurface else scheme.onSurfaceVariant,
+                        modifier = Modifier.padding(end = if (onConfigureCc != null) 4.dp else 0.dp)
+                    )
+                }
+                if (onConfigureCc != null) {
+                    IconButton(onClick = onConfigureCc, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Account & Card settings",
+                            tint = scheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }
 
-            if (isSelected && balance != null && lastUpdated != null) {
-                val timeStr = remember(lastUpdated) { formatSyncTime(context, lastUpdated) }
-                Spacer(Modifier.height(16.dp))
-                HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.4f))
-                Spacer(Modifier.height(16.dp))
+            if (ccConfig != null) {
+                val limit = ccConfig.creditLimitPaise.coerceAtLeast(1L)
+                val utilRatio = (ccUnbilledPaise.toFloat() / limit.toFloat()).coerceIn(0f, 1f)
+                val utilPct = ((ccUnbilledPaise.toDouble() / limit.toDouble()) * 100.0).roundToInt()
+                val utilColor = when {
+                    utilPct >= 70 -> AppColors.negative
+                    utilPct >= 30 -> AppColors.warning
+                    else -> AppColors.positive
+                }
+                val daysToDue = remember(ccConfig.dueDay) {
+                    val today = LocalDate.now()
+                    val candidate = today.withDayOfMonth(ccConfig.dueDay.coerceIn(1, 28))
+                    val nextDue = if (candidate.isBefore(today)) candidate.plusMonths(1) else candidate
+                    ChronoUnit.DAYS.between(today, nextDue).toInt()
+                }
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.35f))
+                Spacer(Modifier.height(10.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
-                        Text("Current balance", fontSize = 12.sp, color = scheme.onSurfaceVariant)
+                        Text("Cycle Unbilled Spend", fontSize = 12.sp, color = scheme.onSurfaceVariant)
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            text = CurrencyFormat.withSymbol(balance, 2),
-                            fontSize = 15.sp,
+                            text = "${CurrencyFormat.withSymbol(ccUnbilledPaise, 0)} / ${CurrencyFormat.withSymbol(limit, 0)}",
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = scheme.onSurface
                         )
                     }
                     Column(horizontalAlignment = Alignment.End) {
-                        Text("Last synced", fontSize = 12.sp, color = scheme.onSurfaceVariant)
+                        Text("Utilization · Due Day ${ccConfig.dueDay}", fontSize = 12.sp, color = scheme.onSurfaceVariant)
                         Spacer(Modifier.height(2.dp))
-                        Text(timeStr, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = scheme.onSurface)
+                        Text(
+                            text = "$utilPct% used · Due in ${daysToDue}d",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = utilColor
+                        )
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { utilRatio },
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(AppRadius.pill)),
+                    color = utilColor,
+                    trackColor = scheme.onSurface.copy(alpha = 0.08f)
+                )
             }
         }
     }
@@ -393,10 +768,8 @@ private fun BalanceFlipCard(
     val context = LocalContext.current
     val density = LocalDensity.current
 
-    // 1. Initialize SharedPreferences
     val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
 
-    // 2. Read the initial state from SharedPreferences instead of defaulting to false
     var isFlipped by remember { mutableStateOf(prefs.getBoolean("key_balance_card_flipped", false)) }
     var showBills by remember { mutableStateOf(false) }
 
@@ -409,7 +782,7 @@ private fun BalanceFlipCard(
 
     val rotation by animateFloatAsState(
         targetValue = if (isFlipped) 180f else 0f,
-        animationSpec = tween(durationMillis = 560),
+        animationSpec = tween(durationMillis = 520),
         label = "balanceCardFlip"
     )
     val showFront by remember { derivedStateOf { rotation <= 90f } }
@@ -437,28 +810,28 @@ private fun BalanceFlipCard(
             ) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 isFlipped = !isFlipped
-                // 3. Save the user's preference immediately when they flip the card
                 prefs.edit().putBoolean("key_balance_card_flipped", isFlipped).apply()
             },
         shape = RoundedCornerShape(AppRadius.large),
         color = flipColor,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))) {
-        Box(modifier = Modifier.fillMaxWidth().heightIn(min = 190.dp).animateContentSize(smoothSize()).padding(24.dp)) {
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+    ) {
+        Box(modifier = Modifier.fillMaxWidth().heightIn(min = 186.dp).animateContentSize(smoothSize()).padding(22.dp)) {
             if (showFront) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("Available balance", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Surface(shape = RoundedCornerShape(AppRadius.pill), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)) {
+                        Surface(shape = RoundedCornerShape(AppRadius.pill), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)) {
                             Text(
                                 text = if (accountNumber != null) "$contextLabel · ··$accountNumber" else contextLabel,
                                 fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface, // Changed from primary
+                                color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                             )
                         }
                     }
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(16.dp))
 
                     Crossfade(targetState = balance, animationSpec = tween(220), label = "balanceSwap") { shown ->
                         if (shown != null) {
@@ -470,8 +843,8 @@ private fun BalanceFlipCard(
                     Spacer(Modifier.height(4.dp))
                     Text(syncText, fontSize = 13.sp, color = if (isStale) AppColors.warning else MaterialTheme.colorScheme.onSurfaceVariant)
 
-                    Spacer(Modifier.height(24.dp))
-                    FlipHint("Tap to view safe to spend")
+                    Spacer(Modifier.height(20.dp))
+                    FlipHint("Tap card to flip to Safe to Spend")
                 }
             } else {
                 Column(modifier = Modifier.fillMaxWidth().graphicsLayer { rotationY = 180f }) {
@@ -488,12 +861,12 @@ private fun BalanceFlipCard(
                                 onManageNecessities()
                             }
                         ) {
-                            Row(Modifier.heightIn(min = 40.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.heightIn(min = 36.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     Icons.Default.Edit,
                                     contentDescription = null,
                                     modifier = Modifier.size(12.dp),
-                                    tint = MaterialTheme.colorScheme.onSurface // Changed from primary
+                                    tint = MaterialTheme.colorScheme.onSurface
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
@@ -505,7 +878,7 @@ private fun BalanceFlipCard(
                             }
                         }
                     }
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(16.dp))
 
                     when {
                         breakdown == null || breakdown.reservedTotal <= 0L -> {
@@ -514,7 +887,7 @@ private fun BalanceFlipCard(
                                 Spacer(Modifier.width(12.dp))
                                 Column {
                                     Text("No bills reserved", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
-                                    Text("Tap Manage to add fixed costs", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("Tap Manage bills to reserve fixed costs", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -537,7 +910,7 @@ private fun BalanceFlipCard(
                                 color = if (breakdown.isShortOnReserve) AppColors.warning else MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
-                            Spacer(Modifier.height(16.dp))
+                            Spacer(Modifier.height(14.dp))
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
@@ -546,7 +919,7 @@ private fun BalanceFlipCard(
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         showBills = !showBills
                                     }
-                                    .heightIn(min = 40.dp)
+                                    .heightIn(min = 36.dp)
                             ) {
                                 Text(
                                     if (showBills) "Hide bills" else "View bills (${breakdown.itemStatuses.size})",
@@ -587,26 +960,21 @@ private fun BalanceFlipCard(
                         }
                     }
 
-                    Spacer(Modifier.height(24.dp))
-                    FlipHint("Tap to view balance")
+                    Spacer(Modifier.height(20.dp))
+                    FlipHint("Tap card to flip back to Balance")
                 }
             }
         }
     }
 }
 
-/**
- * Hero figure: big, bold, tabular digits. The currency symbol and decimals are
- * set smaller and softer so the whole-number part reads first.
- */
 @Composable
 private fun HeroAmount(text: String, color: Color) {
     val symbolColor = MaterialTheme.colorScheme.onSurfaceVariant
-    // Shrink gracefully for very large figures so it never wraps or clips.
     val size = when {
         text.length > 14 -> 34.sp
         text.length > 11 -> 40.sp
-        else -> 48.sp
+        else -> 46.sp
     }
     val firstDigit = text.indexOfFirst { it.isDigit() }.let { if (it < 0) 0 else it }
     val dot = text.lastIndexOf('.').takeIf { it > firstDigit } ?: text.length
@@ -633,7 +1001,6 @@ private fun HeroAmount(text: String, color: Color) {
     )
 }
 
-/** Click handler with no ripple; presses fade the element slightly instead. */
 @Composable
 private fun Modifier.quietClickable(onClick: () -> Unit): Modifier {
     val source = remember { MutableInteractionSource() }
@@ -649,14 +1016,14 @@ private fun FlipHint(text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Default.FlipCameraAndroid, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.width(6.dp))
-        Text(text, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 private const val STALE_BALANCE_MS = 3L * 24 * 60 * 60 * 1000
 
 private fun formatSyncTime(context: Context, millis: Long): String {
-    val time = DateFormat.getTimeFormat(context).format(Date(millis))   // respects 12/24h setting
+    val time = DateFormat.getTimeFormat(context).format(Date(millis))
     if (DateUtils.isToday(millis)) return "Today, $time"
     val pattern = DateFormat.getBestDateTimePattern(Locale.getDefault(), "dMMM")
     return "${SimpleDateFormat(pattern, Locale.getDefault()).format(Date(millis))}, $time"
