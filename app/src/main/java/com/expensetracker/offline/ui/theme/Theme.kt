@@ -3,7 +3,10 @@ package com.expensetracker.offline.ui.theme
 import android.app.Activity
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -11,6 +14,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -98,6 +102,37 @@ private val LightColorScheme = lightColorScheme(
 )
 
 @Composable
+private fun animateColor(target: Color, label: String): Color {
+    val animated by animateColorAsState(targetValue = target, animationSpec = tween(260), label = label)
+    return animated
+}
+
+@Composable
+private fun ColorScheme.animated(): ColorScheme = copy(
+    primary = animateColor(primary, "primary"),
+    onPrimary = animateColor(onPrimary, "onPrimary"),
+    primaryContainer = animateColor(primaryContainer, "primaryContainer"),
+    onPrimaryContainer = animateColor(onPrimaryContainer, "onPrimaryContainer"),
+    secondary = animateColor(secondary, "secondary"),
+    onSecondary = animateColor(onSecondary, "onSecondary"),
+    secondaryContainer = animateColor(secondaryContainer, "secondaryContainer"),
+    onSecondaryContainer = animateColor(onSecondaryContainer, "onSecondaryContainer"),
+    background = animateColor(background, "background"),
+    onBackground = animateColor(onBackground, "onBackground"),
+    surface = animateColor(surface, "surface"),
+    onSurface = animateColor(onSurface, "onSurface"),
+    surfaceVariant = animateColor(surfaceVariant, "surfaceVariant"),
+    onSurfaceVariant = animateColor(onSurfaceVariant, "onSurfaceVariant"),
+    outline = animateColor(outline, "outline"),
+    outlineVariant = animateColor(outlineVariant, "outlineVariant"),
+    surfaceContainerLowest = animateColor(surfaceContainerLowest, "surfaceContainerLowest"),
+    surfaceContainerLow = animateColor(surfaceContainerLow, "surfaceContainerLow"),
+    surfaceContainer = animateColor(surfaceContainer, "surfaceContainer"),
+    surfaceContainerHigh = animateColor(surfaceContainerHigh, "surfaceContainerHigh"),
+    surfaceContainerHighest = animateColor(surfaceContainerHighest, "surfaceContainerHighest")
+)
+
+@Composable
 fun ExpenseTrackerTheme(
     themeMode: String = "SYSTEM",
     darkTheme: Boolean = when (themeMode) {
@@ -108,7 +143,7 @@ fun ExpenseTrackerTheme(
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
+    val targetScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
@@ -116,6 +151,7 @@ fun ExpenseTrackerTheme(
         darkTheme -> DarkColorScheme
         else -> LightColorScheme
     }
+    val colorScheme = targetScheme.animated()
 
     val view = LocalView.current
     if (!view.isInEditMode) {
