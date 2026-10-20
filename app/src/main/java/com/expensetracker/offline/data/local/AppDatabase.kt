@@ -13,8 +13,8 @@ import com.expensetracker.offline.data.local.dao.SplitDebtDao
 import com.expensetracker.offline.data.local.dao.TransactionDao
 import com.expensetracker.offline.data.local.entity.CategoryRuleEntity
 import com.expensetracker.offline.data.local.entity.ReviewItemEntity
-import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.SplitDebtEntity
+import com.expensetracker.offline.data.local.entity.TransactionEntity
 
 @Database(
     entities = [
@@ -35,6 +35,7 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         const val DATABASE_VERSION = 15
+
         val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE transactions ADD COLUMN itemsSummary TEXT")
@@ -56,7 +57,6 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // Adds the linkedDebitId column AND its index
         val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE transactions ADD COLUMN linkedDebitId INTEGER")
@@ -66,17 +66,12 @@ abstract class AppDatabase : RoomDatabase() {
 
         val MIGRATION_8_9 = object : Migration(8, 9) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // 1. Recover old [splitId:XXX] text links into the native linkedDebitId column
                 db.execSQL("""
                     UPDATE transactions 
                     SET linkedDebitId = CAST(SUBSTR(splitNote, INSTR(splitNote, '[splitId:') + 9, INSTR(SUBSTR(splitNote, INSTR(splitNote, '[splitId:') + 9), ']') - 1) AS INTEGER) 
                     WHERE splitNote LIKE '%[splitId:%]' AND linkedDebitId IS NULL
                 """)
-
-                // 2. Erase the auto-generated "Repaid for..." paragraphs from Credit transactions
                 db.execSQL("UPDATE transactions SET splitNote = NULL WHERE splitNote LIKE 'Settled • Repaid for%'")
-
-                // 3. For Debits, strip the "Settled • " prefix but KEEP any custom notes
                 db.execSQL("UPDATE transactions SET splitNote = NULLIF(TRIM(REPLACE(splitNote, 'Settled • ', '')), '') WHERE splitNote LIKE 'Settled • %'")
             }
         }
@@ -97,20 +92,12 @@ abstract class AppDatabase : RoomDatabase() {
 
         val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // ORDER MATTERS. split_debts has ON DELETE CASCADE -> transactions. If split_debts
-                // exists when the old `transactions` table is DROPped, SQLite runs an implicit
-                // DELETE FROM transactions first (foreign keys on), which cascades and wipes every
-                // migrated debt. So: move the old table aside, build the new transactions table,
-                // THEN create/fill split_debts, and drop the old table last (nothing references it).
-
-                // 1. Move the old table aside (free up its index names first)
                 db.execSQL("DROP INDEX IF EXISTS `index_transactions_timestamp`")
                 db.execSQL("DROP INDEX IF EXISTS `index_transactions_amount_timestamp`")
                 db.execSQL("DROP INDEX IF EXISTS `index_transactions_referenceId`")
                 db.execSQL("DROP INDEX IF EXISTS `index_transactions_linkedDebitId`")
                 db.execSQL("ALTER TABLE `transactions` RENAME TO `transactions_old`")
 
-                // 2. New transactions table (legacy myShare / splitNote / settledAt columns gone)
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS `transactions` (
                         `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -133,15 +120,12 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 """)
 
-                // 3. Copy rows. linkedDebtId temporarily holds the OLD parent-transaction id;
-                //    it is remapped to split_debts.id in step 6.
                 db.execSQL("""
                     INSERT INTO `transactions` (`id`, `amount`, `payee`, `timestamp`, `type`, `source`, `referenceId`, `rawContent`, `category`, `note`, `balance`, `itemsSummary`, `receiptImageUri`, `bankName`, `accountNumber`, `isNecessity`, `linkedDebtId`)
                     SELECT `id`, `amount`, `payee`, `timestamp`, `type`, `source`, `referenceId`, `rawContent`, `category`, `note`, `balance`, `itemsSummary`, `receiptImageUri`, `bankName`, `accountNumber`, `isNecessity`, `linkedDebitId`
                     FROM `transactions_old`
                 """)
 
-                // 4. Now it is safe to create split_debts (FK points at the NEW transactions table)
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS `split_debts` (
                         `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -154,7 +138,6 @@ abstract class AppDatabase : RoomDatabase() {
                 """)
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_split_debts_transactionId` ON `split_debts` (`transactionId`)")
 
-                // 5. Old single-person splits -> split_debts rows
                 db.execSQL("""
                     INSERT INTO `split_debts` (`transactionId`, `debtorName`, `amountOwed`, `settledAt`)
                     SELECT `id`, COALESCE(NULLIF(TRIM(`splitNote`), ''), 'Unspecified Person'), (`amount` - `myShare`), `settledAt`
@@ -162,7 +145,6 @@ abstract class AppDatabase : RoomDatabase() {
                     WHERE `myShare` IS NOT NULL AND `myShare` < `amount`
                 """)
 
-                // 6. Repayment credits: old parent-transaction id -> new split_debts.id
                 db.execSQL("""
                     UPDATE `transactions`
                     SET `linkedDebtId` = (
@@ -173,10 +155,8 @@ abstract class AppDatabase : RoomDatabase() {
                     WHERE `linkedDebtId` IS NOT NULL
                 """)
 
-                // 7. Old table can go now
                 db.execSQL("DROP TABLE `transactions_old`")
 
-                // 8. Indices expected by TransactionEntity
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_transactions_timestamp` ON `transactions` (`timestamp`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_transactions_amount_timestamp` ON `transactions` (`amount`, `timestamp`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_transactions_referenceId` ON `transactions` (`referenceId`)")
@@ -192,19 +172,10 @@ abstract class AppDatabase : RoomDatabase() {
 
         val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // ORDER MATTERS (same hazard as MIGRATION_11_12). split_debts has ON DELETE CASCADE to
-                // transactions, and SQLite rewrites that FK to follow a renamed parent. If we DROP the old
-                // transactions table while split_debts still holds rows and foreign keys are on, SQLite
-                // runs an implicit DELETE that cascades and wipes every debt. So: move the CHILD aside
-                // first, rebuild the parent, rebuild the child, drop the child's old copy, and only then
-                // drop the old parent.
-
-                // 0. Move split_debts aside (frees its index names too)
                 db.execSQL("DROP INDEX IF EXISTS `index_split_debts_transactionId`")
                 db.execSQL("DROP INDEX IF EXISTS `index_split_debts_transactionId_debtorName`")
                 db.execSQL("ALTER TABLE `split_debts` RENAME TO `split_debts_old`")
 
-                // 1. TRANSACTIONS TABLE (REAL rupees -> INTEGER paise)
                 db.execSQL("DROP INDEX IF EXISTS `index_transactions_timestamp`")
                 db.execSQL("DROP INDEX IF EXISTS `index_transactions_amount_timestamp`")
                 db.execSQL("DROP INDEX IF EXISTS `index_transactions_referenceId`")
@@ -241,9 +212,6 @@ abstract class AppDatabase : RoomDatabase() {
                     FROM `transactions_old`
                 """)
 
-                // 2. Older versions allowed two debts for the same person on one bill, which would make
-                //    the new UNIQUE (transactionId, debtorName) index fail and crash the upgrade.
-                //    Point repayments of the duplicate rows at the surviving (lowest-id) row, then fold them.
                 db.execSQL("""
                     UPDATE `transactions`
                     SET `linkedDebtId` = (
@@ -254,7 +222,6 @@ abstract class AppDatabase : RoomDatabase() {
                     WHERE `linkedDebtId` IN (SELECT `id` FROM `split_debts_old`)
                 """)
 
-                // 3. SPLIT DEBTS TABLE
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS `split_debts` (
                         `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -269,20 +236,19 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 """)
 
-                // amountOwed == originalAmount == the person's share (repayments never change it).
+                // Preserve parent transaction timestamp for createdAt instead of hardcoding 0
                 db.execSQL("""
                     INSERT INTO `split_debts` (`id`, `transactionId`, `debtorName`, `amountOwed`, `originalAmount`, `createdAt`, `settledAt`, `status`)
-                    SELECT MIN(`id`), `transactionId`, `debtorName`,
-                           CAST(ROUND(SUM(`amountOwed`) * 100) AS INTEGER),
-                           CAST(ROUND(SUM(`amountOwed`) * 100) AS INTEGER),
-                           0,
-                           CASE WHEN SUM(CASE WHEN `settledAt` IS NULL THEN 1 ELSE 0 END) = 0 THEN MAX(`settledAt`) ELSE NULL END,
-                           CASE WHEN SUM(CASE WHEN `settledAt` IS NULL THEN 1 ELSE 0 END) = 0 THEN 'SETTLED' ELSE 'OPEN' END
-                    FROM `split_debts_old`
-                    GROUP BY `transactionId`, `debtorName`
+                    SELECT MIN(s.`id`), s.`transactionId`, s.`debtorName`,
+                           CAST(ROUND(SUM(s.`amountOwed`) * 100) AS INTEGER),
+                           CAST(ROUND(SUM(s.`amountOwed`) * 100) AS INTEGER),
+                           COALESCE((SELECT t.`timestamp` FROM `transactions` t WHERE t.`id` = s.`transactionId`), (strftime('%s','now') * 1000)),
+                           CASE WHEN SUM(CASE WHEN s.`settledAt` IS NULL THEN 1 ELSE 0 END) = 0 THEN MAX(s.`settledAt`) ELSE NULL END,
+                           CASE WHEN SUM(CASE WHEN s.`settledAt` IS NULL THEN 1 ELSE 0 END) = 0 THEN 'SETTLED' ELSE 'OPEN' END
+                    FROM `split_debts_old` s
+                    GROUP BY s.`transactionId`, s.`debtorName`
                 """)
 
-                // 4. Child's old copy first, THEN the old parent (nothing references it any more)
                 db.execSQL("DROP TABLE `split_debts_old`")
                 db.execSQL("DROP TABLE `transactions_old`")
 
@@ -294,7 +260,6 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_split_debts_transactionId` ON `split_debts` (`transactionId`)")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_split_debts_transactionId_debtorName` ON `split_debts` (`transactionId`, `debtorName`)")
 
-                // Debts already fully covered by linked repayments become SETTLED
                 db.execSQL("""
                     UPDATE `split_debts`
                     SET `status` = 'SETTLED', `settledAt` = (strftime('%s','now') * 1000)
@@ -302,7 +267,6 @@ abstract class AppDatabase : RoomDatabase() {
                       AND `amountOwed` <= COALESCE((SELECT SUM(t.`amount`) FROM `transactions` t WHERE t.`linkedDebtId` = `split_debts`.`id`), 0)
                 """)
 
-                // 5. REVIEW ITEMS TABLE (no foreign keys involved)
                 db.execSQL("ALTER TABLE `review_items` RENAME TO `review_items_old`")
 
                 db.execSQL("""
@@ -339,6 +303,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         @Volatile private var INSTANCE: AppDatabase? = null
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -350,7 +315,19 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
                     MIGRATION_14_15
-                ).build().also { INSTANCE = it }
+                ).fallbackToDestructiveMigrationFrom(1, 2, 3)
+                    .build().also { INSTANCE = it }
+            }
+        }
+
+        /**
+         * Safely closes and clears the singleton database instance during backup restore so
+         * subsequent accesses cleanly reopen the newly restored database file.
+         */
+        fun closeAndResetInstance() {
+            synchronized(this) {
+                runCatching { INSTANCE?.close() }
+                INSTANCE = null
             }
         }
     }

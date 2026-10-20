@@ -16,7 +16,6 @@ interface TransactionDao {
     @Query("SELECT DISTINCT bankName, accountNumber FROM transactions WHERE bankName IS NOT NULL")
     fun getLinkedAccountsFlow(): Flow<List<AccountInfo>>
 
-    // FIXED: Filter by both bankName AND accountNumber and return Long paise (PO-B)
     @Query("""
     SELECT COALESCE(SUM(CASE WHEN type = 'DEBIT' THEN -amount ELSE amount END), 0) 
     FROM transactions 
@@ -39,6 +38,15 @@ interface TransactionDao {
     ORDER BY timestamp DESC LIMIT 1
 """)
     fun getLatestBalanceForAccountFlow(bankName: String, accountNumber: String?): Flow<Long?>
+
+    @Query("""
+    SELECT balance FROM transactions 
+    WHERE bankName = :bankName 
+      AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL)) 
+      AND balance IS NOT NULL 
+    ORDER BY timestamp DESC LIMIT 1
+""")
+    suspend fun getLatestBalanceForAccountSync(bankName: String, accountNumber: String?): Long?
 
     @Query("SELECT * FROM transactions WHERE bankName = :bankName AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL)) ORDER BY timestamp DESC")
     fun getTransactionsByAccountFlow(bankName: String, accountNumber: String?): Flow<List<TransactionEntity>>
@@ -65,11 +73,17 @@ interface TransactionDao {
     @Upsert
     suspend fun insertTransaction(transaction: TransactionEntity): Long
 
+    @Upsert
+    suspend fun insertTransactions(transactions: List<TransactionEntity>): List<Long>
+
     @Update
     suspend fun updateTransaction(transaction: TransactionEntity)
 
     @Query("SELECT COUNT(*) FROM transactions WHERE timestamp BETWEEN :fromTs AND :toTs AND amount = :amount AND type = :type AND payee = :payee")
     suspend fun countSameTransaction(fromTs: Long, toTs: Long, amount: Long, type: TransactionType, payee: String): Int
+
+    @Query("SELECT receiptImageUri FROM transactions WHERE id IN (:ids) AND receiptImageUri IS NOT NULL")
+    suspend fun getReceiptUrisByIds(ids: List<Long>): List<String>
 
     @Query("DELETE FROM transactions WHERE id = :id")
     suspend fun deleteTransactionById(id: Long)
@@ -81,7 +95,7 @@ interface TransactionDao {
     suspend fun clearAllTransactions()
 
     @Transaction
-    @Query("SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 5000")
+    @Query("SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 50000")
     fun getAllTransactionsWithDebtsFlow(): Flow<List<TransactionWithDebts>>
 
     // ── Repayment links (CREDIT transaction -> specific person's debt) ──
@@ -213,7 +227,6 @@ interface TransactionDao {
     """)
     fun searchAndFilterTransactionsFlow(search: String, filterCategory: String, startTime: Long, limit: Int): Flow<List<TransactionWithDebts>>
 
-    // ONE SHARED DEFINITION OF SPEND IN PAISE (PO-H) — handles both bills paid by You and bills paid by a friend
     @Query("""
         SELECT COALESCE(SUM(
             CASE

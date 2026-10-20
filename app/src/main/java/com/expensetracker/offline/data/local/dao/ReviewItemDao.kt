@@ -38,6 +38,9 @@ interface ReviewItemDao {
     @Query("SELECT COUNT(*) FROM review_items WHERE status = 'PENDING'")
     fun getPendingReviewCountFlow(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM review_items WHERE status = 'PENDING'")
+    suspend fun getPendingReviewCountSync(): Int
+
     @Query("SELECT COUNT(*) FROM review_items WHERE status = 'PENDING' AND extractedPartialAmount IS NULL")
     fun getUnparsedReviewCountFlow(): Flow<Int>
 

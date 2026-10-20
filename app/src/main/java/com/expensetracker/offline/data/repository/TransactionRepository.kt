@@ -14,12 +14,15 @@ import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.engine.categorizer.NaiveBayesCategorizer
 import com.expensetracker.offline.engine.recurring.RecurringPayment
 import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
+import com.expensetracker.offline.ui.components.deleteReceiptFile
+import com.expensetracker.offline.util.BalanceCache
 import com.expensetracker.offline.widget.ExpenseWidget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import java.io.File
 
 class TransactionRepository(
     private val database: AppDatabase,
@@ -40,8 +43,6 @@ class TransactionRepository(
 
     val unsettledSplitsWithDebts: Flow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> =
         splitDebtDao.getUnsettledTransactionsWithDebtsFlow()
-
-    // ── Split debts ──────────────────────────────────────────────────────────
 
     private fun refreshWidget() {
         context?.let { runCatching { ExpenseWidget.updateAll(it) } }
@@ -168,7 +169,6 @@ class TransactionRepository(
             val capped = minOf(amount, outstanding)
             if (capped <= 0L) return@withTransaction
 
-            // When settling a debt YOU owe to a friend, log a manual settlement entry or mark settled directly
             if (isYouOwe && capped >= outstanding) {
                 splitDebtDao.markDebtSettled(debtId, timestamp)
             } else {
@@ -246,12 +246,71 @@ class TransactionRepository(
 
     suspend fun insertTransaction(transaction: TransactionEntity): Long {
         val id = database.withTransaction {
-            val newId = transactionDao.insertTransaction(transaction)
-            transaction.linkedDebtId?.let { reconcileDebt(it) }
+            val effectiveTxn = if (transaction.balance == null && transaction.bankName != null) {
+                val prevBalance = transactionDao.getLatestBalanceForAccountSync(transaction.bankName, transaction.accountNumber)
+                if (prevBalance != null) {
+                    val delta = if (transaction.type == TransactionType.DEBIT) -transaction.amount else transaction.amount
+                    val nextBal = (prevBalance + delta).coerceAtLeast(0L)
+                    context?.let { ctx ->
+                        BalanceCache.updateIfNewer(
+                            BalanceCache.prefs(ctx),
+                            transaction.bankName,
+                            transaction.accountNumber,
+                            nextBal,
+                            maxOf(transaction.timestamp, System.currentTimeMillis())
+                        )
+                    }
+                    transaction.copy(balance = nextBal)
+                } else transaction
+            } else transaction
+
+            val newId = transactionDao.insertTransaction(effectiveTxn)
+            effectiveTxn.linkedDebtId?.let { reconcileDebt(it) }
             newId
         }
         refreshWidget()
         return id
+    }
+
+    /**
+     * Allows users to manually set or adjust the current balance for a bank account or cash wallet.
+     * Records a zero-spend balance checkpoint row so all reactive account balance queries stay in sync.
+     */
+    suspend fun setManualAccountBalance(bankName: String, accountNumber: String?, newBalancePaise: Long) {
+        val cleanBank = bankName.trim().ifBlank { "Cash Wallet" }
+        val cleanAcc = accountNumber?.trim()?.takeIf { it.isNotBlank() }
+        val now = System.currentTimeMillis()
+        database.withTransaction {
+            val latest = transactionDao.getRecentTransactions(50).firstOrNull {
+                it.bankName.equals(cleanBank, ignoreCase = true) &&
+                        (it.accountNumber ?: "") == (cleanAcc ?: "")
+            }
+            if (latest != null && now - latest.timestamp < 60_000L && latest.category == "Transfer" && latest.amount == 0L) {
+                transactionDao.updateTransaction(latest.copy(balance = newBalancePaise, timestamp = now))
+            } else {
+                transactionDao.insertTransaction(
+                    TransactionEntity(
+                        amount = 0L,
+                        payee = "Balance Sync ($cleanBank)",
+                        timestamp = now,
+                        type = TransactionType.CREDIT,
+                        source = TransactionSource.MANUAL,
+                        referenceId = null,
+                        rawContent = "Manual balance update",
+                        category = "Transfer",
+                        note = "Manual balance checkpoint",
+                        balance = newBalancePaise,
+                        bankName = cleanBank,
+                        accountNumber = cleanAcc,
+                        excludeFromSpend = true
+                    )
+                )
+            }
+        }
+        context?.let { ctx ->
+            BalanceCache.updateIfNewer(BalanceCache.prefs(ctx), cleanBank, cleanAcc, newBalancePaise, now)
+        }
+        refreshWidget()
     }
 
     suspend fun learnCategoryRule(payee: String, category: String) {
@@ -291,17 +350,25 @@ class TransactionRepository(
     suspend fun clearAllTransactions() {
         transactionDao.clearAllTransactions()
         context?.let { ctx ->
-            com.expensetracker.offline.util.BalanceCache.clearAll(ctx)
+            BalanceCache.clearAll(ctx)
+            runCatching {
+                File(ctx.filesDir, "receipts").listFiles()?.forEach { it.delete() }
+            }
         }
         refreshWidget()
     }
 
     suspend fun deleteTransactionsByIds(ids: List<Long>) {
         if (ids.isEmpty()) return
+        val receiptUris = mutableListOf<String>()
         database.withTransaction {
+            receiptUris += transactionDao.getReceiptUrisByIds(ids)
             val debtIds = ids.mapNotNull { transactionDao.getTransactionById(it)?.linkedDebtId }.toSet()
             transactionDao.deleteTransactionsByIds(ids)
             debtIds.forEach { reconcileDebt(it) }
+        }
+        context?.let { ctx ->
+            receiptUris.forEach { uri -> runCatching { deleteReceiptFile(ctx, uri) } }
         }
         refreshWidget()
     }
@@ -359,14 +426,17 @@ class TransactionRepository(
         val payee: String
     )
 
-    suspend fun insertTransactionsBulk(transactions: List<TransactionEntity>): Int {
+    suspend fun insertTransactionsBulk(
+        transactions: List<TransactionEntity>,
+        splitsByIndex: Map<Int, List<SplitDebtEntity>> = emptyMap()
+    ): Int {
         if (transactions.isEmpty()) return 0
 
         var totalInserted = 0
-        val sorted = transactions.sortedBy { it.timestamp }
-        for (chunk in sorted.chunked(500)) {
-            val minTime = chunk.first().timestamp - 1000L
-            val maxTime = chunk.last().timestamp + 1000L
+        val indexed = transactions.mapIndexed { idx, txn -> idx to txn }.sortedBy { it.second.timestamp }
+        for (chunk in indexed.chunked(500)) {
+            val minTime = chunk.first().second.timestamp - 1000L
+            val maxTime = chunk.last().second.timestamp + 1000L
 
             val chunkInserted = database.withTransaction {
                 val existing = transactionDao.getTransactionsInRangeSync(minTime, maxTime)
@@ -382,17 +452,32 @@ class TransactionRepository(
                     )
                 }
 
-                val fresh = chunk.filter { t ->
+                val freshPairs = chunk.filter { (_, t) ->
                     val key = TxnDedupeKey(
                         epochSecond = Math.floorDiv(t.timestamp, 1000L),
                         amount = t.amount,
                         type = t.type,
                         payee = t.payee
                     )
-                    !existingKeys.contains(key)
+                    existingKeys.add(key)
                 }
-                fresh.forEach { transactionDao.insertTransaction(it) }
-                fresh.size
+
+                if (freshPairs.isNotEmpty()) {
+                    val insertedIds = transactionDao.insertTransactions(freshPairs.map { it.second })
+                    val allDebts = mutableListOf<SplitDebtEntity>()
+                    freshPairs.forEachIndexed { i, (origIdx, _) ->
+                        val newTxnId = insertedIds.getOrNull(i) ?: 0L
+                        if (newTxnId > 0L) {
+                            splitsByIndex[origIdx]?.forEach { debt ->
+                                allDebts.add(debt.copy(id = 0L, transactionId = newTxnId))
+                            }
+                        }
+                    }
+                    if (allDebts.isNotEmpty()) {
+                        splitDebtDao.upsertDebts(allDebts)
+                    }
+                }
+                freshPairs.size
             }
             totalInserted += chunkInserted
         }

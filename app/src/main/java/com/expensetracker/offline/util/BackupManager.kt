@@ -53,46 +53,10 @@ object BackupManager {
     private val PREF_FILES = listOf(PREFS_NAME)
     private val EXCLUDED_PREF_KEYS = setOf(
         "key_backup_folder_uri", "key_last_backup_timestamp", "key_auto_backup_enabled",
-        // Undo-scan IDs point at rows of one specific database, so they must never cross a backup/restore.
-        "key_last_scan_txns", "key_last_scan_reviews",
-        // Auto-backup run status and the stored passphrase are per-device state, never part of a backup.
+        "key_last_scan_txns", "key_last_scan_reviews", "key_pending_delete_txn_ids",
         "key_last_auto_backup_ok", "key_last_auto_backup_run_time", "key_last_auto_backup_reason",
         "key_auto_backup_passphrase_enc", "key_auto_backup_passphrase"
     )
-
-    private val BACKED_UP_PREF_KEYS = listOf(
-        "key_monthly_budget_v2", "key_budget_explicitly_set", "key_category_budgets_json",
-        "key_necessities_json", "key_necessities_migrated_v1", "key_necessity_chunk",
-        "key_start_day_of_month", "key_low_balance_alert_enabled", "key_low_balance_threshold"
-    )
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // LEGACY RESTORE HELPERS (Keep these to support restoring V2/V3 backups)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private val LEGACY_V3_KEYS = listOf(
-        "key_monthly_budget_v2", "key_monthly_budget", "key_budget_explicitly_set",
-        "key_category_budgets_json", "key_necessities_json", "key_necessities_migrated_v1",
-        "key_necessity_chunk", "key_start_day_of_month", "key_low_balance_alert_enabled",
-        "key_low_balance_threshold"
-    )
-
-    private fun applySettingsV3(context: Context, bytes: ByteArray) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val root = JSONObject(String(bytes, Charsets.UTF_8))
-        val editor = prefs.edit()
-        root.optJSONArray("custom_categories")?.let { arr ->
-            editor.putStringSet("key_custom_categories", (0 until arr.length()).map { arr.getString(it) }.toSet())
-        }
-        root.optJSONObject("prefs")?.let { values ->
-            for (key in LEGACY_V3_KEYS) {
-                val entry = values.optJSONObject(key) ?: continue
-                putEntry(editor, key, entry)
-            }
-        }
-        editor.apply()
-        SettingsRepository(context).monthlyBudget
-    }
 
     private fun deserializeCategories(bytes: ByteArray): Set<String> {
         if (bytes.isEmpty()) return emptySet()
@@ -143,15 +107,14 @@ object BackupManager {
         for (name in files.keys()) {
             val values = files.getJSONObject(name)
             val editor = context.getSharedPreferences(name, Context.MODE_PRIVATE).edit()
-            // The restored database has different rows, so a stale "Undo Last Scan" batch could delete the wrong ones.
-            editor.remove("key_last_scan_txns").remove("key_last_scan_reviews")
-            // FIXED: Merge instead of clearing so we don't wipe excluded keys (like auto-backup state).
-            // Older backups still contain per-device keys, so never apply those on restore.
+            editor.remove("key_last_scan_txns")
+                .remove("key_last_scan_reviews")
+                .remove("key_pending_delete_txn_ids")
             for (key in values.keys()) {
                 if (key in EXCLUDED_PREF_KEYS) continue
                 putEntry(editor, key, values.getJSONObject(key))
             }
-            editor.apply()
+            editor.commit()
         }
         SettingsRepository(context).monthlyBudget
     }
@@ -160,7 +123,6 @@ object BackupManager {
         val tmpDbFile = File(context.cacheDir, "vacuum_temp.db")
         var createdFileUri: Uri? = null
 
-        // A half-written ".tmp" file must not stay in the person's folder (it is never pruned and looks like a backup).
         fun discardPartialFile() {
             createdFileUri?.let { runCatching { DocumentsContract.deleteDocument(context.contentResolver, it) } }
             createdFileUri = null
@@ -172,7 +134,6 @@ object BackupManager {
             val app = context.applicationContext as ExpenseTrackerApp
             if (tmpDbFile.exists()) tmpDbFile.delete()
 
-            // FIXED: Use atomic VACUUM INTO for Android 11+, otherwise fallback to TRUNCATE (PO-E)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 app.database.query(SimpleSQLiteQuery("VACUUM INTO '${tmpDbFile.absolutePath}'")).use { it.moveToFirst() }
             } else {
@@ -213,7 +174,6 @@ object BackupManager {
                 return@withContext BackupResult.Error("Could not read the database snapshot.")
             }
 
-            // FIXED: Stream encryption directly from tmpDbFile in 64 KB chunks so memory usage stays flat
             outputStream.use { os ->
                 BackupEngine.encryptBackupStream(
                     outputStream = os,
@@ -225,7 +185,6 @@ object BackupManager {
             }
             tmpDbFile.delete()
 
-            // A backup that could not be renamed is still called ".tmp", so do not report it as done.
             if (DocumentsContract.renameDocument(context.contentResolver, newFileUri, fileName) == null) {
                 discardPartialFile()
                 return@withContext BackupResult.Error("Could not finish writing the backup file.")
@@ -245,7 +204,6 @@ object BackupManager {
     }
 
     suspend fun restoreBackup(context: Context, backupFileUri: String, passphrase: String): RestoreResult = withContext(Dispatchers.IO) {
-        val app = context.applicationContext as ExpenseTrackerApp
         val dbPath = context.getDatabasePath(DATABASE_NAME)
         val tmpDbFile = File(dbPath.parentFile, "$DATABASE_NAME.restore_tmp")
         val backupDbFile = File(dbPath.parentFile, "$DATABASE_NAME.bak")
@@ -336,8 +294,8 @@ object BackupManager {
                 tmpDbFile.writeBytes(dbBytes)
             }
 
-            // 4. Safely close existing connections
-            app.database.close()
+            // 4. Safely close and nullify the singleton Room database reference
+            AppDatabase.closeAndResetInstance()
 
             // 5. Move current DB to .bak (Safety rollback mechanism)
             val walFile = File(dbPath.path + "-wal")
@@ -345,7 +303,6 @@ object BackupManager {
             val journalFile = File(dbPath.path + "-journal")
 
             if (dbPath.exists()) dbPath.renameTo(backupDbFile)
-            // FIXED: Rename WAL/SHM instead of deleting — needed for rollback if restore fails
             val backupWalFile = File(dbPath.path + "-bak-wal")
             val backupShmFile = File(dbPath.path + "-bak-shm")
             if (walFile.exists()) walFile.renameTo(backupWalFile) else backupWalFile.delete()
@@ -370,8 +327,6 @@ object BackupManager {
                 }
                 testDb.rawQuery("PRAGMA user_version", null).use { cursor ->
                     if (cursor.moveToFirst()) {
-                        // Reject if strictly from a future app database version
-                        // Older versions are fine because Room migrations will handle them!
                         val dbVersion = cursor.getInt(0)
                         if (dbVersion > AppDatabase.DATABASE_VERSION) {
                             isDbValid = false
@@ -386,7 +341,6 @@ object BackupManager {
             if (!isDbValid) {
                 dbPath.delete()
                 if (backupDbFile.exists()) backupDbFile.renameTo(dbPath)
-                // FIXED: Also restore WAL/SHM so uncheckpointed data isn't lost
                 if (backupWalFile.exists()) backupWalFile.renameTo(walFile)
                 if (backupShmFile.exists()) backupShmFile.renameTo(shmFile)
                 return@withContext RestoreResult.Error("Backup contains a corrupt database or is from a newer version of the app. Restored old database.")
@@ -400,9 +354,12 @@ object BackupManager {
                 when (detectedVersion) {
                     4, 3 -> applySettingsV4(context, settingsBytes!!)
                     2 -> context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                        .putStringSet("key_custom_categories", deserializeCategories(settingsBytes!!)).apply()
+                        .putStringSet("key_custom_categories", deserializeCategories(settingsBytes!!)).commit()
                 }
             }
+
+            // Eagerly reopen the new database instance so any concurrent observer gets a live pool
+            AppDatabase.getInstance(context)
 
             RestoreResult.SuccessRestart
         } catch (e: Exception) {
@@ -420,7 +377,6 @@ object BackupManager {
     }
 }
 
-// FIXED: Real Streaming Encryption Engine (PO-E)
 object BackupEngine {
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private const val IV_SIZE = 12
@@ -434,10 +390,11 @@ object BackupEngine {
         data class FormatError(val message: String) : StreamDecryptResult()
     }
 
-    private fun getSecretKey(passphrase: String, salt: ByteArray): SecretKeySpec {
-        // Kept ONLY so old backups made with a blank passphrase can still be restored.
-        // New backups are refused by encryptPayload() when the passphrase is blank.
-        val safePassphrase = if (passphrase.isBlank()) "Default_ExpenseTracker_Secure_Key" else passphrase
+    private fun getSecretKey(passphrase: String, salt: ByteArray, allowLegacyBlank: Boolean = false): SecretKeySpec {
+        if (!allowLegacyBlank) {
+            require(passphrase.isNotBlank()) { "Passphrase can't be blank" }
+        }
+        val effectivePassphrase = if (passphrase.isBlank()) "Default_ExpenseTracker_Secure_Key" else passphrase
 
         val algorithm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             "PBKDF2WithHmacSHA256"
@@ -446,14 +403,10 @@ object BackupEngine {
         }
 
         val factory = SecretKeyFactory.getInstance(algorithm)
-        val spec = PBEKeySpec(safePassphrase.toCharArray(), salt, 100_000, 256)
+        val spec = PBEKeySpec(effectivePassphrase.toCharArray(), salt, 100_000, 256)
         return SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
     }
 
-    /**
-     * Streams the V4 header, settings JSON, and SQLite database file through AES-GCM in 64 KB chunks.
-     * Produces the exact same wire format as [encryptPayload] without allocating the entire DB in RAM.
-     */
     fun encryptBackupStream(
         outputStream: OutputStream,
         passphrase: String,
@@ -466,7 +419,7 @@ object BackupEngine {
         val salt = ByteArray(SALT_SIZE).apply { secureRandom.nextBytes(this) }
 
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, getSecretKey(passphrase, salt))
+        cipher.init(Cipher.ENCRYPT_MODE, getSecretKey(passphrase, salt, allowLegacyBlank = false))
         val iv = cipher.iv
 
         outputStream.write(byteArrayOf(1)) // Version byte
@@ -502,10 +455,6 @@ object BackupEngine {
         outputStream.flush()
     }
 
-    /**
-     * Streams decryption of a version-1 AES-GCM backup directly into [targetDbFile] for V4 backups,
-     * keeping peak memory usage bounded while still verifying the GCM authentication tag before commit.
-     */
     fun decryptBackupStream(
         inputStream: InputStream,
         passphrase: String,
@@ -533,7 +482,7 @@ object BackupEngine {
 
         val cipher = Cipher.getInstance(TRANSFORMATION)
         val spec = GCMParameterSpec(TAG_LENGTH_BIT, iv)
-        cipher.init(Cipher.DECRYPT_MODE, getSecretKey(passphrase, salt), spec)
+        cipher.init(Cipher.DECRYPT_MODE, getSecretKey(passphrase, salt, allowLegacyBlank = true), spec)
 
         if (targetDbFile.exists()) targetDbFile.delete()
 
@@ -649,13 +598,12 @@ object BackupEngine {
     }
 
     fun encryptPayload(outputStream: OutputStream, passphrase: String, payload: ByteArray) {
-        // A blank passphrase would silently fall back to a key that is public in the source code.
         require(passphrase.isNotBlank()) { "Passphrase can't be blank" }
         val secureRandom = SecureRandom()
         val salt = ByteArray(SALT_SIZE).apply { secureRandom.nextBytes(this) }
 
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, getSecretKey(passphrase, salt))
+        cipher.init(Cipher.ENCRYPT_MODE, getSecretKey(passphrase, salt, allowLegacyBlank = false))
         val iv = cipher.iv
 
         outputStream.write(byteArrayOf(1)) // Version byte
@@ -692,7 +640,7 @@ object BackupEngine {
 
         val cipher = Cipher.getInstance(TRANSFORMATION)
         val spec = GCMParameterSpec(TAG_LENGTH_BIT, iv)
-        cipher.init(Cipher.DECRYPT_MODE, getSecretKey(passphrase, salt), spec)
+        cipher.init(Cipher.DECRYPT_MODE, getSecretKey(passphrase, salt, allowLegacyBlank = true), spec)
 
         return cipher.doFinal(encryptedBytes)
     }

@@ -33,6 +33,7 @@ data class NecessityItem(
 object NecessityManager {
     const val KEY_NECESSITIES_JSON = "key_necessities_json"
     const val KEY_NECESSITIES_MIGRATED = "key_necessities_migrated_v1"
+    const val KEY_NECESSITIES_PAISE_MIGRATED = "key_necessities_paise_migrated_v3"
 
     data class SinkingProgress(val saved: Long, val target: Long) {
         val fraction: Float get() = if (target > 0) (saved.toFloat() / target.toFloat()).coerceIn(0f, 1f) else 0f
@@ -78,7 +79,6 @@ object NecessityManager {
 
     fun findLastTransaction(item: NecessityItem, txns: List<TransactionEntity>): TransactionEntity? {
         if (item.name.isBlank() || txns.isEmpty()) return null
-        // txns from Room are ordered by timestamp DESC; check if sorted so we can return the first match in O(K)
         val isDescending = txns.size < 2 || txns[0].timestamp >= txns[txns.size - 1].timestamp
         return if (isDescending) {
             txns.firstOrNull { it.type == TransactionType.DEBIT && matches(item, it.payee, it.category) }
@@ -166,7 +166,6 @@ object NecessityManager {
 
     fun recurringSuggestion(payee: String, txns: List<TransactionEntity>): BillSuggestion? {
         if (payee.isBlank() || txns.size < 3) return null
-        // Cap to the 24 most recent matching charges so median gap calculation is O(1) bounded
         val list = txns.asSequence()
             .filter { it.type == TransactionType.DEBIT && it.payee.equals(payee, ignoreCase = true) }
             .take(24)
@@ -231,7 +230,17 @@ object NecessityManager {
     }
 
     fun loadNecessities(prefs: SharedPreferences): List<NecessityItem> {
-        val raw = prefs.getString(KEY_NECESSITIES_JSON, null) ?: return emptyList()
+        val isPaiseMigrated = prefs.getBoolean(KEY_NECESSITIES_PAISE_MIGRATED, false)
+        val raw = prefs.getString(KEY_NECESSITIES_JSON, null)
+        if (raw.isNullOrBlank()) {
+            // Fresh install: mark paise migration complete immediately so future items saved in paise
+            // are never mistaken for legacy rupee items and multiplied by 100.
+            if (!isPaiseMigrated) {
+                prefs.edit().putBoolean(KEY_NECESSITIES_PAISE_MIGRATED, true).apply()
+            }
+            return emptyList()
+        }
+
         val parsedList = mutableListOf<NecessityItem>()
 
         try {
@@ -274,8 +283,11 @@ object NecessityManager {
             Log.e("NecessityManager", "Failed to parse necessities JSON array", e)
         }
 
-        val isPaiseMigrated = prefs.getBoolean("key_necessities_paise_migrated_v3", false)
-        if (!isPaiseMigrated && parsedList.isNotEmpty()) {
+        if (!isPaiseMigrated) {
+            if (parsedList.isEmpty()) {
+                prefs.edit().putBoolean(KEY_NECESSITIES_PAISE_MIGRATED, true).apply()
+                return emptyList()
+            }
             val migratedList = parsedList.map { item ->
                 if (item.amount in 1L..999999L) {
                     item.copy(amount = item.amount * 100L)
@@ -284,7 +296,6 @@ object NecessityManager {
                 }
             }
             saveNecessities(prefs, migratedList)
-            prefs.edit().putBoolean("key_necessities_paise_migrated_v3", true).apply()
             return migratedList
         }
 
@@ -308,6 +319,106 @@ object NecessityManager {
             }
             arr.put(obj)
         }
-        prefs.edit().putString(KEY_NECESSITIES_JSON, arr.toString()).apply()
+        prefs.edit()
+            .putString(KEY_NECESSITIES_JSON, arr.toString())
+            .putBoolean(KEY_NECESSITIES_PAISE_MIGRATED, true)
+            .apply()
+    }
+
+    data class UpcomingBillAlert(
+        val item: NecessityItem,
+        val dueMillis: Long,
+        val daysUntilDue: Int,
+        val remainingAmountPaise: Long
+    )
+
+    private fun startOfDayMillis(t: Long): Long = Calendar.getInstance().apply {
+        timeInMillis = t
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+    private fun estimateMonthlyBillDue(item: NecessityItem, lastPaidMillis: Long?, nowMillis: Long): Long? {
+        val cal = Calendar.getInstance()
+        when {
+            item.dueTimestamp != null -> cal.timeInMillis = item.dueTimestamp
+            lastPaidMillis != null -> {
+                cal.timeInMillis = lastPaidMillis
+                cal.add(Calendar.MONTH, 1)
+            }
+            else -> return null
+        }
+        val today = startOfDayMillis(nowMillis)
+        var guard = 0
+        while (cal.timeInMillis < today && guard++ < 600) {
+            cal.add(Calendar.MONTH, 1)
+        }
+        return cal.timeInMillis
+    }
+
+    /**
+     * Returns all fixed costs / necessities that are unpaid in the current billing cycle and are due
+     * within [maxDaysAhead] days (default 2 days prior, 1 day prior, due today, or 1 day overdue).
+     */
+    fun getDueBillAlerts(
+        prefs: SharedPreferences,
+        txns: List<TransactionEntity>,
+        startDayOfMonth: Int,
+        nowMillis: Long = System.currentTimeMillis(),
+        maxDaysAhead: Int = 2
+    ): List<UpcomingBillAlert> {
+        val items = loadNecessities(prefs)
+        if (items.isEmpty()) return emptyList()
+
+        val (cycleStart, _) = BillingCycleHelper.getCycleRange(startDayOfMonth)
+        val cycleKey = currentCycleKey(startDayOfMonth)
+        val todayStart = startOfDayMillis(nowMillis)
+
+        val alerts = mutableListOf<UpcomingBillAlert>()
+        for (item in items) {
+            if (item.paidCycleKey == cycleKey) continue
+
+            val targetAmount = if (item.frequency == NecessityFrequency.MONTHLY || !item.isProrated) {
+                item.amount
+            } else {
+                getMonthlyReserveAmount(item)
+            }
+            if (targetAmount <= 0L) continue
+
+            val paidInCycle = txns.asSequence()
+                .filter {
+                    it.type == TransactionType.DEBIT &&
+                            !it.excludeFromSpend &&
+                            it.timestamp >= cycleStart &&
+                            matches(item, it.payee, it.category)
+                }
+                .sumOf { it.amount }
+
+            if (paidInCycle >= targetAmount) continue
+
+            val lastMatchedTs = findLastTransaction(item, txns)?.timestamp
+            val dueMillis = computeEffectiveDueDate(item, txns)
+                ?: if (item.frequency == NecessityFrequency.MONTHLY) {
+                    estimateMonthlyBillDue(item, lastMatchedTs, nowMillis)
+                } else null
+
+            if (dueMillis != null) {
+                val dueDayStart = startOfDayMillis(dueMillis)
+                val daysUntil = Math.round((dueDayStart - todayStart) / 86_400_000.0).toInt()
+                if (daysUntil in -1..maxDaysAhead) {
+                    alerts.add(
+                        UpcomingBillAlert(
+                            item = item,
+                            dueMillis = dueMillis,
+                            daysUntilDue = daysUntil,
+                            remainingAmountPaise = (targetAmount - paidInCycle).coerceAtLeast(0L)
+                        )
+                    )
+                }
+            }
+        }
+        return alerts.sortedBy { it.daysUntilDue }
     }
 }

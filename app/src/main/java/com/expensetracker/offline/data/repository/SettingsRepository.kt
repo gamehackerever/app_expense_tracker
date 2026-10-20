@@ -141,6 +141,10 @@ class SettingsRepository(context: Context) {
         get() = prefs.getBoolean(KEY_DAILY_DIGEST_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_DAILY_DIGEST_ENABLED, value).apply()
 
+    var billRemindersEnabled: Boolean
+        get() = prefs.getBoolean(KEY_BILL_REMINDERS_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_BILL_REMINDERS_ENABLED, value).apply()
+
     var disclosureAccepted: Boolean
         get() = prefs.getBoolean(KEY_DISCLOSURE_ACCEPTED, false)
         set(value) = prefs.edit().putBoolean(KEY_DISCLOSURE_ACCEPTED, value).apply()
@@ -171,6 +175,42 @@ class SettingsRepository(context: Context) {
     var lastImportedReviewIds: List<Long>
         get() = prefs.getString(KEY_LAST_SCAN_REVIEWS, "")?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
         set(value) = prefs.edit().putString(KEY_LAST_SCAN_REVIEWS, value.joinToString(",")).apply()
+
+    // ── Soft-Delete Crash Recovery Persistence ───────────────────────────────
+    @Synchronized
+    fun getPendingDeleteIds(): Set<Long> =
+        prefs.getString(KEY_PENDING_DELETE_TXN_IDS, "")
+            ?.split(",")
+            ?.mapNotNull { it.trim().toLongOrNull() }
+            ?.toSet()
+            ?: emptySet()
+
+    @Synchronized
+    fun addPendingDeleteIds(ids: Collection<Long>) {
+        if (ids.isEmpty()) return
+        val updated = getPendingDeleteIds() + ids
+        prefs.edit().putString(KEY_PENDING_DELETE_TXN_IDS, updated.joinToString(",")).apply()
+    }
+
+    @Synchronized
+    fun removePendingDeleteIds(ids: Collection<Long>) {
+        if (ids.isEmpty()) return
+        val updated = getPendingDeleteIds() - ids.toSet()
+        if (updated.isEmpty()) {
+            prefs.edit().remove(KEY_PENDING_DELETE_TXN_IDS).apply()
+        } else {
+            prefs.edit().putString(KEY_PENDING_DELETE_TXN_IDS, updated.joinToString(",")).apply()
+        }
+    }
+
+    @Synchronized
+    fun consumeAllPendingDeleteIds(): Set<Long> {
+        val existing = getPendingDeleteIds()
+        if (existing.isNotEmpty()) {
+            prefs.edit().remove(KEY_PENDING_DELETE_TXN_IDS).commit()
+        }
+        return existing
+    }
 
     var categoryBudgetsJson: String
         get() = prefs.getString(KEY_CATEGORY_BUDGETS_JSON, "{}") ?: "{}"
@@ -424,12 +464,14 @@ class SettingsRepository(context: Context) {
         const val KEY_APP_LOCK_ENABLED = "key_app_lock_enabled"
         const val KEY_HIDE_WIDGET_AMOUNTS = "key_hide_widget_amounts"
         const val KEY_DAILY_DIGEST_ENABLED = "key_daily_digest_enabled"
+        const val KEY_BILL_REMINDERS_ENABLED = "key_bill_reminders_enabled"
         const val KEY_DISCLOSURE_ACCEPTED = "key_disclosure_accepted"
         const val KEY_APP_THEME_MODE = "key_app_theme_mode"
         const val KEY_MY_UPI_VPA = "key_my_upi_vpa"
         const val KEY_CUSTOM_CATEGORIES = "key_custom_categories"
         const val KEY_LAST_SCAN_TXNS = "key_last_scan_txns"
         const val KEY_LAST_SCAN_REVIEWS = "key_last_scan_reviews"
+        const val KEY_PENDING_DELETE_TXN_IDS = "key_pending_delete_txn_ids"
         private const val MERCHANT_ALIAS_PREFIX = "merchant_alias_"
     }
 }

@@ -3,16 +3,20 @@ package com.expensetracker.offline.util
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import androidx.core.net.toUri
+import com.expensetracker.offline.data.local.dao.TransactionWithDebts
+import com.expensetracker.offline.data.local.entity.DebtStatus
+import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.ui.dashboard.mySpendShare
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import androidx.core.net.toUri
 import kotlin.math.round
 
 sealed class CsvResult {
@@ -23,13 +27,24 @@ sealed class CsvResult {
 
 object CsvEngine {
 
-    private const val HEADER = "Date,Time,Type,Category,Amount,Payee,Bank,Account,Notes,Your Split Share"
+    private const val HEADER =
+        "Date,Time,Type,Category,Amount,Payee,Bank,Account,Notes,Your Split Share,Paid By,Exclude From Spend,Reference ID,Split Details"
 
     suspend fun exportToCsv(
         context: Context,
         transactions: List<TransactionEntity>,
         targetTreeUri: String,
         splitShares: Map<Long, Long> = emptyMap()
+    ): CsvResult {
+        val wrapped = transactions.map { TransactionWithDebts(it, emptyList()) }
+        return exportWithDebtsToCsv(context, wrapped, targetTreeUri, splitShares)
+    }
+
+    suspend fun exportWithDebtsToCsv(
+        context: Context,
+        transactionsWithDebts: List<TransactionWithDebts>,
+        targetTreeUri: String,
+        splitSharesOverride: Map<Long, Long> = emptyMap()
     ): CsvResult = withContext(Dispatchers.IO) {
         try {
             val treeUri = targetTreeUri.toUri()
@@ -49,17 +64,31 @@ object CsvEngine {
                 val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
                 val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
-                transactions.sortedByDescending { it.timestamp }.forEach { txn ->
+                transactionsWithDebts.sortedByDescending { it.transaction.timestamp }.forEach { item ->
+                    val txn = item.transaction
+                    val debts = item.debts
                     val date = dateFormat.format(Date(txn.timestamp))
                     val time = timeFormat.format(Date(txn.timestamp))
                     val type = if (txn.type == TransactionType.DEBIT) "Expense" else "Income"
                     val amount = String.format(Locale.US, "%.2f", txn.amount / 100.0)
 
-                    val share = splitShares[txn.id]?.let { String.format(Locale.US, "%.2f", it / 100.0) } ?: ""
+                    val mySharePaise = splitSharesOverride[txn.id]
+                        ?: if (debts.isNotEmpty() && txn.type == TransactionType.DEBIT) mySpendShare(item) else null
+                    val share = mySharePaise?.let { String.format(Locale.US, "%.2f", it / 100.0) } ?: ""
 
-                    // FIXED: Prefix account with ' to prevent Excel from dropping leading zeros (PO-I)
                     val accRaw = txn.accountNumber ?: ""
                     val account = if (accRaw.isNotBlank()) "'$accRaw" else ""
+
+                    val paidBy = txn.paidBy?.takeIf { it.isNotBlank() } ?: "You"
+                    val excludeFlag = if (txn.excludeFromSpend) "true" else "false"
+                    val refId = txn.referenceId ?: ""
+                    val splitDetails = if (debts.isEmpty()) "" else {
+                        debts.joinToString(";") { d ->
+                            val cleanDebtor = d.debtorName.replace(";", " ").replace(":", " ").trim()
+                            val amtStr = String.format(Locale.US, "%.2f", d.amountOwed / 100.0)
+                            "$cleanDebtor:$amtStr:${d.status.name}"
+                        }
+                    }
 
                     val row = listOf(
                         date, time, type,
@@ -69,7 +98,11 @@ object CsvEngine {
                         quote(txn.bankName ?: ""),
                         quote(account),
                         quote(txn.itemsSummary ?: txn.note ?: ""),
-                        share
+                        share,
+                        quote(paidBy),
+                        excludeFlag,
+                        quote(refId),
+                        quote(splitDetails)
                     )
                     writer.write(row.joinToString(",") + "\n")
                 }
@@ -80,12 +113,16 @@ object CsvEngine {
         }
     }
 
-    suspend fun importFromCsv(context: Context, uri: Uri, onImported: suspend (List<TransactionEntity>) -> Int): CsvResult = withContext(Dispatchers.IO) {
+    suspend fun importFromCsv(
+        context: Context,
+        uri: Uri,
+        onImportedWithDebts: (suspend (List<TransactionEntity>, Map<Int, List<SplitDebtEntity>>) -> Int)? = null,
+        onImported: suspend (List<TransactionEntity>) -> Int
+    ): CsvResult = withContext(Dispatchers.IO) {
         try {
             val text = context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
                 ?: return@withContext CsvResult.Error("Could not open the selected file.")
 
-            // FIXED: Caps memory size and gracefully fails on unterminated quotes
             if (text.length > 5 * 1024 * 1024) return@withContext CsvResult.Error("File is too large (> 5MB).")
 
             val rows = try {
@@ -95,7 +132,8 @@ object CsvEngine {
             }
             if (rows.isEmpty()) return@withContext CsvResult.Error("File is empty.")
 
-            val isNewFormat = rows[0].joinToString(",").lowercase().contains("bank")
+            val headerLine = rows[0].joinToString(",").lowercase()
+            val isNewFormat = headerLine.contains("bank")
             val formats = listOf("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd").map {
                 SimpleDateFormat(it, Locale.US).apply { isLenient = false }
             }
@@ -111,6 +149,7 @@ object CsvEngine {
             }
 
             val transactions = mutableListOf<TransactionEntity>()
+            val splitsByIndex = mutableMapOf<Int, List<SplitDebtEntity>>()
             var skipped = 0
 
             for (tokens in rows.drop(1)) {
@@ -119,12 +158,10 @@ object CsvEngine {
 
                 val timestamp = parseDate(tokens[0], tokens[1])
 
-                // FIXED: Convert amount in rupees from CSV to paise (PO-I)
                 val parsedAmountRupees = tokens[4].trim().replace(",", "").toDoubleOrNull()
                 if (timestamp == null || parsedAmountRupees == null || parsedAmountRupees <= 0.0 || parsedAmountRupees.isNaN() || parsedAmountRupees.isInfinite()) { skipped++; continue }
                 val amount = round(parsedAmountRupees * 100.0).toLong()
 
-                // FIXED: Strict mapping to prevent "Withdrawal" from silently becoming Income (PO-I)
                 val typeStr = tokens[2].trim().lowercase()
                 val type = when (typeStr) {
                     "expense", "dr", "debit", "withdrawal" -> TransactionType.DEBIT
@@ -136,22 +173,81 @@ object CsvEngine {
                 val category = unquote(tokens[3]).ifBlank { "Uncategorized" }
 
                 val bank = if (isNewFormat) tokens.getOrNull(6)?.let(::unquote)?.takeIf { it.isNotBlank() } else null
-
-                // FIXED: Normalize account number to last 4 digits (PO-I)
                 val accountRaw = if (isNewFormat) tokens.getOrNull(7)?.let(::unquote)?.takeIf { it.isNotBlank() } else null
                 val account = accountRaw?.filter { it.isDigit() }?.takeLast(4)?.ifBlank { null }
 
                 val notes = (if (isNewFormat) tokens.getOrNull(8) else tokens.getOrNull(6))?.let(::unquote)?.takeIf { it.isNotBlank() }
                 val splitRupees = (if (isNewFormat) tokens.getOrNull(9) else tokens.getOrNull(7))?.trim()?.replace(",", "")?.toDoubleOrNull()
-                val split = splitRupees?.let { round(it * 100.0).toLong() }
+                val mySplitSharePaise = splitRupees?.let { round(it * 100.0).toLong() }
 
-                val finalNotes = if (split != null) listOfNotNull(notes, "Imported Share: $split").joinToString(" | ") else notes
+                val paidBy = if (isNewFormat) tokens.getOrNull(10)?.let(::unquote)?.takeIf { it.isNotBlank() } ?: "You" else "You"
+                val excludeFromSpend = if (isNewFormat) {
+                    tokens.getOrNull(11)?.trim()?.equals("true", ignoreCase = true) == true ||
+                            category.equals("Transfer", ignoreCase = true)
+                } else category.equals("Transfer", ignoreCase = true)
+                val referenceId = if (isNewFormat) tokens.getOrNull(12)?.let(::unquote)?.takeIf { it.isNotBlank() } else null
+                val splitDetailsRaw = if (isNewFormat) tokens.getOrNull(13)?.let(::unquote)?.takeIf { it.isNotBlank() } else null
+
+                val parsedDebts = mutableListOf<SplitDebtEntity>()
+                if (!splitDetailsRaw.isNullOrBlank()) {
+                    splitDetailsRaw.split(";").forEach { entry ->
+                        val parts = entry.split(":")
+                        if (parts.size >= 2) {
+                            val debtor = parts[0].trim()
+                            val owedPaise = parts[1].trim().toDoubleOrNull()?.let { round(it * 100.0).toLong() } ?: 0L
+                            val status = parts.getOrNull(2)?.trim()?.let {
+                                runCatching { DebtStatus.valueOf(it) }.getOrDefault(DebtStatus.OPEN)
+                            } ?: DebtStatus.OPEN
+                            if (debtor.isNotEmpty() && owedPaise > 0L) {
+                                parsedDebts.add(
+                                    SplitDebtEntity(
+                                        transactionId = 0L,
+                                        debtorName = debtor,
+                                        amountOwed = owedPaise,
+                                        originalAmount = owedPaise,
+                                        createdAt = timestamp,
+                                        settledAt = if (status != DebtStatus.OPEN) timestamp else null,
+                                        status = status
+                                    )
+                                )
+                            }
+                        }
+                    }
+                } else if (mySplitSharePaise != null && mySplitSharePaise in 0L until amount && type == TransactionType.DEBIT) {
+                    val owedByFriend = amount - mySplitSharePaise
+                    if (owedByFriend > 0L) {
+                        parsedDebts.add(
+                            SplitDebtEntity(
+                                transactionId = 0L,
+                                debtorName = "Split Partner",
+                                amountOwed = owedByFriend,
+                                originalAmount = owedByFriend,
+                                createdAt = timestamp
+                            )
+                        )
+                    }
+                }
+
+                val idx = transactions.size
+                if (parsedDebts.isNotEmpty()) {
+                    splitsByIndex[idx] = parsedDebts
+                }
 
                 transactions.add(
                     TransactionEntity(
-                        amount = amount, payee = payee, timestamp = timestamp, type = type,
-                        source = TransactionSource.MANUAL, referenceId = null, rawContent = "Imported from CSV",
-                        category = category, note = finalNotes, bankName = bank, accountNumber = account
+                        amount = amount,
+                        payee = payee,
+                        timestamp = timestamp,
+                        type = type,
+                        source = TransactionSource.MANUAL,
+                        referenceId = referenceId,
+                        rawContent = "Imported from CSV",
+                        category = category,
+                        note = notes,
+                        bankName = bank,
+                        accountNumber = account,
+                        excludeFromSpend = excludeFromSpend,
+                        paidBy = paidBy
                     )
                 )
             }
@@ -160,8 +256,11 @@ object CsvEngine {
                 return@withContext CsvResult.Error(if (skipped > 0) "No valid rows found ($skipped skipped)." else "No transactions found.")
             }
 
-            // The callback returns how many rows were new; rows already in the app are not added again.
-            val inserted = onImported(transactions)
+            val inserted = if (onImportedWithDebts != null) {
+                onImportedWithDebts(transactions, splitsByIndex)
+            } else {
+                onImported(transactions)
+            }
             val duplicates = transactions.size - inserted
             if (inserted == 0) {
                 return@withContext CsvResult.Error("Nothing imported: all ${transactions.size} rows are already in the app.")
@@ -218,7 +317,6 @@ object CsvEngine {
             i++
         }
 
-        // FIXED: Throws rather than silently swallowing the rest of the file into one giant row
         if (inQuotes) throw IllegalStateException("Unterminated quote at EOF")
 
         if (field.isNotEmpty() || row.isNotEmpty()) { row.add(field.toString()); rows.add(row) }
