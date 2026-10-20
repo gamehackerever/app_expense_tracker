@@ -1,4 +1,4 @@
-﻿package com.expensetracker.offline
+package com.expensetracker.offline
 
 import android.Manifest
 import android.content.Context
@@ -13,10 +13,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
@@ -60,7 +63,6 @@ import com.expensetracker.offline.util.NecessityManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// FIXED: Singleton state so rotation doesn't reset the lock (PO-F)
 object AppLockState {
     var isLocked = true
 }
@@ -101,8 +103,9 @@ class MainActivity : FragmentActivity() {
                     mutableStateOf(prefs.getBoolean("key_disclosure_accepted", false))
                 }
 
-                // Read from singleton
-                var isAppLocked by remember { mutableStateOf(prefs.getBoolean("key_app_lock_enabled", false) && AppLockState.isLocked) }
+                var isAppLocked by remember {
+                    mutableStateOf(prefs.getBoolean("key_app_lock_enabled", false) && AppLockState.isLocked)
+                }
 
                 val lifecycleOwner = LocalLifecycleOwner.current
                 DisposableEffect(lifecycleOwner) {
@@ -150,7 +153,12 @@ class MainActivity : FragmentActivity() {
                     ) {
                         AppNavigation(viewModel = viewModel, isAppLocked = isAppLocked)
 
-                        if (isAppLocked) {
+                        AnimatedVisibility(
+                            visible = isAppLocked,
+                            enter = fadeIn(tween(180)),
+                            exit = fadeOut(tween(240, easing = FastOutSlowInEasing)) +
+                                    scaleOut(tween(240, easing = FastOutSlowInEasing), targetScale = 1.03f)
+                        ) {
                             AppLockScreen(onUnlock = {
                                 lastUnlockTime = SystemClock.elapsedRealtime()
                                 AppLockState.isLocked = false
@@ -190,8 +198,7 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun AppLockScreen(onUnlock: () -> Unit) {
     val context = LocalContext.current
-    val activity = context.findFragmentActivity()
-        ?: return // context is not attached to a FragmentActivity — skip rendering
+    val activity = context.findFragmentActivity() ?: return
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val currentOnUnlock by rememberUpdatedState(onUnlock)
@@ -201,7 +208,6 @@ fun AppLockScreen(onUnlock: () -> Unit) {
     var isPrompting by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // FIXED: Use correct Biometric level for Android 9/10 to avoid BIOMETRIC_ERROR_UNSUPPORTED lockouts (PO-F)
     val authenticators = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
     } else {
@@ -318,7 +324,6 @@ fun ProminentDisclosureScreen(onAccept: () -> Unit, onDecline: () -> Unit) {
             Text("Privacy First Tracker", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
             Spacer(modifier = Modifier.height(16.dp))
 
-            // FIXED: Removed false "completely encrypted" claims and added proper context (PO-F)
             Text(
                 "Expense Tracker optionally uses SMS and Notification access to auto-detect bank transactions.\n\n" +
                         "Data is processed securely on your device. User-initiated backups or CSV exports may leave the device depending on where you save them.",
@@ -333,7 +338,6 @@ fun ProminentDisclosureScreen(onAccept: () -> Unit, onDecline: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // FIXED: Added decline path (PO-F)
             TextButton(onClick = onDecline) {
                 Text("Decline & Exit", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
             }
@@ -355,19 +359,24 @@ fun AppNavigation(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
         enterTransition = {
-            fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)) +
-                    slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { it / 16 }
+            fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                    slideInHorizontally(animationSpec = tween(260, easing = FastOutSlowInEasing)) { (it * 0.14f).toInt() } +
+                    scaleIn(animationSpec = tween(260, easing = FastOutSlowInEasing), initialScale = 0.965f)
         },
         exitTransition = {
-            fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing))
+            fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing)) +
+                    slideOutHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { -(it * 0.06f).toInt() } +
+                    scaleOut(animationSpec = tween(240, easing = FastOutSlowInEasing), targetScale = 0.975f)
         },
         popEnterTransition = {
-            fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)) +
-                    slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { -it / 16 }
+            fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                    slideInHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { -(it * 0.06f).toInt() } +
+                    scaleIn(animationSpec = tween(240, easing = FastOutSlowInEasing), initialScale = 0.975f)
         },
         popExitTransition = {
-            fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing)) +
-                    slideOutHorizontally(animationSpec = tween(200, easing = FastOutSlowInEasing)) { it / 16 }
+            fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing)) +
+                    slideOutHorizontally(animationSpec = tween(250, easing = FastOutSlowInEasing)) { (it * 0.14f).toInt() } +
+                    scaleOut(animationSpec = tween(250, easing = FastOutSlowInEasing), targetScale = 0.965f)
         }
     ) {
         composable("dashboard") {
@@ -466,7 +475,6 @@ fun AppNavigation(
     }
 }
 
-
 /** Safely unwraps a [ContextWrapper] chain to find the [FragmentActivity], returning null
  *  if the context is not backed by one (e.g. TintContextWrapper in Compose previews). */
 fun android.content.Context.findFragmentActivity(): FragmentActivity? {
@@ -477,4 +485,3 @@ fun android.content.Context.findFragmentActivity(): FragmentActivity? {
     }
     return null
 }
-

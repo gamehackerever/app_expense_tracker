@@ -6,7 +6,6 @@ import androidx.room.Query
 import androidx.room.Relation
 import androidx.room.Transaction
 import androidx.room.Upsert
-import com.expensetracker.offline.data.local.entity.DebtStatus
 import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import kotlinx.coroutines.flow.Flow
