@@ -1,6 +1,7 @@
 package com.expensetracker.offline.ui.review
 
 import android.content.Context
+import com.expensetracker.offline.ui.viewmodel.ReviewViewModel
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -102,9 +103,10 @@ private val AMOUNT_LOCALE = Locale.US
 @Composable
 fun ReviewQueueScreen(
     viewModel: MainViewModel,
+    reviewViewModel: ReviewViewModel,
     onBack: () -> Unit
 ) {
-    val items by viewModel.pendingReviewItems.collectAsState()
+    val items by reviewViewModel.pendingReviewItems.collectAsState()
     val linkedAccounts by viewModel.linkedAccounts.collectAsState()
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
@@ -280,11 +282,11 @@ fun ReviewQueueScreen(
                         },
                         onResolve = { amt, payee, type, cat, bankName, accNum ->
                             // Update the item copy before resolving it so the ViewModel gets the manual bank changes
-                            viewModel.resolveReview(item, amt, payee, type, cat, bankName, accNum)
+                            reviewViewModel.resolveReview(item, amt, payee, type, cat, bankName, accNum)
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         },
                         onDiscard = {
-                            viewModel.discardReview(item.id)
+                            reviewViewModel.discardReview(item.id)
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         }
                     )
@@ -301,7 +303,7 @@ fun ReviewQueueScreen(
             confirmText = "Approve",
             onConfirm = {
                 val selectedItems = items.filter { selectedIds.contains(it.id) }
-                viewModel.bulkResolveReviewItems(selectedItems) { approved, skipped ->
+                reviewViewModel.bulkResolveReviewItems(selectedItems) { approved, skipped ->
                     if (skipped > 0) {
                         Toast.makeText(context, "$approved approved. $skipped still need an amount. Tap them to fix.", Toast.LENGTH_LONG).show()
                     }
@@ -325,7 +327,7 @@ fun ReviewQueueScreen(
             confirmText = "Discard",
             destructive = true,
             onConfirm = {
-                viewModel.bulkDiscardReviewItems(selectedIds.toList())
+                reviewViewModel.bulkDiscardReviewItems(selectedIds.toList())
                 confirmBulkDiscard = false
                 isSelectionMode = false
                 selectedIds = emptySet()
@@ -457,7 +459,7 @@ fun ReviewCard(
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
 
-    var fullHeightPx by remember { mutableStateOf(0f) }
+    var fullHeightPx by remember { mutableFloatStateOf(0f) }
     val undoBarHeightPx = with(density) { 56.dp.toPx() }
 
     val animatedHeightPx = remember { Animatable(0f) }
@@ -470,15 +472,17 @@ fun ReviewCard(
     var pendingLabel by remember { mutableStateOf("") }
     var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var collapseSeedColor by remember { mutableStateOf(neutralColor) }
-    var swipeEpoch by remember { mutableStateOf(0) }
+    var swipeEpoch by remember { mutableIntStateOf(0) }
     var actionFired by remember { mutableStateOf(false) }
 
     val cardBgColor by animateColorAsState(
         targetValue = if (isSelected) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f) else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(200, easing = FastOutSlowInEasing),
         label = "cardBgColor"
     )
     val cardBorderColor by animateColorAsState(
         targetValue = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+        animationSpec = tween(200, easing = FastOutSlowInEasing),
         label = "cardBorderColor"
     )
 

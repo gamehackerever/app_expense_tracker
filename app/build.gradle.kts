@@ -16,12 +16,12 @@ plugins {
 
 android {
     namespace = "com.expensetracker.offline"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.srinand.expensetracker.offline"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 2
         versionName = "1.1.0"
 
