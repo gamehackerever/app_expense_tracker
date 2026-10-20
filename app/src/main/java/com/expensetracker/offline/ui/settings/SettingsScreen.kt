@@ -2,17 +2,18 @@
 
 package com.expensetracker.offline.ui.settings
 
-import com.expensetracker.offline.util.BackupResult
-import com.expensetracker.offline.util.RestoreResult
-import com.expensetracker.offline.util.CsvResult
-
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
+import android.os.Process
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.biometric.BiometricManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
@@ -23,8 +24,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -69,6 +68,8 @@ import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.TableView
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -98,6 +99,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -106,7 +108,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -114,6 +115,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -123,9 +126,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.expensetracker.offline.ExpenseTrackerApp
-import com.expensetracker.offline.engine.backup.AutoBackupWorker
-import com.expensetracker.offline.engine.scanner.SmsHistoryScanner
+import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.data.repository.isValidUpiVpa
+import com.expensetracker.offline.engine.backup.AutoBackupWorker
+import com.expensetracker.offline.engine.backup.SecurePassphraseStore
+import com.expensetracker.offline.engine.scanner.ScanResponse
+import com.expensetracker.offline.engine.scanner.SmsHistoryScanner
 import com.expensetracker.offline.ui.components.AppDialog
 import com.expensetracker.offline.ui.components.PremiumDropdownField
 import com.expensetracker.offline.ui.components.SheetSegmentedControl
@@ -134,9 +140,14 @@ import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
 import com.expensetracker.offline.ui.viewmodel.MainViewModel
 import com.expensetracker.offline.util.BackupManager
+import com.expensetracker.offline.util.BackupResult
 import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.CsvEngine
+import com.expensetracker.offline.util.CsvResult
+import com.expensetracker.offline.util.RestoreResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
@@ -146,22 +157,8 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.ui.text.input.VisualTransformation
-import com.expensetracker.offline.engine.backup.SecurePassphraseStore
-import android.os.Handler
-import android.os.Looper
-import android.os.Process
-import androidx.biometric.BiometricManager
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import com.expensetracker.offline.BuildConfig
-import com.expensetracker.offline.data.repository.SettingsRepository
-import com.expensetracker.offline.engine.scanner.ScanResponse
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
 
+private const val MIN_BACKUP_PASSPHRASE_LENGTH = 8
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -180,12 +177,14 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
     val transactions by viewModel.allTransactions.collectAsState()
+    val isDebugBuild = remember(context) {
+        (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
 
     val scrollState = rememberScrollState()
     val sectionPositions = remember { mutableStateMapOf<String, Float>() }
     var highlightedSection by remember { mutableStateOf<String?>(null) }
 
-    // Cancel any in-flight highlight so rapid taps can't clear each other's highlight early.
     val highlightJob = remember { mutableStateOf<Job?>(null) }
 
     fun scrollToAndHighlight(key: String) {
@@ -216,8 +215,8 @@ fun SettingsScreen(
     fun handleRestoreResult(result: RestoreResult) {
         when (result) {
             is RestoreResult.SuccessRestart -> {
+                viewModel.refreshSettings()
                 showSnack("Data restored! Restarting app to apply changes...")
-                // Not tied to composition: leaving the screen within the delay must not skip the restart.
                 val appContext = context.applicationContext
                 Handler(Looper.getMainLooper()).postDelayed({
                     appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)?.let { intent ->
@@ -225,7 +224,7 @@ fun SettingsScreen(
                         appContext.startActivity(intent)
                     }
                     Process.killProcess(Process.myPid())
-                }, 1500L)
+                }, 400L)
             }
             is RestoreResult.WrongPassphrase -> showSnack("Incorrect passphrase!")
             is RestoreResult.Error -> showSnack(result.message)
@@ -234,12 +233,12 @@ fun SettingsScreen(
 
     val settingsRepo = remember { SettingsRepository(context) }
 
-    // Moves a plain-text passphrase from older versions into Keystore-encrypted storage.
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) { SecurePassphraseStore.migrateLegacy(context) }
     }
 
     var isLowBalanceEnabled by remember { mutableStateOf(settingsRepo.lowBalanceAlertEnabled) }
+    var isBillRemindersEnabled by remember { mutableStateOf(settingsRepo.billRemindersEnabled) }
     var thresholdText by remember { mutableStateOf(settingsRepo.lowBalanceThreshold.toInt().toString()) }
     val vmMonthlyBudget by viewModel.monthlyBudget.collectAsState()
     val allTransactionsWithDebts by viewModel.allTransactionsWithDebts.collectAsState()
@@ -284,15 +283,12 @@ fun SettingsScreen(
         }
     }
 
-    // Leaving the screen while the field is still focused never fires onFocusChanged, so the edit
-    // would be lost. Persist it (valid IDs only) on the way out.
     DisposableEffect(Unit) {
         onDispose {
             val pending = myUpiInput.trim()
             if (pending != settingsRepo.myUpiVpa && isValidUpiVpa(pending)) {
                 settingsRepo.myUpiVpa = pending
             }
-            // Same for the budget: leaving while the field is focused must not drop the edit.
             val pendingBudget = budgetText.toLongOrNull()?.takeIf { it > 0L }
             if (pendingBudget != null && pendingBudget != settingsRepo.monthlyBudget) {
                 viewModel.updateMonthlyBudget(pendingBudget)
@@ -302,6 +298,9 @@ fun SettingsScreen(
 
     var showBackupPassphraseDialog by remember { mutableStateOf(false) }
     var showRestorePassphraseDialog by remember { mutableStateOf<Uri?>(null) }
+    com.expensetracker.offline.ui.components.SecureScreenEffect(
+        enabled = showBackupPassphraseDialog || showRestorePassphraseDialog != null
+    )
     var tempPassphrase by remember { mutableStateOf("") }
     var tempConfirmPassphrase by remember { mutableStateOf("") }
     var showPassphrase by remember { mutableStateOf(false) }
@@ -321,7 +320,7 @@ fun SettingsScreen(
                     remove("key_backup_folder_uri")
                     putBoolean("key_auto_backup_enabled", false)
                 }
-                AutoBackupWorker.schedule(context) // cancels the periodic work now that it's off
+                AutoBackupWorker.schedule(context)
                 if (wasAutoBackupOn) showSnack("Backup folder access was lost. Please choose a folder again.")
             }
         }
@@ -347,17 +346,13 @@ fun SettingsScreen(
     var isIgnoringBatteryOptimizations by remember { mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName)) }
     var hasNotificationPermission by remember { mutableStateOf(isNotificationPermissionGranted(context)) }
 
-    var estimateBalance by remember { mutableStateOf(prefs.getBoolean("key_estimate_balance_from_wallets", true)) }
-
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isIgnoringBatteryOptimizations = powerManager.isIgnoringBatteryOptimizations(context.packageName)
                 hasNotificationPermission = isNotificationPermissionGranted(context)
-                // The auto-backup worker may have run while we were away.
                 lastBackupTimestamp = prefs.getLong("key_last_backup_timestamp", 0L)
-                // The worker also switches itself off when folder access is lost, so re-read both.
                 autoBackupEnabled = prefs.getBoolean("key_auto_backup_enabled", false)
                 autoBackupStatus = AutoBackupWorker.lastRunSummary(context)
                 autoBackupStatusFailed = prefs.contains(AutoBackupWorker.KEY_LAST_RUN_OK) &&
@@ -369,7 +364,6 @@ fun SettingsScreen(
     }
 
     var pendingAutoBackupEnable by remember { mutableStateOf(false) }
-    // True while the passphrase dialog was opened by the Auto Backup switch (not by "Backup Now").
     var pendingEnableAfterPassphrase by remember { mutableStateOf(false) }
 
     fun turnOnAutoBackup() {
@@ -377,7 +371,6 @@ fun SettingsScreen(
         autoBackupEnabled = true
         prefs.edit {
             putBoolean("key_auto_backup_enabled", true)
-            // Drop the previous run's result so an old failure isn't shown for the new setup.
             remove(AutoBackupWorker.KEY_LAST_RUN_OK)
             remove(AutoBackupWorker.KEY_LAST_RUN_TIME)
             remove(AutoBackupWorker.KEY_LAST_RUN_REASON)
@@ -387,9 +380,9 @@ fun SettingsScreen(
         AutoBackupWorker.schedule(context)
     }
 
-    // Auto-backup can't run without a stored passphrase, so ask for it before switching on.
     fun requestAutoBackupOn() {
-        if (SecurePassphraseStore.load(context).isNullOrBlank()) {
+        val existingPassphrase = SecurePassphraseStore.load(context)
+        if (existingPassphrase.isNullOrBlank() || existingPassphrase.length < MIN_BACKUP_PASSPHRASE_LENGTH) {
             pendingEnableAfterPassphrase = true
             tempPassphrase = ""
             tempConfirmPassphrase = ""
@@ -421,7 +414,6 @@ fun SettingsScreen(
                 showSnack("Couldn't get access to that folder. Please pick another one.")
                 return@rememberLauncherForActivityResult
             }
-            // Release the previous grant so we never exhaust the per-app persisted-URI limit.
             val previous = backupFolderUri
             if (previous.isNotBlank() && previous != uri.toString()) {
                 try {
@@ -461,7 +453,10 @@ fun SettingsScreen(
             isCsvBusy = true
             coroutineScope.launch {
                 try {
-                    reportCsv(CsvEngine.exportToCsv(context, transactions, uri.toString()), "CSV Exported successfully!")
+                    reportCsv(
+                        CsvEngine.exportWithDebtsToCsv(context, allTransactionsWithDebts, uri.toString()),
+                        "CSV Exported successfully!"
+                    )
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -479,9 +474,16 @@ fun SettingsScreen(
             isCsvBusy = true
             coroutineScope.launch {
                 try {
-                    val result = CsvEngine.importFromCsv(context, uri) { importedList ->
-                        viewModel.importTransactions(importedList)
-                    }
+                    val result = CsvEngine.importFromCsv(
+                        context = context,
+                        uri = uri,
+                        onImportedWithDebts = { importedList, splitsMap ->
+                            viewModel.importTransactions(importedList, splitsMap)
+                        },
+                        onImported = { importedList ->
+                            viewModel.importTransactions(importedList)
+                        }
+                    )
                     reportCsv(result, "CSV Imported successfully!")
                 } catch (e: CancellationException) {
                     throw e
@@ -848,8 +850,6 @@ fun SettingsScreen(
                         keyboardType = KeyboardType.Email,
                         imeAction = ImeAction.Done
                     ),
-                    // Clearing focus already triggers commitMyUpi() via onFocusChanged below;
-                    // calling it here too would commit (and show the snackbar) twice.
                     keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                     modifier = Modifier.onFocusLost { commitMyUpi() }
                 )
@@ -958,7 +958,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
                         Text("App Lock", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Text(
-                            "Require biometric unlock to open app",
+                            "Require biometric unlock & hide from Recents",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1049,6 +1049,39 @@ fun SettingsScreen(
                             }
                         )
                     )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Box(modifier = Modifier.padding(top = 2.dp)) {
+                        SettingsIcon(Icons.Default.Event, MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
+                        Text("Smart Bill Reminders", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(
+                            "Notify 2 days before fixed costs or subscriptions are due",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Box(modifier = Modifier.height(44.dp), contentAlignment = Alignment.Center) {
+                        Switch(
+                            checked = isBillRemindersEnabled,
+                            onCheckedChange = { enabled ->
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                isBillRemindersEnabled = enabled
+                                settingsRepo.billRemindersEnabled = enabled
+                                if (enabled) {
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        com.expensetracker.offline.engine.notification.DailySummaryReceiver.checkAndNotifyUpcomingBills(context, transactions)
+                                    }
+                                }
+                            },
+                            colors = settingsSwitchColors()
+                        )
+                    }
                 }
             }
 
@@ -1293,11 +1326,9 @@ fun SettingsScreen(
 
                             val count = lastImportedTxnIds.size + lastImportedReviewIds.size
 
-                            // Clear state
                             lastImportedTxnIds = emptyList()
                             lastImportedReviewIds = emptyList()
 
-                            // Clear Repo
                             settingsRepo.clearLastScanBatch()
 
                             showSnack("Scan undone! Removed $count items.")
@@ -1585,7 +1616,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("CSV Management", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Text(
-                            "Spreadsheet import & export",
+                            "Full spreadsheet import & export (with splits)",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1649,7 +1680,6 @@ fun SettingsScreen(
                 isHighlighted = highlightedSection == "Health",
                 modifier = Modifier.trackSection("Health", sectionPositions)
             ) {
-                // --- Notification Interceptor ---
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -1700,7 +1730,7 @@ fun SettingsScreen(
                                 )
                             }
                             Spacer(modifier = Modifier.height(16.dp))
-                            
+
                             Text(
                                 "How to fix:",
                                 fontWeight = FontWeight.Bold,
@@ -1731,7 +1761,7 @@ fun SettingsScreen(
                             ) {
                                 Text("Open Notification Access", fontWeight = FontWeight.SemiBold)
                             }
-                            
+
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
                                 "Is it greyed out (Restricted Setting)?",
@@ -1768,7 +1798,6 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
-                // --- Battery Optimization ---
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -1837,9 +1866,9 @@ fun SettingsScreen(
             }
 
             // ─────────────────────────────────────────────────────────────────
-            // 7. Developer Sandbox
+            // 7. Developer Sandbox (Strictly gated behind debuggable builds)
             // ─────────────────────────────────────────────────────────────────
-            if (BuildConfig.DEBUG) {
+            if (isDebugBuild) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1862,13 +1891,13 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                "Developer Sandbox",
+                                "Developer Sandbox (Debug Build)",
                                 fontSize = 16.sp,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                "Simulate incoming notifications & tests",
+                                "Run automated test suite & simulate offline captures",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1880,7 +1909,6 @@ fun SettingsScreen(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-
             }
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -1942,15 +1970,19 @@ fun SettingsScreen(
     }
 
     if (showBackupPassphraseDialog) {
+        val tooShort = tempPassphrase.isNotEmpty() && tempPassphrase.length < MIN_BACKUP_PASSPHRASE_LENGTH
         AppDialog(
             title = "Set Backup Passphrase",
+            secure = true,
             onDismiss = {
                 showBackupPassphraseDialog = false
-                pendingEnableAfterPassphrase = false // switch stays off
+                pendingEnableAfterPassphrase = false
                 tempPassphrase = ""; tempConfirmPassphrase = ""; showPassphrase = false
             },
             confirmText = "Encrypt",
-            confirmEnabled = tempPassphrase.isNotBlank() && tempPassphrase.length >= 4 && tempPassphrase == tempConfirmPassphrase,
+            confirmEnabled = tempPassphrase.isNotBlank() &&
+                    tempPassphrase.length >= MIN_BACKUP_PASSPHRASE_LENGTH &&
+                    tempPassphrase == tempConfirmPassphrase,
             onConfirm = {
                 val finalPassphrase = tempPassphrase
                 showBackupPassphraseDialog = false
@@ -1972,7 +2004,6 @@ fun SettingsScreen(
                                 val now = System.currentTimeMillis()
                                 lastBackupTimestamp = now
                                 prefs.edit { putLong("key_last_backup_timestamp", now) }
-                                // One message only: a second snackbar would dismiss the first.
                                 showSnack(
                                     if (passphraseStored) "Backup encrypted and saved securely!"
                                     else "Backup saved, but the passphrase couldn't be stored securely, so auto-backup won't run."
@@ -1992,15 +2023,22 @@ fun SettingsScreen(
                 showPassphrase = false
             }
         ) {
-            Text("Your backup will be encrypted. If you forget this passphrase, your data cannot be recovered.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp)
+            Text(
+                "Your backup is encrypted with AES-256-GCM. Use at least $MIN_BACKUP_PASSPHRASE_LENGTH characters. If you forget this passphrase, your backup cannot be recovered.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 20.sp
+            )
             Spacer(modifier = Modifier.height(16.dp))
             val passphraseTransformation =
                 if (showPassphrase) VisualTransformation.None else PasswordVisualTransformation()
             OutlinedTextField(
                 value = tempPassphrase,
                 onValueChange = { tempPassphrase = it },
-                placeholder = { Text("Enter a secure passphrase") },
+                placeholder = { Text("Enter passphrase (min $MIN_BACKUP_PASSPHRASE_LENGTH chars)") },
                 singleLine = true,
+                isError = tooShort,
+                supportingText = if (tooShort) ({ Text("Use at least $MIN_BACKUP_PASSPHRASE_LENGTH characters") }) else null,
                 visualTransformation = passphraseTransformation,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 trailingIcon = {
@@ -2034,9 +2072,10 @@ fun SettingsScreen(
     showRestorePassphraseDialog?.let { uri ->
         AppDialog(
             title = "Enter Passphrase",
+            secure = true,
             onDismiss = { showRestorePassphraseDialog = null; tempPassphrase = "" },
             confirmText = "Restore",
-            destructive = true, // Red button because this wipes current data
+            destructive = true,
             confirmEnabled = tempPassphrase.isNotBlank(),
             onConfirm = {
                 val enteredPassphrase = tempPassphrase
@@ -2067,7 +2106,6 @@ fun SettingsScreen(
     }
 
     if (showScanConfirmDialog) {
-        // FIXED: Use a separate isolated state for the scan so it doesn't overwrite settingsRepo.startDayOfMonth (PO-G)
         var scanDay by remember { mutableFloatStateOf(startDayOfMonth.toFloat()) }
 
         AppDialog(
@@ -2078,15 +2116,12 @@ fun SettingsScreen(
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 showScanConfirmDialog = false
 
-                // Generate the timestamp from the dialog's picked day, but DO NOT save it to preferences
                 val cycleStartMillis = BillingCycleHelper.getCycleRange(scanDay.toInt()).first
                 isScanning = true
 
                 coroutineScope.launch {
                     try {
                         val scanner = SmsHistoryScanner(context, app.database)
-                        // Run to completion off the main thread and persist the undo batch right away, so
-                        // rotating / leaving the screen mid-scan can't orphan imported rows.
                         val response = withContext(NonCancellable + Dispatchers.IO) {
                             scanner.scanSmsSince(cycleStartMillis).also { r ->
                                 if (r is ScanResponse.Success) {
@@ -2099,7 +2134,6 @@ fun SettingsScreen(
                         when (response) {
                             is ScanResponse.Success -> {
                                 val result = response.result
-                                // Undo batch already persisted above; just mirror it into UI state.
                                 lastImportedTxnIds = result.importedTransactionIds
                                 lastImportedReviewIds = result.importedReviewIds
 
@@ -2160,4 +2194,3 @@ fun SettingsScreen(
         }
     }
 }
-

@@ -208,18 +208,11 @@ internal fun CashFlowSummaryCard(
         ((netSavingsPaise.toDouble() / totalIncomePaise.toDouble()) * 100.0).roundToInt()
     } else null
 
-    val entered = rememberEntered(200)
     val expenseRatio = if (totalIncomePaise > 0L) {
         (discretionarySpendPaise.toFloat() / totalIncomePaise.toFloat()).coerceIn(0f, 1f)
     } else if (totalOutflow > 0L) {
         (discretionarySpendPaise.toFloat() / totalOutflow.toFloat()).coerceIn(0f, 1f)
     } else 0f
-
-    val animProgress by animateFloatAsState(
-        targetValue = if (isAnimating && entered) expenseRatio else 0f,
-        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
-        label = "cashFlowBar"
-    )
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -258,6 +251,7 @@ internal fun CashFlowSummaryCard(
                     modifier = Modifier.weight(1f),
                     label = "Income",
                     value = formatRupees(totalIncomePaise),
+                    amountPaise = totalIncomePaise,
                     caption = "credits received",
                     valueColor = InsightsColors.positive
                 )
@@ -265,6 +259,7 @@ internal fun CashFlowSummaryCard(
                     modifier = Modifier.weight(1f),
                     label = "Discretionary",
                     value = formatRupees(discretionarySpendPaise),
+                    amountPaise = discretionarySpendPaise,
                     caption = "excl. investments",
                     valueColor = MaterialTheme.colorScheme.onSurface
                 )
@@ -273,6 +268,7 @@ internal fun CashFlowSummaryCard(
                         modifier = Modifier.weight(1f),
                         label = "Investments",
                         value = formatRupees(investmentsPaise),
+                        amountPaise = investmentsPaise,
                         caption = "SIPs & wealth",
                         valueColor = Color(0xFF14B8A6)
                     )
@@ -281,6 +277,7 @@ internal fun CashFlowSummaryCard(
                         modifier = Modifier.weight(1f),
                         label = "Net cash flow",
                         value = (if (netSavingsPaise >= 0L) "+" else "−") + formatRupees( kotlin.math.abs(netSavingsPaise) ),
+                        amountPaise = netSavingsPaise,
                         caption = if (netSavingsPaise >= 0L) "surplus" else "net outflow",
                         valueColor = if (netSavingsPaise >= 0L) InsightsColors.positive else InsightsColors.negative
                     )
@@ -288,7 +285,7 @@ internal fun CashFlowSummaryCard(
             }
 
             InsightsProgressBar(
-                progress = animProgress,
+                progress = if (isAnimating) expenseRatio else 0f,
                 color = if (totalIncomePaise > 0L && discretionarySpendPaise > totalIncomePaise) InsightsColors.negative else MaterialTheme.colorScheme.onSurface,
                 trackColor = InsightsColors.positive.copy(alpha = 0.18f),
                 height = 6.dp

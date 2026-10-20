@@ -29,6 +29,7 @@ import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.engine.interceptor.CaptureDispatcher
 import com.expensetracker.offline.engine.parser.FinancialParser
+import com.expensetracker.offline.ui.components.AppDialog
 import com.expensetracker.offline.ui.components.CurrencyFormat
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
@@ -61,6 +62,8 @@ fun DebugTestingScreen(
     }
     var senderInput by remember { mutableStateOf("VM-HDFCBK") }
     var executionStatus by remember { mutableStateOf<String?>(null) }
+    var testResults by remember { mutableStateOf<List<TestCaseResult>>(emptyList()) }
+    var showConfirmWipeDialog by remember { mutableStateOf(false) }
 
     val liveParse = remember(rawInput, senderInput) {
         FinancialParser.parse(rawInput, senderInput)
@@ -71,6 +74,30 @@ fun DebugTestingScreen(
             CategoryClassifier.classifySync(liveParse.payee ?: "", liveParse.rawText)
         } else {
             "Uncategorized"
+        }
+    }
+
+    if (showConfirmWipeDialog) {
+        AppDialog(
+            title = "Clear all transactions?",
+            onDismiss = { showConfirmWipeDialog = false },
+            confirmText = "Delete All",
+            destructive = true,
+            onConfirm = {
+                showConfirmWipeDialog = false
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                viewModel.clearAllTransactions()
+                context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+                    .edit().remove("key_latest_bank_balance").apply()
+                showSnack("All transactions & balance baselines cleared")
+            }
+        ) {
+            Text(
+                "This permanently deletes all transactions and balance baselines on this device. This cannot be undone.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 20.sp
+            )
         }
     }
 
@@ -143,6 +170,113 @@ fun DebugTestingScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             Spacer(modifier = Modifier.height(4.dp))
+
+            // ── Automated Self-Test Suite Card ─────────────────────────────
+            Surface(
+                modifier = Modifier.fillMaxWidth().animateContentSize(),
+                shape = RoundedCornerShape(AppRadius.medium),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Automated Verification Suite",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                "Parser, Classifier, Necessities, OCR Split & Cycle Math",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                val ran = AutomatedTestSuite.runAll(context)
+                                testResults = ran
+                                val passed = ran.count { it.passed }
+                                showSnack("Passed $passed / ${ran.size} automated checks")
+                            },
+                            shape = RoundedCornerShape(AppRadius.pill),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.onSurface,
+                                contentColor = MaterialTheme.colorScheme.surface
+                            ),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                if (testResults.isEmpty()) "Run All Tests" else "Re-run (${testResults.count { it.passed }}/${testResults.size})",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    if (testResults.isNotEmpty()) {
+                        val passedCount = testResults.count { it.passed }
+                        val totalMicros = testResults.sumOf { it.durationMicros }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                        Text(
+                            text = "$passedCount of ${testResults.size} passed in ${String.format(java.util.Locale.US, "%.2f", totalMicros / 1000.0)} ms",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (passedCount == testResults.size) AppColors.positive else MaterialTheme.colorScheme.error
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            testResults.forEach { res ->
+                                Surface(
+                                    shape = RoundedCornerShape(AppRadius.small),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = if (res.passed) AppColors.positive else MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                "${res.suite} · ${res.name}",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                res.detail,
+                                                fontSize = 11.5.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Text(
+                                            "${res.durationMicros}µs",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             Text(
                 "Simulate Inputs (Zero Network)",
@@ -259,12 +393,8 @@ fun DebugTestingScreen(
 
             OutlinedButton(
                 onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    viewModel.clearAllTransactions()
-                    context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-                        .edit().remove("key_latest_bank_balance").apply()
-
-                    showSnack("All test transactions & balance baselines cleared")
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    showConfirmWipeDialog = true
                 },
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),

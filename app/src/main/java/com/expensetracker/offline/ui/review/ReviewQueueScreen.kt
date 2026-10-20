@@ -1,8 +1,8 @@
 package com.expensetracker.offline.ui.review
 
 import android.content.Context
-import com.expensetracker.offline.ui.viewmodel.ReviewViewModel
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -103,10 +103,9 @@ private val AMOUNT_LOCALE = Locale.US
 @Composable
 fun ReviewQueueScreen(
     viewModel: MainViewModel,
-    reviewViewModel: ReviewViewModel,
     onBack: () -> Unit
 ) {
-    val items by reviewViewModel.pendingReviewItems.collectAsState()
+    val items by viewModel.pendingReviewItems.collectAsState()
     val linkedAccounts by viewModel.linkedAccounts.collectAsState()
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
@@ -122,6 +121,12 @@ fun ReviewQueueScreen(
     // Selection State
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+
+    BackHandler(enabled = isSelectionMode) {
+        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        isSelectionMode = false
+        selectedIds = emptySet()
+    }
 
     // Inbox Zero Animation State
     val iconScale = remember { Animatable(0.5f) }
@@ -282,11 +287,11 @@ fun ReviewQueueScreen(
                         },
                         onResolve = { amt, payee, type, cat, bankName, accNum ->
                             // Update the item copy before resolving it so the ViewModel gets the manual bank changes
-                            reviewViewModel.resolveReview(item, amt, payee, type, cat, bankName, accNum)
+                            viewModel.resolveReview(item, amt, payee, type, cat, bankName, accNum)
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         },
                         onDiscard = {
-                            reviewViewModel.discardReview(item.id)
+                            viewModel.discardReview(item.id)
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         }
                     )
@@ -303,7 +308,7 @@ fun ReviewQueueScreen(
             confirmText = "Approve",
             onConfirm = {
                 val selectedItems = items.filter { selectedIds.contains(it.id) }
-                reviewViewModel.bulkResolveReviewItems(selectedItems) { approved, skipped ->
+                viewModel.bulkResolveReviewItems(selectedItems) { approved, skipped ->
                     if (skipped > 0) {
                         Toast.makeText(context, "$approved approved. $skipped still need an amount. Tap them to fix.", Toast.LENGTH_LONG).show()
                     }
@@ -327,7 +332,7 @@ fun ReviewQueueScreen(
             confirmText = "Discard",
             destructive = true,
             onConfirm = {
-                reviewViewModel.bulkDiscardReviewItems(selectedIds.toList())
+                viewModel.bulkDiscardReviewItems(selectedIds.toList())
                 confirmBulkDiscard = false
                 isSelectionMode = false
                 selectedIds = emptySet()
@@ -459,7 +464,7 @@ fun ReviewCard(
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
 
-    var fullHeightPx by remember { mutableFloatStateOf(0f) }
+    var fullHeightPx by remember { mutableStateOf(0f) }
     val undoBarHeightPx = with(density) { 56.dp.toPx() }
 
     val animatedHeightPx = remember { Animatable(0f) }
@@ -472,17 +477,15 @@ fun ReviewCard(
     var pendingLabel by remember { mutableStateOf("") }
     var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var collapseSeedColor by remember { mutableStateOf(neutralColor) }
-    var swipeEpoch by remember { mutableIntStateOf(0) }
+    var swipeEpoch by remember { mutableStateOf(0) }
     var actionFired by remember { mutableStateOf(false) }
 
     val cardBgColor by animateColorAsState(
         targetValue = if (isSelected) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f) else MaterialTheme.colorScheme.surface,
-        animationSpec = tween(200, easing = FastOutSlowInEasing),
         label = "cardBgColor"
     )
     val cardBorderColor by animateColorAsState(
         targetValue = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-        animationSpec = tween(200, easing = FastOutSlowInEasing),
         label = "cardBorderColor"
     )
 

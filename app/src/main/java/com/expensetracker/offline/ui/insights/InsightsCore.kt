@@ -102,6 +102,7 @@ internal fun formatRupees(value: Long): String =
 /** Numbers that need a second pass over the data (previous cycle, biggest single expense, rhythm) in paise. */
 internal data class CycleStats(
     val prevSpent: Long = 0L,
+    val hasReliablePrevBaseline: Boolean = false,
     val largestAmount: Long = 0L,
     val largestPayee: String? = null,
     val largestTxnId: Long? = null,
@@ -140,6 +141,34 @@ internal fun isIncomeCredit(txn: TransactionEntity): Boolean =
  * Clean, gapless pill progress bar without Material3 LinearProgressIndicator's trailing stop-dot
  * or 4.dp active/track gap.
  */
+/**
+ * Smooth delta interpolator for financial figures:
+ * - Renders immediately at [target] on initial mount (avoiding repetitive 0 -> N slot-machine spin
+ *   every time the screen opens or a LazyColumn item scrolls back into view).
+ * - Smoothly interpolates from the previous displayed value to the new [target] only when the
+ *   underlying value/key changes while visible (e.g. switching billing cycles or account filters).
+ */
+@Composable
+internal fun rememberAnimatedValue(target: Float, key: Any? = target): State<Float> {
+    val anim = remember { Animatable(target) }
+    var initialized by remember { mutableStateOf(false) }
+
+    LaunchedEffect(target, key) {
+        if (!initialized) {
+            initialized = true
+            anim.snapTo(target)
+        } else if (kotlin.math.abs(anim.value - target) > 0.005f) {
+            anim.animateTo(
+                targetValue = target,
+                animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing)
+            )
+        } else {
+            anim.snapTo(target)
+        }
+    }
+    return anim.asState()
+}
+
 @Composable
 internal fun InsightsProgressBar(
     progress: Float,
@@ -148,7 +177,16 @@ internal fun InsightsProgressBar(
     trackColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
     height: androidx.compose.ui.unit.Dp = 4.dp
 ) {
-    val clamped = progress.coerceIn(0f, 1f)
+    val target = progress.coerceIn(0f, 1f)
+    val animVal by animateFloatAsState(
+        targetValue = target,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "insightsProgressBar"
+    )
+    val clamped = animVal.coerceIn(0f, 1f)
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -277,8 +315,10 @@ internal fun EmptyInsightState(text: String) {
  */
 @Composable
 internal fun MoneyHero(amount: Double, fractionDigits: Int, size: TextUnit, modifier: Modifier = Modifier) {
+    val animVal by rememberAnimatedValue(amount.toFloat(), key = amount)
+    val currentAmount = animVal.toDouble()
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    val text = String.format(Locale.getDefault(), "%,.${fractionDigits}f", amount)
+    val text = String.format(Locale.getDefault(), "%,.${fractionDigits}f", currentAmount)
     val sep = java.text.DecimalFormatSymbols.getInstance(Locale.getDefault()).decimalSeparator
     val cut = if (fractionDigits > 0) text.lastIndexOf(sep) else -1
     val whole = if (cut >= 0) text.substring(0, cut) else text
@@ -307,12 +347,23 @@ internal fun MoneyHero(amount: Long, fractionDigits: Int, size: TextUnit, modifi
 }
 
 @Composable
-internal fun HeroFact(modifier: Modifier, label: String, value: String, caption: String, valueColor: Color) {
+internal fun HeroFact(
+    modifier: Modifier,
+    label: String,
+    value: String,
+    caption: String,
+    valueColor: Color,
+    amountPaise: Long? = null
+) {
+    val target = (amountPaise ?: 0L).toFloat()
+    val animVal by rememberAnimatedValue(target, key = amountPaise)
+    val displayValue = if (amountPaise != null) formatRupees(animVal.toDouble()) else value
+
     Column(modifier = modifier) {
         Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(modifier = Modifier.height(2.dp))
         Text(
-            value,
+            displayValue,
             fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = (-0.3).sp,
@@ -372,8 +423,13 @@ internal fun InsightsStatTile(
     value: String,
     caption: String,
     accent: Color,
+    amountPaise: Long? = null,
     onClick: (() -> Unit)? = null
 ) {
+    val target = (amountPaise ?: 0L).toFloat()
+    val animVal by rememberAnimatedValue(target, key = amountPaise)
+    val displayValue = if (amountPaise != null) formatRupees(animVal.toDouble()) else value
+
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(AppRadius.medium))
@@ -411,7 +467,7 @@ internal fun InsightsStatTile(
             }
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                value,
+                displayValue,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.5).sp,
@@ -500,23 +556,16 @@ internal fun EntranceItem(
 ) {
     val state = remember(key) { MutableTransitionState(key in seen).apply { targetState = true } }
     SideEffect { seen.add(key) }
-    val delay = index * 60
+    val delay = index.coerceAtMost(4) * 30
     AnimatedVisibility(
         visibleState = state,
         modifier = modifier,
-        enter = fadeIn(tween(450, delayMillis = delay, easing = FastOutSlowInEasing)) +
-                slideInVertically(tween(450, delayMillis = delay, easing = FastOutSlowInEasing)) { it / 12 },
+        enter = fadeIn(tween(220, delayMillis = delay, easing = FastOutSlowInEasing)) +
+                slideInVertically(tween(220, delayMillis = delay, easing = FastOutSlowInEasing)) { it / 16 },
         exit = ExitTransition.None
     ) { content() }
 }
 
-/** Flips to true shortly after first composition, so progress bars always animate from 0. */
+/** Immediately true so lazy-loaded chart/category bars do not sit blank when scrolling into view. */
 @Composable
-internal fun rememberEntered(delayMs: Long = 0L): Boolean {
-    var entered by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        if (delayMs > 0) delay(delayMs)
-        entered = true
-    }
-    return entered
-}
+internal fun rememberEntered(delayMs: Long = 0L): Boolean = true

@@ -88,8 +88,6 @@ import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.ui.viewmodel.MainViewModel
-import com.expensetracker.offline.ui.viewmodel.ReviewViewModel
-import com.expensetracker.offline.ui.viewmodel.SplitViewModel
 import com.expensetracker.offline.util.ImageUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -126,8 +124,6 @@ import com.expensetracker.offline.util.delete
 @Composable
 fun DashboardScreen(
     viewModel: MainViewModel,
-    reviewViewModel: ReviewViewModel,
-    splitViewModel: SplitViewModel,
     isAppLocked: Boolean = false,
     onNavigateToReview: () -> Unit = {},
     onNavigateToSettings: (targetSection: String?) -> Unit = {},
@@ -149,11 +145,11 @@ fun DashboardScreen(
 
     var lastBackMs by remember { mutableLongStateOf(0L) }
 
-    val transactionsWithDebts by splitViewModel.allTransactionsWithDebts.collectAsState()
-    val unsettledSplitsWithDebts by splitViewModel.unsettledSplitsWithDebts.collectAsState()
-    val moneyOwedToYouState by splitViewModel.totalMoneyOwed.collectAsState()
+    val transactionsWithDebts by viewModel.allTransactionsWithDebts.collectAsState()
+    val unsettledSplitsWithDebts by viewModel.unsettledSplitsWithDebts.collectAsState()
+    val moneyOwedToYouState by viewModel.totalMoneyOwed.collectAsState()
     val moneyOwedToYou: Long = moneyOwedToYouState ?: 0L
-    val moneyYouOweState by splitViewModel.totalMoneyYouOwe.collectAsState()
+    val moneyYouOweState by viewModel.totalMoneyYouOwe.collectAsState()
     val moneyYouOwe: Long = moneyYouOweState ?: 0L
 
     val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsState()
@@ -193,7 +189,7 @@ fun DashboardScreen(
 
     val transactions by viewModel.allTransactions.collectAsState()
     val latestBalance by viewModel.latestBalance.collectAsState()
-    val pendingReviewCount by reviewViewModel.pendingReviewCount.collectAsState()
+    val pendingReviewCount by viewModel.pendingReviewCount.collectAsState()
 
     val chunkLimit by viewModel.necessityChunkLimit.collectAsState()
     var showNecessityBreakdownDialog by remember { mutableStateOf(false) }
@@ -211,7 +207,7 @@ fun DashboardScreen(
             necessitiesList = migrated
             withContext(Dispatchers.IO) {
                 saveNecessities(prefs, migrated)
-                prefs.edit().putBoolean(KEY_NECESSITIES_MIGRATED, true).apply()
+                prefs.edit().putBoolean(KEY_NECESSITIES_MIGRATED, true).commit()
             }
         }
     }
@@ -266,6 +262,7 @@ fun DashboardScreen(
     var showBulkDeleteConfirm by remember { mutableStateOf(false) }
 
     var showAddExpenseSheet by rememberSaveable { mutableStateOf(false) }
+    var autoLaunchReceiptScan by rememberSaveable { mutableStateOf(false) }
     var isProTipsDismissed by remember { mutableStateOf(prefs.getBoolean("key_pro_tips_dismissed", false)) }
 
     var showBankInfoDialog by remember { mutableStateOf(false) }
@@ -273,10 +270,15 @@ fun DashboardScreen(
     var showSettleDebtDialog by remember { mutableStateOf(false) }
     var showBudgetDialog by remember { mutableStateOf(false) }
     var showManageCategoryBudgetsDialog by remember { mutableStateOf(false) }
-    var initialCategoryForBudgetEdit by remember { mutableStateOf<String?>(null) }
+    var initialCategoryForBudgetEdit by rememberSaveable { mutableStateOf<String?>(null) }
     var showStartDayDialog by remember { mutableStateOf(false) }
-    var showManageCategoriesDialog by remember { mutableStateOf(false) }
-    var categoryToDelete by remember { mutableStateOf<String?>(null) }
+    var showManageCategoriesDialog by rememberSaveable { mutableStateOf(false) }
+    var initialCategoryForManageCategories by rememberSaveable { mutableStateOf<String?>(null) }
+    var returnToCategoryInManageCategories by rememberSaveable { mutableStateOf<String?>(null) }
+    var returnToEditTransactionId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var categoryToDelete by rememberSaveable { mutableStateOf<String?>(null) }
+
+    SecureScreenEffect(enabled = isBalanceRevealed || showAccountsDialog)
     var transactionPendingDelete by remember { mutableStateOf<Long?>(null) }
 
     var selectedBillImageUri by remember { mutableStateOf<String?>(null) }
@@ -286,8 +288,13 @@ fun DashboardScreen(
 
     LaunchedEffect(Unit) {
         if (activity?.intent?.getBooleanExtra("OPEN_ADD_EXPENSE", false) == true) {
+            val scanBill = activity.intent?.getBooleanExtra("OPEN_RECEIPT_SCAN", false) == true
             showAddExpenseSheet = true
-            activity.intent = activity.intent?.apply { removeExtra("OPEN_ADD_EXPENSE") }
+            autoLaunchReceiptScan = scanBill
+            activity.intent = activity.intent?.apply {
+                removeExtra("OPEN_ADD_EXPENSE")
+                removeExtra("OPEN_RECEIPT_SCAN")
+            }
         }
     }
 
@@ -366,18 +373,13 @@ fun DashboardScreen(
 
     val startDayOfMonth by viewModel.startDayOfMonth.collectAsState()
 
-    val categoryBudgetStatuses by produceState(
-        initialValue = emptyList<CategoryBudgetStatus>(),
-        transactionsWithDebts, categoryBudgets, startDayOfMonth, pendingDeleteIds
-    ) {
-        value = withContext(Dispatchers.Default) {
-            computeCategoryBudgetStatuses(
-                transactions = transactionsWithDebts,
-                categoryBudgets = categoryBudgets,
-                startDayOfMonth = startDayOfMonth,
-                pendingDeleteIds = pendingDeleteIds.keys
-            )
-        }
+    val categoryBudgetStatuses = remember(transactionsWithDebts, categoryBudgets, startDayOfMonth, pendingDeleteIds) {
+        computeCategoryBudgetStatuses(
+            transactions = transactionsWithDebts,
+            categoryBudgets = categoryBudgets,
+            startDayOfMonth = startDayOfMonth,
+            pendingDeleteIds = pendingDeleteIds.keys
+        )
     }
 
     var isCategoryBudgetSetupDismissed by remember {
@@ -392,20 +394,40 @@ fun DashboardScreen(
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, context, activity, prefs) {
+        var isFirstResume = true
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
-                    viewModel.refreshSettings()
-                    customCategories = prefs.getStringSet("key_custom_categories", emptySet()) ?: emptySet()
-                    isCategoryBudgetSetupDismissed = settingsRepo.isCategoryBudgetSetupDismissed
-                    hasNotificationPermission = isNotificationPermissionGranted(context)
-                    isIgnoringBatteryOptimizations = powerManager.isIgnoringBatteryOptimizations(context.packageName)
-                    hasSmsPermission = ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECEIVE_SMS) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                    isBalanceCardFlipped = prefs.getBoolean("key_balance_card_flipped", false)
+                    if (isFirstResume) {
+                        isFirstResume = false
+                    } else {
+                        scope.launch(Dispatchers.IO) {
+                            val notifOk = isNotificationPermissionGranted(context)
+                            val batteryOk = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+                            val smsOk = ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECEIVE_SMS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                            val cats = prefs.getStringSet("key_custom_categories", emptySet()) ?: emptySet()
+                            val catDismissed = settingsRepo.isCategoryBudgetSetupDismissed
+                            val flipped = prefs.getBoolean("key_balance_card_flipped", false)
+                            withContext(Dispatchers.Main) {
+                                viewModel.refreshSettings()
+                                customCategories = cats
+                                isCategoryBudgetSetupDismissed = catDismissed
+                                hasNotificationPermission = notifOk
+                                isIgnoringBatteryOptimizations = batteryOk
+                                hasSmsPermission = smsOk
+                                isBalanceCardFlipped = flipped
+                            }
+                        }
+                    }
 
                     if (activity?.intent?.getBooleanExtra("OPEN_ADD_EXPENSE", false) == true) {
+                        val scanBill = activity.intent?.getBooleanExtra("OPEN_RECEIPT_SCAN", false) == true
                         showAddExpenseSheet = true
-                        activity.intent = activity.intent?.apply { removeExtra("OPEN_ADD_EXPENSE") }
+                        autoLaunchReceiptScan = scanBill
+                        activity.intent = activity.intent?.apply {
+                            removeExtra("OPEN_ADD_EXPENSE")
+                            removeExtra("OPEN_RECEIPT_SCAN")
+                        }
                     }
                 }
                 Lifecycle.Event.ON_STOP -> {
@@ -457,8 +479,7 @@ fun DashboardScreen(
         listOf(startOfDay, startOfWeek, startOfCycle, startOfYear)
     }
 
-    val filteredTransactions by produceState(
-        initialValue = emptyList<TransactionWithDebts>(),
+    val filteredTransactions = remember(
         transactionsWithDebts, debouncedSearchQuery, selectedFilterCategory, selectedTimeRange, selectedAccount, timeBoundaries
     ) {
         val query = debouncedSearchQuery
@@ -472,39 +493,37 @@ fun DashboardScreen(
             TimeRange.THIS_YEAR -> timeBoundaries[3]
             TimeRange.ALL_TIME -> Long.MIN_VALUE
         }
-        value = withContext(Dispatchers.Default) {
-            val isDesc = transactionsWithDebts.size < 2 ||
-                    transactionsWithDebts.first().transaction.timestamp >= transactionsWithDebts.last().transaction.timestamp
-            val out = ArrayList<TransactionWithDebts>()
-            for (txnWithDebts in transactionsWithDebts) {
-                val txn = txnWithDebts.transaction
-                if (txn.timestamp < minTimestamp) {
-                    if (isDesc) break else continue
-                }
-                val matchesAccount = currentAccount == null ||
-                        (currentAccount.bankName == "Unspecified" && txn.bankName == null) ||
-                        (txn.bankName == currentAccount.bankName && txn.accountNumber == currentAccount.accountNumber)
-                if (!matchesAccount) continue
-
-                val matchesCategory = when (categoryFilter) {
-                    "All" -> true
-                    "Split Only" -> txnWithDebts.debts.isNotEmpty()
-                    else -> txn.category.equals(categoryFilter, ignoreCase = true)
-                }
-                if (!matchesCategory) continue
-
-                val matchesSearch = query.isBlank() ||
-                        txn.payee.contains(query, ignoreCase = true) ||
-                        txn.category.contains(query, ignoreCase = true) ||
-                        (txn.itemsSummary?.contains(query, ignoreCase = true) == true) ||
-                        (txn.note?.contains(query, ignoreCase = true) == true) ||
-                        txnWithDebts.debts.any { it.debtorName.contains(query, ignoreCase = true) }
-                if (matchesSearch) {
-                    out.add(txnWithDebts)
-                }
+        val isDesc = transactionsWithDebts.size < 2 ||
+                transactionsWithDebts.first().transaction.timestamp >= transactionsWithDebts.last().transaction.timestamp
+        val out = ArrayList<TransactionWithDebts>()
+        for (txnWithDebts in transactionsWithDebts) {
+            val txn = txnWithDebts.transaction
+            if (txn.timestamp < minTimestamp) {
+                if (isDesc) break else continue
             }
-            out
+            val matchesAccount = currentAccount == null ||
+                    (currentAccount.bankName == "Unspecified" && txn.bankName == null) ||
+                    (txn.bankName == currentAccount.bankName && txn.accountNumber == currentAccount.accountNumber)
+            if (!matchesAccount) continue
+
+            val matchesCategory = when (categoryFilter) {
+                "All" -> true
+                "Split Only" -> txnWithDebts.debts.isNotEmpty()
+                else -> txn.category.equals(categoryFilter, ignoreCase = true)
+            }
+            if (!matchesCategory) continue
+
+            val matchesSearch = query.isBlank() ||
+                    txn.payee.contains(query, ignoreCase = true) ||
+                    txn.category.contains(query, ignoreCase = true) ||
+                    (txn.itemsSummary?.contains(query, ignoreCase = true) == true) ||
+                    (txn.note?.contains(query, ignoreCase = true) == true) ||
+                    txnWithDebts.debts.any { it.debtorName.contains(query, ignoreCase = true) }
+            if (matchesSearch) {
+                out.add(txnWithDebts)
+            }
         }
+        out
     }
 
     var visibleTransactionCount by rememberSaveable { mutableIntStateOf(50) }
@@ -514,70 +533,45 @@ fun DashboardScreen(
     }
     val visibleTransactions = remember(filteredTransactions, visibleTransactionCount) { filteredTransactions.take(visibleTransactionCount) }
 
-    val splitLinkInfo by produceState(initialValue = SplitLinkInfo(emptyMap(), emptyMap()), transactionsWithDebts) {
-        val allTxns = transactionsWithDebts
-        value = withContext(Dispatchers.Default) {
-            val creditsWithLinks = allTxns.map { it.transaction }.filter { it.type == TransactionType.CREDIT && it.linkedDebtId != null }
-            val linkedCreditsByDebtId = creditsWithLinks.groupBy { it.linkedDebtId!! }
-            val linkedDebtIdByCreditId = creditsWithLinks.associate { it.id to it.linkedDebtId!! }
-            SplitLinkInfo(linkedCreditsByDebtId, linkedDebtIdByCreditId)
-        }
-    }
+    val splitLinkInfo by viewModel.splitLinkInfo.collectAsState()
 
-    val periodSpent by produceState(initialValue = 0L, transactionsWithDebts, selectedTimeRange, pendingDeleteIds, startDayOfMonth) {
-        val allTxns = transactionsWithDebts
-        val range = selectedTimeRange
-        val pendingIds = pendingDeleteIds
-        val cycleDay = startDayOfMonth
-        value = withContext(Dispatchers.Default) {
-            val start = startMillisFor(range, cycleDay)
-            val end = endOfTodayMillis()
-            val isDesc = allTxns.size < 2 ||
-                    allTxns.first().transaction.timestamp >= allTxns.last().transaction.timestamp
-            var gross = 0L
-            var refunds = 0L
-            for (item in allTxns) {
-                val txn = item.transaction
-                if (txn.timestamp > end) continue
-                if (txn.timestamp < start) {
-                    if (isDesc) break else continue
-                }
-                if (txn.id in pendingIds) continue
-                if (txn.type == TransactionType.DEBIT && !txn.excludeFromSpend && txn.category != "Split Settlement" && !txn.category.equals("Transfer", ignoreCase = true)) {
-                    gross += mySpendShare(item)
-                } else if (isRefundCredit(txn)) {
-                    refunds += txn.amount
-                }
+    val periodSpent = remember(transactionsWithDebts, selectedTimeRange, pendingDeleteIds, startDayOfMonth) {
+        val start = startMillisFor(selectedTimeRange, startDayOfMonth)
+        val end = endOfTodayMillis()
+        val isDesc = transactionsWithDebts.size < 2 ||
+                transactionsWithDebts.first().transaction.timestamp >= transactionsWithDebts.last().transaction.timestamp
+        var gross = 0L
+        var refunds = 0L
+        for (item in transactionsWithDebts) {
+            val txn = item.transaction
+            if (txn.timestamp > end) continue
+            if (txn.timestamp < start) {
+                if (isDesc) break else continue
             }
-            (gross - refunds).coerceAtLeast(0L)
+            if (txn.id in pendingDeleteIds) continue
+            if (txn.type == TransactionType.DEBIT && !txn.excludeFromSpend && txn.category != "Split Settlement" && !txn.category.equals("Transfer", ignoreCase = true)) {
+                gross += mySpendShare(item)
+            } else if (isRefundCredit(txn)) {
+                refunds += txn.amount
+            }
         }
+        (gross - refunds).coerceAtLeast(0L)
     }
 
-    val safeToSpendBreakdown by produceState(
-        initialValue = SafeToSpendBreakdown(
-            balance = effectiveBalance, reservedTotal = 0L, paidTowardNecessities = 0L, 
-            remainingReserve = 0L, safeToSpend = effectiveBalance ?: 0L, isShortOnReserve = false, 
-            hasBalanceData = effectiveBalance != null, itemStatuses = emptyList(), upcomingNextMonth = emptyList()
-        ),
-        effectiveBalance, transactionsWithDebts, necessitiesList, startDayOfMonth
-    ) {
-        value = withContext(Dispatchers.Default) {
-            computeSafeToSpend(effectiveBalance, transactionsWithDebts, necessitiesList, startDayOfMonth)
-        }
+    val safeToSpendBreakdown = remember(effectiveBalance, transactionsWithDebts, necessitiesList, startDayOfMonth) {
+        computeSafeToSpend(effectiveBalance, transactionsWithDebts, necessitiesList, startDayOfMonth)
     }
 
     // Pre-build a txn.id -> necessityName map so each card does O(1) lookup, not O(N) firstOrNull per-card
-    val billLabelMap by produceState(initialValue = emptyMap<Long, String>(), safeToSpendBreakdown, visibleTransactions, startDayOfMonth) {
-        value = withContext(Dispatchers.Default) {
-            val cycleStart = startOfCurrentMonthMillis(startDayOfMonth)
-            val statuses = safeToSpendBreakdown.itemStatuses
-            buildMap {
-                visibleTransactions.forEach { txnWithDebts ->
-                    val txn = txnWithDebts.transaction
-                    if (txn.type == TransactionType.DEBIT && txn.timestamp >= cycleStart) {
-                        val match = statuses.firstOrNull { NecessityManager.matches(it.item, txn.payee, txn.category) }
-                        if (match != null) put(txn.id, match.item.name)
-                    }
+    val billLabelMap = remember(safeToSpendBreakdown, visibleTransactions, startDayOfMonth) {
+        val cycleStart = startOfCurrentMonthMillis(startDayOfMonth)
+        val statuses = safeToSpendBreakdown.itemStatuses
+        buildMap {
+            visibleTransactions.forEach { txnWithDebts ->
+                val txn = txnWithDebts.transaction
+                if (txn.type == TransactionType.DEBIT && txn.timestamp >= cycleStart) {
+                    val match = statuses.firstOrNull { NecessityManager.matches(it.item, txn.payee, txn.category) }
+                    if (match != null) put(txn.id, match.item.name)
                 }
             }
         }
@@ -592,32 +586,10 @@ fun DashboardScreen(
     var activeCreditTransactionToLinkId by rememberSaveable { mutableStateOf<Long?>(null) }
     val activeCreditTransactionToLink = remember(activeCreditTransactionToLinkId, transactionsWithDebts) { transactionsWithDebts.find { it.transaction.id == activeCreditTransactionToLinkId }?.transaction }
 
-    var isAnimationTriggered by remember { mutableStateOf(false) }
-    LaunchedEffect(selectedTimeRange, isAppLocked) {
-        if (!isAppLocked) {
-            isAnimationTriggered = false
-            delay(180)
-            isAnimationTriggered = true
-        } else {
-            isAnimationTriggered = false
-        }
-    }
+    val isAnimationTriggered = !isAppLocked
 
-    val animatedSpentTotal by animateValueAsState(
-        targetValue = if (isAnimationTriggered) periodSpent else 0L,
-        typeConverter = LongConverter,
-        animationSpec = tween(800, easing = FastOutSlowInEasing),
-        label = "spentAnimation"
-    )
-    val shownSpent = animatedSpentTotal
-
-    val animatedOwedToYou by animateValueAsState(
-        targetValue = if (isAnimationTriggered) moneyOwedToYou else 0L,
-        typeConverter = LongConverter,
-        animationSpec = tween(800, easing = FastOutSlowInEasing),
-        label = "owedAnimation"
-    )
-    val shownOwed = animatedOwedToYou
+    val shownSpent = periodSpent
+    val shownOwed = moneyOwedToYou
     LaunchedEffect(showAccountsDialog) { if (showAccountsDialog) liveDialogBalance = effectiveBalance }
 
     LaunchedEffect(manualSyncBalance) {
@@ -684,6 +656,14 @@ fun DashboardScreen(
         BackHandler {
             haptic.tap()
             isBalanceRevealed = false
+        }
+    } else if (!anyDialogOpen && (searchOpen || searchQuery.isNotEmpty())) {
+        BackHandler {
+            haptic.tap()
+            searchOpen = false
+            searchQuery = ""
+            debouncedSearchQuery = ""
+            focusManager.clearFocus()
         }
     } else if (!anyDialogOpen) {
         BackHandler {
@@ -844,7 +824,12 @@ fun DashboardScreen(
         var pendingNewExpenseSplit by remember { mutableStateOf<List<SplitParticipant>>(emptyList()) }
         AddExpenseSheet(
             availableCategories = allAvailableCategories,
-            onDismiss = { showAddExpenseSheet = false },
+            autoLaunchReceiptPicker = autoLaunchReceiptScan,
+            onReceiptPickerLaunched = { autoLaunchReceiptScan = false },
+            onDismiss = {
+                showAddExpenseSheet = false
+                autoLaunchReceiptScan = false
+            },
             linkedAccounts = linkedAccounts,
             transactionsHistory = transactions,
             initialSplitPeople = recentSplitPeople,
@@ -854,11 +839,12 @@ fun DashboardScreen(
             onSaveSplit = { participants ->
                 pendingNewExpenseSplit = participants
             },
-            onSave = { amount, payee, category, type, timestamp, itemsSummary, receiptUri, bank, acct ->
+            onSave = { amount, payee, category, type, timestamp, itemsSummary, receiptUri, bank, acct, excludeFromSpend ->
                 viewModel.addManualExpense(
                     amount = amount, payee = payee, category = category, type = type,
                     timestamp = timestamp, itemsSummary = itemsSummary, receiptImageUri = receiptUri,
                     bankName = bank, accountNumber = acct,
+                    excludeFromSpend = excludeFromSpend,
                     splitParticipants = pendingNewExpenseSplit
                 )
                 pendingNewExpenseSplit = emptyList()
@@ -902,12 +888,12 @@ fun DashboardScreen(
                 val debt = settleList.find { it.debt.id == debtId }
                 if (debt != null) {
                     if (isForgiveness) {
-                        splitViewModel.forgiveDebt(debtId)
+                        viewModel.forgiveDebt(debtId)
                         showSnack("Remaining debt forgiven")
                     } else if (amount > 0L) {
                         val cappedAmount = minOf(amount, debt.outstanding)
                         val wasCapped = amount > debt.outstanding + SETTLEMENT_EPSILON
-                        splitViewModel.logCashRepayment(debtId, cappedAmount)
+                        viewModel.logCashRepayment(debtId, cappedAmount)
                         val capNote = if (wasCapped) " (capped to what's owed)" else ""
                         if (cappedAmount >= debt.outstanding - SETTLEMENT_EPSILON) {
                             showSnack("Debt fully settled!$capNote")
@@ -923,7 +909,14 @@ fun DashboardScreen(
 
     val creditTxn = activeCreditTransactionToLink
     if (creditTxn != null) {
-        Dialog(onDismissRequest = { activeCreditTransactionToLinkId = null }) {
+        val dismissLinkDialog = {
+            activeCreditTransactionToLinkId = null
+            if (returnToEditTransactionId != null) {
+                activeTransactionForEditId = returnToEditTransactionId
+                returnToEditTransactionId = null
+            }
+        }
+        Dialog(onDismissRequest = dismissLinkDialog) {
             Surface(modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 400.dp), shape = RoundedCornerShape(AppRadius.large), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))) {
@@ -946,7 +939,7 @@ fun DashboardScreen(
                                         .clip(RoundedCornerShape(AppRadius.small))
                                         .quietClickable {
                                             haptic.confirm()
-                                            splitViewModel.linkDebtToRepayment(split.debt.id, creditTxn.id)
+                                            viewModel.linkDebtToRepayment(split.debt.id, creditTxn.id)
                                             activeCreditTransactionToLinkId = null
                                             showSnack("Linked to ${split.debt.debtorName} · ${split.parentTransaction.payee}")
                                         },
@@ -969,7 +962,7 @@ fun DashboardScreen(
                     }
                     Spacer(modifier = Modifier.height(24.dp))
                     OutlinedButton(
-                        onClick = { haptic.tap(); activeCreditTransactionToLinkId = null },
+                        onClick = { haptic.tap(); dismissLinkDialog() },
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = RoundedCornerShape(AppRadius.small),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
@@ -1060,7 +1053,16 @@ fun DashboardScreen(
     if (showManageCategoriesDialog) {
         ManageCategoriesDialog(
             customCategories = customCategories,
-            onDismiss = { showManageCategoriesDialog = false },
+            onDismiss = {
+                showManageCategoriesDialog = false
+                initialCategoryForManageCategories = null
+            },
+            allCategories = allAvailableCategories,
+            transactions = transactionsWithDebts,
+            categoryBudgets = categoryBudgets,
+            startDayOfMonth = startDayOfMonth,
+            pendingDeleteIds = pendingDeleteIds.keys,
+            initialCategory = initialCategoryForManageCategories,
             onAddCategory = { newCategory ->
                 val trimmed = newCategory.trim()
                 if (allAvailableCategories.any { it.equals(trimmed, ignoreCase = true) }) {
@@ -1073,20 +1075,53 @@ fun DashboardScreen(
                     showSnack("Category \"$trimmed\" created")
                 }
             },
-            onDeleteCategory = { catToDelete ->
-                val count = transactions.count { it.category.equals(catToDelete, ignoreCase = true) }
-                if (count > 0) {
-                    haptic.tap()
-                    categoryToDelete = catToDelete
-                } else {
-                    haptic.confirm()
-                    val updated = customCategories - catToDelete
+            onRenameCategory = { oldName, newName ->
+                val trimmedNew = newName.trim()
+                if (trimmedNew.isNotEmpty() && !oldName.equals(trimmedNew, ignoreCase = true)) {
+                    val updated = (customCategories.filterNot { it.equals(oldName, ignoreCase = true) } + trimmedNew).toSet()
                     customCategories = updated
                     prefs.edit().putStringSet("key_custom_categories", updated).apply()
-                    viewModel.onCategoryDeleted(catToDelete, null)
-                    if (selectedFilterCategory == catToDelete) selectedFilterCategory = "All"
-                    showSnack("Category deleted")
+                    viewModel.renameCategory(oldName, trimmedNew)
+                    if (necessitiesList.any { it.categoryName.equals(oldName, ignoreCase = true) }) {
+                        updateNecessities(
+                            necessitiesList.map { item ->
+                                if (item.categoryName.equals(oldName, ignoreCase = true)) item.copy(categoryName = trimmedNew)
+                                else item
+                            }
+                        )
+                    }
+                    if (selectedFilterCategory.equals(oldName, ignoreCase = true)) {
+                        selectedFilterCategory = trimmedNew
+                    }
+                    showSnack("Renamed \"$oldName\" to \"$trimmedNew\"")
                 }
+            },
+            onMergeCategory = { fromCategory, intoCategory ->
+                if (!fromCategory.equals(intoCategory, ignoreCase = true)) {
+                    viewModel.reassignCategory(fromCategory, intoCategory)
+                    if (necessitiesList.any { it.categoryName.equals(fromCategory, ignoreCase = true) }) {
+                        updateNecessities(
+                            necessitiesList.map { item ->
+                                if (item.categoryName.equals(fromCategory, ignoreCase = true)) item.copy(categoryName = intoCategory)
+                                else item
+                            }
+                        )
+                    }
+                    if (selectedFilterCategory.equals(fromCategory, ignoreCase = true)) {
+                        selectedFilterCategory = intoCategory
+                    }
+                    showSnack("Moved transactions from \"$fromCategory\" to \"$intoCategory\"")
+                }
+            },
+            onOpenCategoryBudget = { catName ->
+                returnToCategoryInManageCategories = catName
+                showManageCategoriesDialog = false
+                initialCategoryForBudgetEdit = catName
+                showManageCategoryBudgetsDialog = true
+            },
+            onDeleteCategory = { catToDelete ->
+                haptic.tap()
+                categoryToDelete = catToDelete
             }
         )
     }
@@ -1101,13 +1136,23 @@ fun DashboardScreen(
             onConfirm = { reassignTarget ->
                 haptic.delete()
                 val targetCat = categoryToDelete!!
-                val updated = customCategories - targetCat
+                val updated = customCategories.filterNot { it.equals(targetCat, ignoreCase = true) }.toSet()
                 customCategories = updated
                 prefs.edit().putStringSet("key_custom_categories", updated).apply()
-                if (selectedFilterCategory == targetCat) selectedFilterCategory = "All"
+                if (selectedFilterCategory.equals(targetCat, ignoreCase = true)) {
+                    selectedFilterCategory = reassignTarget ?: "All"
+                }
+                if (necessitiesList.any { it.categoryName.equals(targetCat, ignoreCase = true) }) {
+                    updateNecessities(
+                        necessitiesList.map { item ->
+                            if (item.categoryName.equals(targetCat, ignoreCase = true)) item.copy(categoryName = reassignTarget)
+                            else item
+                        }
+                    )
+                }
 
                 viewModel.onCategoryDeleted(deletedCategory = targetCat, reassignTo = reassignTarget)
-                showSnack("Category removed")
+                showSnack("Category \"$targetCat\" deleted")
                 categoryToDelete = null
             }
         )
@@ -1128,6 +1173,11 @@ fun DashboardScreen(
                 haptic.tap()
                 viewModel.syncLatestBalanceFromSms()
                 showSnack("Syncing latest SMS...")
+            },
+            onSetManualBalance = { bankName, accountNumber, balancePaise ->
+                haptic.confirm()
+                viewModel.setManualAccountBalance(bankName, accountNumber, balancePaise)
+                showSnack("Updated balance for $bankName")
             },
             onManageNecessities = {
                 showAccountsDialog = false
@@ -1186,7 +1236,7 @@ fun DashboardScreen(
             confirmText = "Undo",
             onConfirm = {
                 haptic.confirm()
-                splitViewModel.undoRepayment(txn)
+                viewModel.undoRepayment(txn)
                 showSnack("Repayment undone")
                 repaymentToUndo = null
             }
@@ -1239,6 +1289,12 @@ fun DashboardScreen(
             onDismiss = {
                 showManageCategoryBudgetsDialog = false
                 initialCategoryForBudgetEdit = null
+                val returnCat = returnToCategoryInManageCategories
+                if (returnCat != null) {
+                    returnToCategoryInManageCategories = null
+                    initialCategoryForManageCategories = returnCat
+                    showManageCategoriesDialog = true
+                }
             },
             initialCategory = initialCategoryForBudgetEdit,
             transactions = transactionsWithDebts,
@@ -1252,23 +1308,21 @@ fun DashboardScreen(
 
     data class DayGroup(val label: String, val rows: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>, val daySpentPaise: Long)
 
-    val grouped by produceState(initialValue = emptyList<DayGroup>(), visibleTransactions, pendingDeleteIds) {
-        value = withContext(Dispatchers.Default) {
-            val order = linkedMapOf<String, MutableList<com.expensetracker.offline.data.local.dao.TransactionWithDebts>>()
-            visibleTransactions.forEach { txn ->
-                order.getOrPut(dayLabel(txn.transaction.timestamp)) { mutableListOf() }.add(txn)
-            }
-            order.map { (label, rows) ->
-                val daySpent = rows
-                    .filter {
-                        it.transaction.type == TransactionType.DEBIT &&
-                                !it.transaction.excludeFromSpend &&
-                                it.transaction.category != "Split Settlement" &&
-                                it.transaction.id !in pendingDeleteIds
-                    }
-                    .sumOf { r -> (r.transaction.amount - r.debts.sumOf { d -> d.amountOwed.toLong() }).coerceAtLeast(0L) }
-                DayGroup(label, rows, daySpent)
-            }
+    val grouped = remember(visibleTransactions, pendingDeleteIds) {
+        val order = linkedMapOf<String, MutableList<com.expensetracker.offline.data.local.dao.TransactionWithDebts>>()
+        visibleTransactions.forEach { txn ->
+            order.getOrPut(dayLabel(txn.transaction.timestamp)) { mutableListOf() }.add(txn)
+        }
+        order.map { (label, rows) ->
+            val daySpent = rows
+                .filter {
+                    it.transaction.type == TransactionType.DEBIT &&
+                            !it.transaction.excludeFromSpend &&
+                            it.transaction.category != "Split Settlement" &&
+                            it.transaction.id !in pendingDeleteIds
+                }
+                .sumOf { r -> (r.transaction.amount - r.debts.sumOf { d -> d.amountOwed.toLong() }).coerceAtLeast(0L) }
+            DayGroup(label, rows, daySpent)
         }
     }
 
@@ -1340,7 +1394,7 @@ fun DashboardScreen(
             suggestedSettlementAmount = activeCreditSuggestion?.outstanding,
             onSettleSuggested = if (activeCreditSuggestion != null) {
                 {
-                    splitViewModel.linkDebtToRepayment(activeCreditSuggestion.debt.id, txn.id)
+                    viewModel.linkDebtToRepayment(activeCreditSuggestion.debt.id, txn.id)
                     showSnack("Linked repayment to ${activeCreditSuggestion.debt.debtorName}")
                 }
             } else null,
@@ -1374,14 +1428,16 @@ fun DashboardScreen(
                 viewModel.updatePayeeAndCategoryForAll(oldPayee, newPayee, newCategory)
             },
             onUndoRepayment = { id ->
-                splitViewModel.undoRepayment(txn)
+                viewModel.undoRepayment(txn)
                 showSnack("Repayment undone")
             },
             onSplit = {
+                returnToEditTransactionId = txn.id
                 activeTransactionForEditId = null
                 activeTransactionForSplitId = txn.id
             },
             onLinkToBill = {
+                returnToEditTransactionId = txn.id
                 activeTransactionForEditId = null
                 activeCreditTransactionToLinkId = txn.id
             },
@@ -1404,7 +1460,7 @@ fun DashboardScreen(
                 (listOf("You") + existingFriends + recentFriends).distinct()
             },
             onSaveSplit = { splitParticipants ->
-                splitViewModel.saveMultiSplit(txn.id, splitParticipants, "You")
+                viewModel.saveMultiSplit(txn.id, splitParticipants, "You")
                 showSnack("Saved itemized bill split")
             }
         )
@@ -1451,12 +1507,18 @@ fun DashboardScreen(
         MultiSplitShareSheet(
             transaction = bill.transaction,
             initialDebts = bill.debts,
-            onDismiss = { activeTransactionForSplitId = null },
+            onDismiss = {
+                activeTransactionForSplitId = null
+                if (returnToEditTransactionId != null) {
+                    activeTransactionForEditId = returnToEditTransactionId
+                    returnToEditTransactionId = null
+                }
+            },
             onSaveSplit = { participants, paidBy ->
-                splitViewModel.saveMultiSplit(bill.transaction.id, participants, paidBy)
+                viewModel.saveMultiSplit(bill.transaction.id, participants, paidBy)
                 haptic.confirm()
             },
-            onResetSplit = { splitViewModel.resetSplit(bill.transaction.id) },
+            onResetSplit = { viewModel.resetSplit(bill.transaction.id) },
             contextualNames = contextualSplitPartners, // NEW
             recentNames = globalSplitPartners          // NEW
         )
@@ -1508,7 +1570,6 @@ fun DashboardScreen(
             }
         },
         topBar = {
-            // Hairline divider fades in once content scrolls under the header (Vercel-style)
             val isScrolled by remember {
                 derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 8 }
             }
@@ -1528,9 +1589,7 @@ fun DashboardScreen(
                     isSelectionMode = false
                     selectedTxnIds = emptySet()
                 },
-                onBulkDelete = {
-                    showBulkDeleteConfirm = true
-                },
+                onBulkDelete = { showBulkDeleteConfirm = true },
                 onCycleClick = { showStartDayDialog = true },
                 onSearchToggle = {
                     searchOpen = !searchOpen
@@ -1791,14 +1850,9 @@ fun DashboardScreen(
                                     Spacer(modifier = Modifier.height(16.dp))
 
                                     val onboardingTargetProgress = (completedSteps / tasks.size.toFloat()).coerceIn(0f, 1f)
-                                    val animatedOnboardingProgress by animateFloatAsState(
-                                        targetValue = if (isAnimationTriggered) onboardingTargetProgress else 0f,
-                                        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
-                                        label = "onboardingProgress"
-                                    )
 
                                     DashboardProgressBar(
-                                        progress = animatedOnboardingProgress,
+                                        progress = if (isAnimationTriggered) onboardingTargetProgress else 0f,
                                         color = MaterialTheme.colorScheme.primary,
                                         trackColor = MaterialTheme.colorScheme.surfaceVariant,
                                         height = 6.dp
@@ -1923,11 +1977,7 @@ fun DashboardScreen(
                     val monthlyBudgetPaise = monthlyBudget * 100L
                     val budgetProgress = if (monthlyBudgetPaise > 0L && isMonthlyView) (periodSpent.toFloat() / monthlyBudgetPaise.toFloat()).coerceIn(0f, 1f) else 0f
                     val isOverBudget = monthlyBudgetPaise > 0L && isMonthlyView && periodSpent > monthlyBudgetPaise
-                    val animatedBudgetProgress by animateFloatAsState(
-                        targetValue = if (isAnimationTriggered) budgetProgress else 0f,
-                        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
-                        label = "progressAnimation"
-                    )
+
 
                     val usedPct = if (monthlyBudgetPaise > 0L) ((periodSpent.toDouble() / monthlyBudgetPaise.toDouble()) * 100).toInt() else 0
                     val barColor = when {
@@ -2022,7 +2072,7 @@ fun DashboardScreen(
 
                                 Spacer(modifier = Modifier.height(24.dp))
                                 DashboardProgressBar(
-                                    progress = animatedBudgetProgress,
+                                    progress = if (isAnimationTriggered) budgetProgress else 0f,
                                     color = barColor,
                                     trackColor = MaterialTheme.colorScheme.surfaceVariant,
                                     height = 6.dp
@@ -2310,10 +2360,15 @@ fun DashboardScreen(
                                 label = if (showOwedToYouPrimary) "Owed to you" else "You owe",
                                 onClick = { haptic.tap(); showSettleDebtDialog = true }
                             ) {
+                                val animatedAmt by animateFloatAsState(
+                                    targetValue = primaryAmt.toFloat(),
+                                    animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
+                                    label = "owedStatAmount"
+                                )
                                 Row(verticalAlignment = Alignment.Bottom) {
                                     Text("₹", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = primaryColor, modifier = Modifier.padding(bottom = 2.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text(CurrencyFormat.amount(primaryAmt, 0), fontWeight = FontWeight.Bold, fontSize = 24.sp, color = primaryColor)
+                                    Text(CurrencyFormat.amount(animatedAmt.toLong(), 0), fontWeight = FontWeight.Bold, fontSize = 24.sp, color = primaryColor)
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(secondaryText, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -2370,13 +2425,14 @@ fun DashboardScreen(
             }
 
             item {
-                // No spacedBy here: its gap would vanish in one frame when the search field leaves
-                // composition (the jerk). The gap lives inside AnimatedVisibility and animates with it.
+                val hasUnspecified = remember(transactions) {
+                    transactions.asSequence().take(1000).any { it.bankName == null }
+                }
                 DashboardSearchAndFilter(
                     searchOpen = searchOpen,
                     searchQuery = searchQuery,
                     onSearchQueryChange = { searchQuery = it },
-                    onSearchClear = { searchQuery = "" },
+                    onSearchClear = { searchQuery = ""; debouncedSearchQuery = "" },
                     focusManager = focusManager,
                     haptic = haptic,
                     selectedFilterCategory = selectedFilterCategory,
@@ -2386,7 +2442,7 @@ fun DashboardScreen(
                     linkedAccounts = linkedAccounts,
                     selectedAccount = selectedAccount,
                     onAccountSelected = { viewModel.selectedAccount.value = it },
-                    hasUnspecifiedAccount = transactions.asSequence().take(1000).any { it.bankName == null },
+                    hasUnspecifiedAccount = hasUnspecified,
                     onAutoDetectBanks = { showBankInfoDialog = true }
                 )
             }
@@ -2562,8 +2618,7 @@ fun DashboardScreen(
                         haptic = haptic,
                         onUndoTransactionDelete = { id -> viewModel.undoTransactionDelete(id) },
                         onSelectionChange = { id ->
-                            val isSelected = selectedTxnIds.contains(id)
-                            selectedTxnIds = if (isSelected) selectedTxnIds - id else selectedTxnIds + id
+                            selectedTxnIds = if (selectedTxnIds.contains(id)) selectedTxnIds - id else selectedTxnIds + id
                             if (selectedTxnIds.isEmpty()) isSelectionMode = false
                         },
                         onEditTransaction = { id -> activeTransactionForEditId = id },

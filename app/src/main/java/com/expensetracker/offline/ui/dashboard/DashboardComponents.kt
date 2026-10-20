@@ -43,7 +43,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Category
+import com.expensetracker.offline.ui.theme.getCategoryColor
 import com.expensetracker.offline.ui.theme.getCategoryIcon
+import androidx.compose.material.icons.filled.Edit
+import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.ui.theme.hasCategoryIcon
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -57,6 +60,7 @@ import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -190,110 +194,828 @@ internal fun TransactionUndoBar(
 // HELPER COMPOSABLES
 // ─────────────────────────────────────────────────────────────────────────
 
+private data class CategoryOverviewRow(
+    val name: String,
+    val isCustom: Boolean,
+    val totalTxnCount: Int,
+    val cycleSpentPaise: Long,
+    val budgetCapPaise: Long?
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ManageCategoriesDialog(
     customCategories: Set<String>,
     onDismiss: () -> Unit,
     onAddCategory: (String) -> Unit,
-    onDeleteCategory: (String) -> Unit
+    onDeleteCategory: (String) -> Unit,
+    allCategories: List<String> = emptyList(),
+    transactions: List<TransactionWithDebts> = emptyList(),
+    categoryBudgets: Map<String, Long> = emptyMap(),
+    startDayOfMonth: Int = 1,
+    pendingDeleteIds: Set<Long> = emptySet(),
+    initialCategory: String? = null,
+    onRenameCategory: (oldName: String, newName: String) -> Unit = { _, _ -> },
+    onMergeCategory: (fromCategory: String, intoCategory: String) -> Unit = { _, _ -> },
+    onOpenCategoryBudget: ((String) -> Unit)? = null
 ) {
-    var categoryName by remember { mutableStateOf("") }
     val haptic = LocalHapticFeedback.current
+    val focusManager = LocalFocusManager.current
+    val sheetContentHeight = (LocalConfiguration.current.screenHeightDp * 0.78f).dp.coerceIn(500.dp, 660.dp)
 
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(modifier = Modifier
-            .fillMaxWidth()
-            .widthIn(max = 400.dp), shape = RoundedCornerShape(AppRadius.large), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Text("Manage Categories", fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Add new custom categories for your expenses.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(modifier = Modifier.height(24.dp))
+    var searchOrNewName by rememberSaveable { mutableStateOf("") }
+    var filterTab by rememberSaveable { mutableIntStateOf(0) } // 0 = All, 1 = Custom, 2 = Built-in
+    var selectedCategoryForDetail by rememberSaveable(initialCategory) { mutableStateOf(initialCategory) }
+    var isClosingSheet by remember { mutableStateOf(false) }
+    val inSubpage by rememberUpdatedState(selectedCategoryForDetail != null)
 
-                val focusManager = LocalFocusManager.current
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { target ->
+            if (target == SheetValue.Hidden && inSubpage) {
+                selectedCategoryForDetail = null
+                false
+            } else {
+                true
+            }
+        }
+    )
 
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = categoryName,
-                        onValueChange = { categoryName = it },
-                        placeholder = { Text("New category name", fontSize = 14.sp) },
-                        singleLine = true,
-                        colors = sheetFieldColors(),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Text,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                if (categoryName.isNotBlank()) {
-                                    haptic.confirm()
-                                    onAddCategory(categoryName.trim())
-                                    categoryName = ""
+    LaunchedEffect(selectedCategoryForDetail, sheetState.currentValue) {
+        if (selectedCategoryForDetail == null && sheetState.currentValue == SheetValue.Hidden && !isClosingSheet) {
+            runCatching { sheetState.show() }
+        }
+    }
+
+    BackHandler(enabled = selectedCategoryForDetail != null) {
+        haptic.tap()
+        selectedCategoryForDetail = null
+    }
+
+    val builtInSet = remember { CategoryClassifier.PREDEFINED_CATEGORIES.map { it.lowercase() }.toSet() }
+    val customLowerSet = remember(customCategories) { customCategories.map { it.trim().lowercase() }.toSet() }
+
+    val combinedCategoryNames = remember(allCategories, customCategories) {
+        val base = if (allCategories.isNotEmpty()) allCategories else (CategoryClassifier.PREDEFINED_CATEGORIES + customCategories)
+        (customCategories.toList() + base)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.equals("Split Settlement", ignoreCase = true) }
+            .distinctBy { it.lowercase() }
+    }
+
+    val cycleStartMillis = remember(startDayOfMonth) {
+        BillingCycleHelper.getCycleRange(startDayOfMonth).first
+    }
+
+    val categoryRows = remember(combinedCategoryNames, customLowerSet, builtInSet, transactions, categoryBudgets, cycleStartMillis, pendingDeleteIds) {
+        val countByLower = HashMap<String, Int>()
+        val cycleSpendByLower = HashMap<String, Long>()
+        for (item in transactions) {
+            val txn = item.transaction
+            if (txn.id in pendingDeleteIds) continue
+            val key = txn.category.trim().lowercase()
+            if (key.isEmpty()) continue
+            countByLower[key] = (countByLower[key] ?: 0) + 1
+            if (txn.type == TransactionType.DEBIT &&
+                !txn.excludeFromSpend &&
+                txn.category != "Split Settlement" &&
+                !txn.category.equals("Transfer", ignoreCase = true) &&
+                txn.timestamp >= cycleStartMillis
+            ) {
+                cycleSpendByLower[key] = (cycleSpendByLower[key] ?: 0L) + mySpendShare(item)
+            }
+        }
+        val budgetByLower = categoryBudgets.entries.associate { it.key.trim().lowercase() to it.value }
+
+        combinedCategoryNames.map { cat ->
+            val lower = cat.lowercase()
+            val isCustom = lower in customLowerSet || lower !in builtInSet
+            CategoryOverviewRow(
+                name = cat,
+                isCustom = isCustom,
+                totalTxnCount = countByLower[lower] ?: 0,
+                cycleSpentPaise = cycleSpendByLower[lower] ?: 0L,
+                budgetCapPaise = budgetByLower[lower]?.takeIf { it > 0L }
+            )
+        }.sortedWith(
+            compareByDescending<CategoryOverviewRow> { it.isCustom }
+                .thenByDescending { it.cycleSpentPaise }
+                .thenByDescending { it.totalTxnCount }
+                .thenBy { it.name.lowercase() }
+        )
+    }
+
+    val customCount = remember(categoryRows) { categoryRows.count { it.isCustom } }
+    val builtInCount = remember(categoryRows) { categoryRows.count { !it.isCustom } }
+
+    val trimmedInput = searchOrNewName.trim()
+    val exactMatchExists = remember(trimmedInput, combinedCategoryNames) {
+        trimmedInput.isNotEmpty() && combinedCategoryNames.any { it.equals(trimmedInput, ignoreCase = true) }
+    }
+    val canCreateNew = trimmedInput.length >= 2 && !exactMatchExists && !trimmedInput.equals("Split Settlement", ignoreCase = true)
+
+    val filteredRows = remember(categoryRows, filterTab, trimmedInput) {
+        categoryRows.filter { row ->
+            val matchesTab = when (filterTab) {
+                1 -> row.isCustom
+                2 -> !row.isCustom
+                else -> true
+            }
+            val matchesSearch = trimmedInput.isEmpty() || row.name.contains(trimmedInput, ignoreCase = true)
+            matchesTab && matchesSearch
+        }
+    }
+
+    LaunchedEffect(customCategories) {
+        val cur = selectedCategoryForDetail
+        if (cur != null && cur.lowercase() !in builtInSet && customCategories.none { it.equals(cur, ignoreCase = true) }) {
+            selectedCategoryForDetail = null
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = {
+            if (selectedCategoryForDetail != null) {
+                haptic.tap()
+                selectedCategoryForDetail = null
+            } else {
+                isClosingSheet = true
+                onDismiss()
+            }
+        },
+        sheetState = sheetState,
+        properties = ModalBottomSheetProperties(
+            shouldDismissOnBackPress = selectedCategoryForDetail == null
+        ),
+        shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
+        containerColor = MaterialTheme.colorScheme.background,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
+    ) {
+        BackHandler(enabled = selectedCategoryForDetail != null) {
+            haptic.tap()
+            selectedCategoryForDetail = null
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(sheetContentHeight)
+                .navigationBarsPadding()
+                .imePadding()
+        ) {
+            AnimatedContent(
+                targetState = selectedCategoryForDetail,
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopStart,
+                transitionSpec = {
+                    val forward = targetState != null
+                    val enter = slideInHorizontally(
+                        animationSpec = tween(240, easing = FastOutSlowInEasing),
+                        initialOffsetX = { width -> if (forward) width else -width }
+                    ) + fadeIn(tween(200))
+                    val exit = slideOutHorizontally(
+                        animationSpec = tween(220, easing = FastOutSlowInEasing),
+                        targetOffsetX = { width -> if (forward) -width / 2 else width / 2 }
+                    ) + fadeOut(tween(150))
+                    enter.togetherWith(exit).using(SizeTransform(clip = true) { _, _ -> tween(0) })
+                },
+                label = "manageCategoriesTransition"
+            ) { detailCategoryName ->
+                if (detailCategoryName == null) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 24.dp)
+                                .padding(top = 8.dp, bottom = 8.dp)
+                        ) {
+                            SheetHeader(
+                                title = "Categories",
+                                subtitle = "${categoryRows.size} categories · $customCount custom"
+                            )
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Unified Search + Quick-Create bar with live icon & color preview
+                            SheetCard(contentPadding = 10.dp) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.BottomEnd) {
+                                        CategoryBadgeTile(
+                                            category = trimmedInput.ifEmpty { "Category" },
+                                            size = 38.dp,
+                                            cornerRadius = 10.dp,
+                                            iconSize = 18.dp
+                                        )
+                                        if (trimmedInput.isNotEmpty()) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(9.dp)
+                                                    .clip(CircleShape)
+                                                    .background(getCategoryColor(trimmedInput))
+                                                    .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                                            )
+                                        }
+                                    }
+
+                                    BasicTextField(
+                                        value = searchOrNewName,
+                                        onValueChange = { searchOrNewName = it.take(36) },
+                                        singleLine = true,
+                                        textStyle = androidx.compose.ui.text.TextStyle(
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        ),
+                                        cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
+                                        keyboardOptions = KeyboardOptions(
+                                            keyboardType = KeyboardType.Text,
+                                            imeAction = if (canCreateNew) ImeAction.Done else ImeAction.Search
+                                        ),
+                                        keyboardActions = KeyboardActions(
+                                            onDone = {
+                                                if (canCreateNew) {
+                                                    haptic.confirm()
+                                                    onAddCategory(trimmedInput)
+                                                    searchOrNewName = ""
+                                                }
+                                                focusManager.clearFocus()
+                                            },
+                                            onSearch = { focusManager.clearFocus() }
+                                        ),
+                                        modifier = Modifier.weight(1f),
+                                        decorationBox = { inner ->
+                                            Box(contentAlignment = Alignment.CenterStart) {
+                                                if (searchOrNewName.isEmpty()) {
+                                                    Text(
+                                                        "Search or type a new category…",
+                                                        fontSize = 14.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                                    )
+                                                }
+                                                inner()
+                                            }
+                                        }
+                                    )
+
+                                    if (searchOrNewName.isNotEmpty()) {
+                                        IconButton(
+                                            onClick = {
+                                                haptic.tap()
+                                                searchOrNewName = ""
+                                            },
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = "Clear",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+
+                                    if (canCreateNew) {
+                                        Surface(
+                                            shape = RoundedCornerShape(AppRadius.pill),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(AppRadius.pill))
+                                                .quietClickable {
+                                                    haptic.confirm()
+                                                    onAddCategory(trimmedInput)
+                                                    searchOrNewName = ""
+                                                    focusManager.clearFocus()
+                                                }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Add,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.surface,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Text(
+                                                    "Create",
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.surface
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
-                                focusManager.clearFocus()
                             }
-                        ),
-                        shape = RoundedCornerShape(AppRadius.small),
-                        modifier = Modifier.weight(1f),
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp)
-                    )
-                    Button(
-                        onClick = {
-                            if (categoryName.isNotBlank()) {
-                                haptic.confirm()
-                                onAddCategory(categoryName.trim())
-                                categoryName = ""
-                            }
-                        },
-                        enabled = categoryName.isNotBlank(),
-                        shape = RoundedCornerShape(AppRadius.small),
-                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.onSurface,
-                            contentColor = MaterialTheme.colorScheme.surface,
-                            disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
-                            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                        ),
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        modifier = Modifier.height(52.dp)
-                    ) { Text("Add", fontWeight = FontWeight.Bold) }
-                }
 
-                if (customCategories.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(32.dp))
-                    Text("Your categories", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    LazyColumn(modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 240.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(customCategories.toList(), key = { it }) { cat ->
-                            Row(
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            SheetSegmentedControl(
+                                options = listOf(
+                                    "All (${categoryRows.size})",
+                                    "Custom ($customCount)",
+                                    "Built-in ($builtInCount)"
+                                ),
+                                selectedIndex = filterTab,
+                                onSelect = { filterTab = it }
+                            )
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            LazyColumn(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                contentPadding = PaddingValues(bottom = 8.dp)
                             ) {
-                                Text(cat, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
-                                IconButton(onClick = { onDeleteCategory(cat) }, modifier = Modifier.size(40.dp)) {
-                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
+                                if (filteredRows.isEmpty()) {
+                                    item(key = "empty_categories_state") {
+                                        SheetCard(contentPadding = 24.dp) {
+                                            Column(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Text(
+                                                    if (canCreateNew) "Create \"$trimmedInput\"?"
+                                                    else if (filterTab == 1) "No custom categories yet"
+                                                    else "No matching categories",
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 15.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                                Text(
+                                                    if (canCreateNew) "Tap Create above to add \"$trimmedInput\" with its automatic icon and color."
+                                                    else "Type any name above (e.g. Gym, Pets, Coffee, Subscriptions) to create a custom category.",
+                                                    fontSize = 13.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                                )
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    item(key = "categories_group_card") {
+                                        TransactionGroup {
+                                            filteredRows.forEachIndexed { idx, row ->
+                                                if (idx > 0) TransactionRowDivider()
+                                                CategoryOverviewSheetRow(
+                                                    row = row,
+                                                    onClick = {
+                                                        haptic.tap()
+                                                        focusManager.clearFocus()
+                                                        selectedCategoryForDetail = row.name
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
+                            }
+                        }
+
+                        SheetFooter {
+                            SheetPrimaryButton(
+                                text = "Done",
+                                enabled = true,
+                                onClick = {
+                                    haptic.tap()
+                                    isClosingSheet = true
+                                    onDismiss()
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    val row = categoryRows.firstOrNull { it.name.equals(detailCategoryName, ignoreCase = true) }
+                        ?: CategoryOverviewRow(
+                            name = detailCategoryName,
+                            isCustom = detailCategoryName.lowercase() !in builtInSet,
+                            totalTxnCount = 0,
+                            cycleSpentPaise = 0L,
+                            budgetCapPaise = null
+                        )
+
+                    CategoryDetailManagementContent(
+                        row = row,
+                        allCategoryNames = combinedCategoryNames,
+                        onBack = {
+                            haptic.tap()
+                            selectedCategoryForDetail = null
+                        },
+                        onRename = { newName ->
+                            val cleanNew = newName.trim()
+                            if (cleanNew.isNotEmpty() && !cleanNew.equals(row.name, ignoreCase = true)) {
+                                haptic.confirm()
+                                onRenameCategory(row.name, cleanNew)
+                                selectedCategoryForDetail = cleanNew
+                            }
+                        },
+                        onMergeInto = { targetCat ->
+                            haptic.confirm()
+                            onMergeCategory(row.name, targetCat)
+                            selectedCategoryForDetail = null
+                        },
+                        onOpenBudgetCap = onOpenCategoryBudget?.let { openBudget ->
+                            {
+                                haptic.tap()
+                                openBudget(row.name)
+                            }
+                        },
+                        onDelete = {
+                            haptic.tap()
+                            onDeleteCategory(row.name)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryOverviewSheetRow(
+    row: CategoryOverviewRow,
+    onClick: () -> Unit
+) {
+    val accentColor = remember(row.name) { getCategoryColor(row.name) }
+    val subtitle = buildString {
+        if (row.cycleSpentPaise > 0L) {
+            append("${CurrencyFormat.withSymbol(row.cycleSpentPaise, 0)} this cycle")
+            if (row.totalTxnCount > 0) append(" · ${row.totalTxnCount} ${if (row.totalTxnCount == 1) "txn" else "txns"}")
+        } else if (row.totalTxnCount > 0) {
+            append("${row.totalTxnCount} ${if (row.totalTxnCount == 1) "transaction" else "transactions"}")
+        } else if (row.name.equals("Transfer", ignoreCase = true)) {
+            append("Excluded from monthly spend")
+        } else {
+            append("No transactions yet")
+        }
+        if (row.budgetCapPaise != null && row.budgetCapPaise > 0L) {
+            append(" · Cap ${CurrencyFormat.withSymbol(row.budgetCapPaise, 0)}")
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .quietClickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(contentAlignment = Alignment.BottomEnd) {
+                CategoryBadgeTile(category = row.name, size = 40.dp, cornerRadius = 10.dp, iconSize = 20.dp)
+                Box(
+                    modifier = Modifier
+                        .size(9.dp)
+                        .clip(CircleShape)
+                        .background(accentColor)
+                        .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        row.name,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (row.isCustom) {
+                        Surface(
+                            shape = RoundedCornerShape(AppRadius.pill),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                        ) {
+                            Text(
+                                "Custom",
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    subtitle,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = "Manage ${row.name}",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
+@Composable
+private fun CategoryDetailManagementContent(
+    row: CategoryOverviewRow,
+    allCategoryNames: List<String>,
+    onBack: () -> Unit,
+    onRename: (String) -> Unit,
+    onMergeInto: (String) -> Unit,
+    onOpenBudgetCap: (() -> Unit)?,
+    onDelete: () -> Unit
+) {
+    val focusManager = LocalFocusManager.current
+    var renameText by remember(row.name) { mutableStateOf(row.name) }
+    val trimmedRename = renameText.trim()
+    val renameConflict = remember(trimmedRename, row.name, allCategoryNames) {
+        trimmedRename.isNotEmpty() &&
+                !trimmedRename.equals(row.name, ignoreCase = true) &&
+                allCategoryNames.any { it.equals(trimmedRename, ignoreCase = true) }
+    }
+    val canSaveRename = row.isCustom &&
+            trimmedRename.length >= 2 &&
+            !trimmedRename.equals(row.name, ignoreCase = true) &&
+            !renameConflict &&
+            !trimmedRename.equals("Split Settlement", ignoreCase = true)
+
+    val mergeTargets = remember(row.name, allCategoryNames) {
+        allCategoryNames.filter { !it.equals(row.name, ignoreCase = true) && !it.equals("Split Settlement", ignoreCase = true) }
+    }
+    var selectedMergeTarget by remember(mergeTargets) {
+        mutableStateOf(mergeTargets.firstOrNull() ?: "Uncategorized")
+    }
+
+    val isNonExpenseCategory = remember(row.name) {
+        row.name.lowercase() in setOf("transfer", "uncategorized", "split settlement")
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 24.dp)
+                .padding(top = 8.dp, bottom = 16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                SheetIconTile(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    contentDescription = "Back",
+                    onClick = onBack
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        row.name,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                        letterSpacing = (-0.3).sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        if (row.isCustom) "Custom category" else "Built-in category",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Box(contentAlignment = Alignment.BottomEnd) {
+                    CategoryBadgeTile(category = trimmedRename.ifEmpty { row.name }, size = 40.dp, cornerRadius = 10.dp, iconSize = 20.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(9.dp)
+                            .clip(CircleShape)
+                            .background(getCategoryColor(trimmedRename.ifEmpty { row.name }))
+                            .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                    )
+                }
+            }
+
+            // Live overview stats
+            SheetCard(contentPadding = 16.dp) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("This cycle", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            CurrencyFormat.withSymbol(row.cycleSpentPaise, 0),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Transactions", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            "${row.totalTxnCount}",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Monthly cap", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            if (row.budgetCapPaise != null && row.budgetCapPaise > 0L)
+                                CurrencyFormat.withSymbol(row.budgetCapPaise, 0)
+                            else "Not set",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+
+            // Quick Monthly Cap Link
+            if (!isNonExpenseCategory && onOpenBudgetCap != null) {
+                SheetCard(
+                    onClick = onOpenBudgetCap,
+                    contentPadding = 14.dp
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                if (row.budgetCapPaise != null && row.budgetCapPaise > 0L) "Edit monthly spending cap"
+                                else "Set a monthly spending cap",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                if (row.budgetCapPaise != null && row.budgetCapPaise > 0L)
+                                    "Currently capped at ${CurrencyFormat.withSymbol(row.budgetCapPaise, 0)} per cycle"
+                                else "Get alerted before ${row.name} exceeds your limit",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // Rename section for custom categories
+            if (row.isCustom) {
+                SheetSection(title = "Rename category") {
+                    SheetCard(contentPadding = 14.dp, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SheetTextField(
+                            value = renameText,
+                            onValueChange = { renameText = it.take(36) },
+                            label = "Category name",
+                            placeholder = "Enter new category name",
+                            leadingIcon = Icons.Default.Edit,
+                            singleLine = true
+                        )
+                        if (renameConflict) {
+                            Text(
+                                "A category named \"$trimmedRename\" already exists. Use Move transactions below to merge into it.",
+                                fontSize = 12.sp,
+                                color = AppColors.warning
+                            )
+                        } else {
+                            Text(
+                                "Renaming updates all ${row.totalTxnCount} past transactions, learned merchant rules, and spending caps.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (canSaveRename) {
+                            Button(
+                                onClick = {
+                                    focusManager.clearFocus()
+                                    onRename(trimmedRename)
+                                },
+                                shape = RoundedCornerShape(AppRadius.small),
+                                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.onSurface,
+                                    contentColor = MaterialTheme.colorScheme.surface
+                                ),
+                                modifier = Modifier.fillMaxWidth().height(46.dp)
+                            ) {
+                                Text("Save new name", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             }
                         }
                     }
                 }
+            }
 
-                Spacer(modifier = Modifier.height(32.dp))
-                Button(
-                    onClick = { haptic.tap(); onDismiss() },
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(AppRadius.small),
-                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.onSurface,
-                        contentColor = MaterialTheme.colorScheme.surface
+            // Merge / Move transactions section
+            if (row.totalTxnCount > 0 && mergeTargets.isNotEmpty()) {
+                SheetSection(
+                    title = "Move transactions",
+                    trailing = "${row.totalTxnCount} ${if (row.totalTxnCount == 1) "entry" else "entries"}"
+                ) {
+                    SheetCard(contentPadding = 14.dp, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            "Reassign all ${row.totalTxnCount} transactions and learned auto-categorization rules from \"${row.name}\" into another category:",
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 18.sp
+                        )
+                        PremiumDropdownField(
+                            selectedOption = selectedMergeTarget,
+                            options = mergeTargets,
+                            onOptionSelected = { selectedMergeTarget = it }
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                focusManager.clearFocus()
+                                onMergeInto(selectedMergeTarget)
+                            },
+                            shape = RoundedCornerShape(AppRadius.small),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+                            modifier = Modifier.fillMaxWidth().height(46.dp)
+                        ) {
+                            Text(
+                                "Move ${row.totalTxnCount} to $selectedMergeTarget",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        SheetFooter {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (row.isCustom) {
+                    OutlinedButton(
+                        onClick = {
+                            focusManager.clearFocus()
+                            onDelete()
+                        },
+                        shape = RoundedCornerShape(AppRadius.small),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Delete", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Box(modifier = Modifier.weight(if (row.isCustom) 1.3f else 1f)) {
+                    SheetPrimaryButton(
+                        text = if (canSaveRename) "Save name" else "Back to categories",
+                        enabled = true,
+                        onClick = {
+                            focusManager.clearFocus()
+                            if (canSaveRename) onRename(trimmedRename) else onBack()
+                        }
                     )
-                ) { Text("Done", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+                }
             }
         }
     }
@@ -309,27 +1031,35 @@ fun DeleteCategoryDialog(
 ) {
     var actionType by remember { mutableStateOf("reassign") }
     val haptic = LocalHapticFeedback.current
-    val mergeTargets = remember(availableCategories) {
+    val mergeTargets = remember(availableCategories, categoryToDelete) {
         (listOf("Uncategorized") + availableCategories)
             .filter { !it.equals(categoryToDelete, ignoreCase = true) }
             .distinct()
     }
-    var selectedMergeTarget by remember { mutableStateOf(mergeTargets.firstOrNull() ?: "Uncategorized") }
+    var selectedMergeTarget by remember(mergeTargets) { mutableStateOf(mergeTargets.firstOrNull() ?: "Uncategorized") }
 
     AppDialog(
-        title = "Delete Category",
+        title = "Delete category?",
         onDismiss = { haptic.tap(); onDismiss() },
         confirmText = "Delete",
         destructive = true,
         onConfirm = {
             haptic.confirm()
-            onConfirm(if (actionType == "reassign") selectedMergeTarget else null)
+            onConfirm(if (transactionCount > 0 && actionType == "reassign") selectedMergeTarget else null)
         }
     ) {
-        Text(
-            "You have $transactionCount transactions labeled as '$categoryToDelete'. What would you like to do with them?",
-            fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp
-        )
+        if (transactionCount <= 0) {
+            Text(
+                "Are you sure you want to delete \"$categoryToDelete\"? Any monthly spending cap or learned merchant rules for this category will also be removed.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 20.sp
+            )
+        } else {
+            Text(
+                "You have $transactionCount ${if (transactionCount == 1) "transaction" else "transactions"} labeled as \"$categoryToDelete\". What would you like to do with ${if (transactionCount == 1) "it" else "them"}?",
+                fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp
+            )
         Spacer(modifier = Modifier.height(16.dp))
 
         Surface(
@@ -385,6 +1115,7 @@ fun DeleteCategoryDialog(
                     Text("Past transactions stay as '$categoryToDelete'", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+        }
         }
     }
 }
@@ -1025,16 +1756,11 @@ internal fun SafeToSpendCard(
         onClick = onClick
     ) {
         val amount = if (showSafeToSpend) breakdown.safeToSpend else (breakdown.balance ?: 0L)
-        val animatedAmount = remember { Animatable(0f) }
-        
-        LaunchedEffect(revealed, amount) {
-            if (revealed) {
-                delay(150) // Wait for Biometric prompt to fully disappear before animating
-                animatedAmount.animateTo(amount.toFloat(), animationSpec = tween(800, easing = FastOutSlowInEasing))
-            } else {
-                animatedAmount.snapTo(0f)
-            }
-        }
+        val animatedAmount by animateFloatAsState(
+            targetValue = amount.toFloat(),
+            animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
+            label = "safeToSpendAmount"
+        )
         
         AnimatedContent(
             targetState = checking to revealed,
@@ -1050,7 +1776,7 @@ internal fun SafeToSpendCard(
                 else -> {
                     val color = if (showSafeToSpend && breakdown.isShortOnReserve) AppColors.warning else MaterialTheme.colorScheme.onSurface
                     Text(
-                        CurrencyFormat.withSymbol(animatedAmount.value.toLong(), 0),
+                        CurrencyFormat.withSymbol(animatedAmount.toLong(), 0),
                         fontWeight = FontWeight.Bold,
                         fontSize = 24.sp,
                         color = color
@@ -1184,28 +1910,38 @@ internal fun Modifier.quietSelectable(
 fun DashboardProgressBar(
     progress: Float,
     color: Color,
-    modifier: Modifier = Modifier,
     trackColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
-    height: androidx.compose.ui.unit.Dp = 4.dp
+    height: androidx.compose.ui.unit.Dp = 4.dp,
+    modifier: Modifier = Modifier
 ) {
-    val clamped = progress.coerceIn(0f, 1f)
-    Box(
+    val target = progress.coerceIn(0f, 1f)
+    val animState = animateFloatAsState(
+        targetValue = target,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "dashboardProgressBar"
+    )
+
+    Spacer(
         modifier = modifier
             .fillMaxWidth()
             .height(height)
-            .clip(RoundedCornerShape(AppRadius.pill))
-            .background(trackColor)
-    ) {
-        if (clamped > 0f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(clamped)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(AppRadius.pill))
-                    .background(color)
-            )
-        }
-    }
+            .drawBehind {
+                val r = CornerRadius(size.height / 2f, size.height / 2f)
+                drawRoundRect(color = trackColor, cornerRadius = r)
+                val fraction = animState.value.coerceIn(0f, 1f)
+                if (fraction > 0.001f) {
+                    val fillW = (size.width * fraction).coerceAtLeast(size.height.coerceAtMost(size.width))
+                    drawRoundRect(
+                        color = color,
+                        size = Size(fillW, size.height),
+                        cornerRadius = r
+                    )
+                }
+            }
+    )
 }
 
 @Composable
@@ -1605,8 +2341,31 @@ fun ManageCategoryBudgetsSheet(
     startDayOfMonth: Int = 1
 ) {
     val haptic = LocalHapticFeedback.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedCategoryForEdit by rememberSaveable(initialCategory) { mutableStateOf(initialCategory) }
+    var isClosingSheet by remember { mutableStateOf(false) }
+    val inSubpage by rememberUpdatedState(selectedCategoryForEdit != null && initialCategory == null)
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { target ->
+            if (target == SheetValue.Hidden && inSubpage) {
+                selectedCategoryForEdit = null
+                false
+            } else {
+                true
+            }
+        }
+    )
+
+    LaunchedEffect(selectedCategoryForEdit, sheetState.currentValue) {
+        if (selectedCategoryForEdit == null && sheetState.currentValue == SheetValue.Hidden && !isClosingSheet) {
+            runCatching { sheetState.show() }
+        }
+    }
+
+    BackHandler(enabled = selectedCategoryForEdit != null && initialCategory == null) {
+        haptic.tap()
+        selectedCategoryForEdit = null
+    }
 
     val cleanCategories = remember(availableCategories, currentBudgets, transactions) {
         val nonExpenseCategories = setOf(
@@ -1649,8 +2408,19 @@ fun ManageCategoryBudgetsSheet(
     val sheetContentHeight = (LocalConfiguration.current.screenHeightDp * 0.72f).dp.coerceIn(480.dp, 620.dp)
 
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            if (selectedCategoryForEdit != null && initialCategory == null) {
+                haptic.tap()
+                selectedCategoryForEdit = null
+            } else {
+                isClosingSheet = true
+                onDismiss()
+            }
+        },
         sheetState = sheetState,
+        properties = ModalBottomSheetProperties(
+            shouldDismissOnBackPress = !(selectedCategoryForEdit != null && initialCategory == null)
+        ),
         shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
         containerColor = MaterialTheme.colorScheme.background,
         dragHandle = { BottomSheetDefaults.DragHandle() }
@@ -1698,6 +2468,7 @@ fun ManageCategoryBudgetsSheet(
                         },
                         onDone = {
                             haptic.tap()
+                            isClosingSheet = true
                             onDismiss()
                         }
                     )

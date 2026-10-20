@@ -82,10 +82,8 @@ fun ManageNecessitiesScreen(
         context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
             .getInt("key_start_day_of_month", 1)
     }
-    val cycleStartMillis = remember(startDayOfMonth) {
-        BillingCycleHelper.getCycleRange(startDayOfMonth).first
-    }
     val cycleKey = NecessityManager.currentCycleKey(startDayOfMonth)
+    val cycleStartMillis = remember(startDayOfMonth) { BillingCycleHelper.getCycleRange(startDayOfMonth).first }
     val now = remember { System.currentTimeMillis() }
 
     val statuses = remember(localItems, transactions, startDayOfMonth) {

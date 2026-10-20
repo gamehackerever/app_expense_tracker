@@ -48,6 +48,7 @@ import com.expensetracker.offline.util.NecessityManager
 import com.expensetracker.offline.util.confirm
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -56,13 +57,10 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
-import com.expensetracker.offline.ui.viewmodel.SplitViewModel
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InsightsScreen(
     viewModel: MainViewModel,
-    splitViewModel: SplitViewModel,
     isAppLocked: Boolean = false,
     onBack: () -> Unit,
     onNavigateToSettings: (String?) -> Unit = {},
@@ -92,13 +90,23 @@ fun InsightsScreen(
         allTransactions.find { it.transaction.id == activeTransactionForEditId }?.transaction
     }
 
-    // Refresh settings instantly if the user just changed them elsewhere
+    val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
+        var firstResume = true
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshSettings()
-                necessities = NecessityManager.loadNecessities(prefs)
+                if (firstResume) {
+                    firstResume = false
+                } else {
+                    scope.launch(Dispatchers.IO) {
+                        val loaded = NecessityManager.loadNecessities(prefs)
+                        withContext(Dispatchers.Main) {
+                            viewModel.refreshSettings()
+                            necessities = loaded
+                        }
+                    }
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -136,223 +144,220 @@ fun InsightsScreen(
     val elapsedDays = ceil((effectiveNow - cycleStartMillis).toDouble() / DAY_MS).toInt().coerceIn(1, cycleLengthDays)
     val daysLeft = if (isCurrent) ceil((cycleEndMillis - now).toDouble() / DAY_MS).toInt().coerceAtLeast(0) else 0
 
-    // Filter by account, active undo state, AND the viewed cycle with O(K) descending early exit
-    val filteredTransactions by produceState(
-        initialValue = emptyList<TransactionWithDebts>(),
-        allTransactions, accountFilter, cycleStartMillis, cycleEndMillis, isCurrent, pendingDeleteIds
-    ) {
-        value = withContext(Dispatchers.Default) {
-            val isDesc = allTransactions.size < 2 ||
-                    allTransactions.first().transaction.timestamp >= allTransactions.last().transaction.timestamp
-            val result = ArrayList<TransactionWithDebts>()
-            for (item in allTransactions) {
-                val t = item.transaction.timestamp
-                if (t > cycleEndMillis) continue
-                if (t < cycleStartMillis) {
-                    if (isDesc) break else continue
-                }
-                if (item.transaction.id !in pendingDeleteIds && matchesAccount(item.transaction, accountFilter)) {
-                    result.add(item)
-                }
+    // Single-pass synchronous snapshot so Frame 1 of Dashboard -> Insights has 100% of data ready
+    // without 8 async coroutines popping cards into the LazyColumn mid-transition.
+    val filteredTransactions = remember(allTransactions, accountFilter, cycleStartMillis, cycleEndMillis, pendingDeleteIds) {
+        val isDesc = allTransactions.size < 2 ||
+                allTransactions.first().transaction.timestamp >= allTransactions.last().transaction.timestamp
+        val result = ArrayList<TransactionWithDebts>()
+        for (item in allTransactions) {
+            val t = item.transaction.timestamp
+            if (t > cycleEndMillis) continue
+            if (t < cycleStartMillis) {
+                if (isDesc) break else continue
             }
-            result
+            if (item.transaction.id !in pendingDeleteIds && matchesAccount(item.transaction, accountFilter)) {
+                result.add(item)
+            }
         }
+        result
     }
 
-    // Heavy aggregations run off the main thread. null = still computing
-    val payeeInsights by produceState<List<PayeeInsight>?>(initialValue = null, filteredTransactions) {
-        value = withContext(Dispatchers.Default) {
-            filteredTransactions
-                .filter { isSpendDebit(it.transaction) }
-                .groupBy { it.transaction.payee }
-                .map { (payee, txns) ->
-                    PayeeInsight(
-                        payee = payee,
-                        totalSpent = txns.sumOf { myShareOf(it) },
-                        transactionCount = txns.size,
-                        lastSpentTimestamp = txns.maxOf { it.transaction.timestamp }
+    val merchants = remember(filteredTransactions) {
+        filteredTransactions
+            .filter { isSpendDebit(it.transaction) }
+            .groupBy { it.transaction.payee }
+            .map { (payee, txns) ->
+                PayeeInsight(
+                    payee = payee,
+                    totalSpent = txns.sumOf { myShareOf(it) },
+                    transactionCount = txns.size,
+                    lastSpentTimestamp = txns.maxOf { it.transaction.timestamp }
+                )
+            }
+            .sortedByDescending { it.totalSpent }
+    }
+
+    val categories = remember(filteredTransactions) {
+        val refundsByCat = filteredTransactions
+            .filter { com.expensetracker.offline.ui.dashboard.isRefundCredit(it.transaction) }
+            .groupBy { it.transaction.category.trim().lowercase() }
+            .mapValues { (_, list) -> list.sumOf { it.transaction.amount } }
+
+        filteredTransactions
+            .filter { isSpendDebit(it.transaction) }
+            .groupBy { it.transaction.category.trim() }
+            .mapNotNull { (category, txns) ->
+                val gross = txns.sumOf { myShareOf(it) }
+                val refund = refundsByCat[category.lowercase()] ?: 0L
+                val net = (gross - refund).coerceAtLeast(0L)
+                if (net > 0L || txns.isNotEmpty()) {
+                    CategoryInsight(
+                        category = category,
+                        totalSpent = net,
+                        transactionCount = txns.size
                     )
-                }
-                .sortedByDescending { it.totalSpent }
-        }
+                } else null
+            }
+            .sortedByDescending { it.totalSpent }
     }
 
-    val categoryInsights by produceState<List<CategoryInsight>?>(initialValue = null, filteredTransactions) {
-        value = withContext(Dispatchers.Default) {
-            val refundsByCat = filteredTransactions
-                .filter { com.expensetracker.offline.ui.dashboard.isRefundCredit(it.transaction) }
-                .groupBy { it.transaction.category.trim().lowercase() }
-                .mapValues { (_, list) -> list.sumOf { it.transaction.amount } }
+    val stats = remember(filteredTransactions, allTransactions, accountFilter, cycleStartMillis, cycleEndMillis, elapsedDays, startDayOfMonth, cycleOffset, pendingDeleteIds, earliestTxnMillis) {
+        val elapsed = (minOf(System.currentTimeMillis(), cycleEndMillis) - cycleStartMillis).coerceAtLeast(0L)
+        val (prevStart, _) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset - 1)
+        val prevEnd = minOf(prevStart + elapsed, cycleStartMillis)
 
-            filteredTransactions
-                .filter { isSpendDebit(it.transaction) }
-                .groupBy { it.transaction.category.trim() }
-                .mapNotNull { (category, txns) ->
-                    val gross = txns.sumOf { myShareOf(it) }
-                    val refund = refundsByCat[category.lowercase()] ?: 0L
-                    val net = (gross - refund).coerceAtLeast(0L)
-                    if (net > 0L || txns.isNotEmpty()) {
-                        CategoryInsight(
-                            category = category,
-                            totalSpent = net,
-                            transactionCount = txns.size
-                        )
-                    } else null
-                }
-                .sortedByDescending { it.totalSpent }
-        }
-    }
-
-    val stats by produceState(
-        initialValue = CycleStats(),
-        filteredTransactions, allTransactions, accountFilter, cycleStartMillis, cycleEndMillis, elapsedDays
-    ) {
-        value = withContext(Dispatchers.Default) {
-            val elapsed = (minOf(System.currentTimeMillis(), cycleEndMillis) - cycleStartMillis).coerceAtLeast(0L)
-            val (prevStart, _) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset - 1)
-            val prevEnd = minOf(prevStart + elapsed, cycleStartMillis)
-
-            val isDesc = allTransactions.size < 2 ||
-                    allTransactions.first().transaction.timestamp >= allTransactions.last().transaction.timestamp
-            var prevSpent = 0L
-            for (item in allTransactions) {
-                val t = item.transaction.timestamp
-                if (t >= prevEnd) continue
-                if (t < prevStart) {
-                    if (isDesc) break else continue
-                }
-                if (item.transaction.id !in pendingDeleteIds &&
-                    isSpendDebit(item.transaction) &&
-                    matchesAccount(item.transaction, accountFilter)
-                ) {
-                    prevSpent += myShareOf(item)
+        val isDesc = allTransactions.size < 2 ||
+                allTransactions.first().transaction.timestamp >= allTransactions.last().transaction.timestamp
+        var prevSpent = 0L
+        val prevActiveDays = HashSet<Int>()
+        for (item in allTransactions) {
+            val t = item.transaction.timestamp
+            if (t >= prevEnd) continue
+            if (t < prevStart) {
+                if (isDesc) break else continue
+            }
+            if (item.transaction.id !in pendingDeleteIds &&
+                isSpendDebit(item.transaction) &&
+                matchesAccount(item.transaction, accountFilter)
+            ) {
+                val share = myShareOf(item)
+                if (share > 0L) {
+                    prevSpent += share
+                    prevActiveDays.add(((t - prevStart) / DAY_MS).toInt())
                 }
             }
+        }
 
-            val spendTxns = filteredTransactions.filter { isSpendDebit(it.transaction) && myShareOf(it) > 0L }
-            val largest = spendTxns.maxByOrNull { myShareOf(it) }
+        // Only treat prior-cycle spend as a valid comparison baseline when the user's transaction
+        // history actually spans back to the start of the previous cycle and has at least 3 active
+        // spend days (and >= ₹500 spent), preventing partial/onboarding history from producing
+        // misleading "+2169%" spikes.
+        val hasPriorHistoryCoverage = earliestTxnMillis != null && earliestTxnMillis <= (prevStart + 5 * DAY_MS)
+        val hasReliablePrev = hasPriorHistoryCoverage && prevSpent >= 500_00L && prevActiveDays.size >= 3
 
-            val activeDaysCount = spendTxns
-                .map { ((it.transaction.timestamp - cycleStartMillis) / DAY_MS).toInt() }
-                .distinct()
-                .count()
-            val spendFree = (elapsedDays - activeDaysCount).coerceAtLeast(0)
+        val spendTxns = filteredTransactions.filter { isSpendDebit(it.transaction) && myShareOf(it) > 0L }
+        val largest = spendTxns.maxByOrNull { myShareOf(it) }
 
-            CycleStats(
-                prevSpent = prevSpent,
-                largestAmount = largest?.let { myShareOf(it) } ?: 0L,
-                largestPayee = largest?.transaction?.payee,
-                largestTxnId = largest?.transaction?.id,
-                spendFreeDays = spendFree
+        val activeDaysCount = spendTxns
+            .map { ((it.transaction.timestamp - cycleStartMillis) / DAY_MS).toInt() }
+            .distinct()
+            .count()
+        val spendFree = (elapsedDays - activeDaysCount).coerceAtLeast(0)
+
+        CycleStats(
+            prevSpent = prevSpent,
+            hasReliablePrevBaseline = hasReliablePrev,
+            largestAmount = largest?.let { myShareOf(it) } ?: 0L,
+            largestPayee = largest?.transaction?.payee,
+            largestTxnId = largest?.transaction?.id,
+            spendFreeDays = spendFree
+        )
+    }
+
+    val cycleIncomePaise = remember(filteredTransactions) {
+        filteredTransactions
+            .filter { isIncomeCredit(it.transaction) }
+            .sumOf { it.transaction.amount }
+    }
+
+    val cycleInvestmentsPaise = remember(filteredTransactions) {
+        filteredTransactions
+            .filter { isSpendDebit(it.transaction) && it.transaction.category.equals("Investments", ignoreCase = true) }
+            .sumOf { myShareOf(it) }
+    }
+
+    val dailySpendMap = remember(filteredTransactions, cycleStartMillis) {
+        val map = HashMap<Int, Long>()
+        for (item in filteredTransactions) {
+            if (isSpendDebit(item.transaction)) {
+                val share = myShareOf(item)
+                if (share > 0L) {
+                    val dayIdx = ((item.transaction.timestamp - cycleStartMillis) / DAY_MS).toInt().coerceAtLeast(0)
+                    map[dayIdx] = (map[dayIdx] ?: 0L) + share
+                }
+            }
+        }
+        map
+    }
+
+    val trendPoints = remember(allTransactions, accountFilter, startDayOfMonth, cycleOffset, pendingDeleteIds) {
+        val monthFmt = SimpleDateFormat("MMM", Locale.getDefault())
+        val bounds = ((-5)..0).map { rel ->
+            val (cStart, cEnd) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset + rel)
+            Triple(rel, cStart, cEnd)
+        }
+        val earliestStart = bounds.first().second
+        val latestEnd = bounds.last().third
+        val spentByIdx = LongArray(6)
+        val incomeByIdx = LongArray(6)
+        val isDesc = allTransactions.size < 2 ||
+                allTransactions.first().transaction.timestamp >= allTransactions.last().transaction.timestamp
+
+        for (item in allTransactions) {
+            val t = item.transaction.timestamp
+            if (t > latestEnd) continue
+            if (t < earliestStart) {
+                if (isDesc) break else continue
+            }
+            if (item.transaction.id in pendingDeleteIds || !matchesAccount(item.transaction, accountFilter)) continue
+            for (i in 0 until 6) {
+                val b = bounds[i]
+                if (t in b.second..b.third) {
+                    if (isSpendDebit(item.transaction)) spentByIdx[i] += myShareOf(item)
+                    else if (isIncomeCredit(item.transaction)) incomeByIdx[i] += item.transaction.amount
+                    break
+                }
+            }
+        }
+
+        bounds.mapIndexed { i, (rel, cStart, _) ->
+            CycleTrendPoint(
+                label = monthFmt.format(java.util.Date(cStart)),
+                spentPaise = spentByIdx[i],
+                incomePaise = incomeByIdx[i],
+                isSelected = rel == 0
             )
         }
     }
 
-    val cycleIncomePaise by produceState(initialValue = 0L, filteredTransactions) {
-        value = withContext(Dispatchers.Default) {
-            filteredTransactions
-                .filter { isIncomeCredit(it.transaction) }
-                .sumOf { it.transaction.amount }
-        }
-    }
-
-    val cycleInvestmentsPaise by produceState(initialValue = 0L, filteredTransactions) {
-        value = withContext(Dispatchers.Default) {
-            filteredTransactions
-                .filter { isSpendDebit(it.transaction) && it.transaction.category.equals("Investments", ignoreCase = true) }
-                .sumOf { myShareOf(it) }
-        }
-    }
-
-    val dailySpendMap by produceState(initialValue = emptyMap<Int, Long>(), filteredTransactions, cycleStartMillis) {
-        value = withContext(Dispatchers.Default) {
-            val map = HashMap<Int, Long>()
-            for (item in filteredTransactions) {
-                if (isSpendDebit(item.transaction)) {
-                    val share = myShareOf(item)
-                    if (share > 0L) {
-                        val dayIdx = ((item.transaction.timestamp - cycleStartMillis) / DAY_MS).toInt().coerceAtLeast(0)
-                        map[dayIdx] = (map[dayIdx] ?: 0L) + share
-                    }
+    val activeWarnings = remember(isCurrent, selectedAccountFilter, allTransactions, categoryBudgets, startDayOfMonth, pendingDeleteIds, dismissedCategoryWarningLevels) {
+        if (isCurrent && selectedAccountFilter == null) {
+            com.expensetracker.offline.ui.dashboard.computeCategoryBudgetStatuses(
+                transactions = allTransactions,
+                categoryBudgets = categoryBudgets,
+                startDayOfMonth = startDayOfMonth,
+                pendingDeleteIds = pendingDeleteIds.keys
+            ).filter { status ->
+                if (!status.isOverBudget && !status.isAtLimit && !status.isNearLimit) return@filter false
+                val dismissedLevel = dismissedCategoryWarningLevels.entries
+                    .firstOrNull { it.key.equals(status.category, ignoreCase = true) }
+                    ?.value
+                when {
+                    status.isOverBudget -> dismissedLevel != com.expensetracker.offline.data.repository.SettingsRepository.WARNING_LEVEL_OVER
+                    else -> dismissedLevel == null
                 }
             }
-            map
-        }
+        } else emptyList()
     }
 
-    val trendPoints by produceState(initialValue = emptyList<CycleTrendPoint>(), allTransactions, accountFilter, startDayOfMonth, cycleOffset, pendingDeleteIds) {
-        value = withContext(Dispatchers.Default) {
-            val monthFmt = SimpleDateFormat("MMM", Locale.getDefault())
-            ((-5)..0).map { rel ->
-                val targetOffset = cycleOffset + rel
-                val (cStart, cEnd) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, targetOffset)
-                var spent = 0L
-                var income = 0L
-                for (item in allTransactions) {
-                    val t = item.transaction.timestamp
-                    if (t > cEnd) continue
-                    if (t < cStart) continue
-                    if (item.transaction.id in pendingDeleteIds || !matchesAccount(item.transaction, accountFilter)) continue
-                    if (isSpendDebit(item.transaction)) spent += myShareOf(item)
-                    else if (isIncomeCredit(item.transaction)) income += item.transaction.amount
-                }
-                val label = monthFmt.format(java.util.Date(cStart))
-                CycleTrendPoint(
-                    label = label,
-                    spentPaise = spent,
-                    incomePaise = income,
-                    isSelected = rel == 0
-                )
-            }
-        }
-    }
-
-    val merchants = payeeInsights
-    val categories = categoryInsights
-    val isLoaded = merchants != null && categories != null
-    val grandTotalDebit: Long = categories?.sumOf { it.totalSpent } ?: 0L
-    val totalTransactions = categories?.sumOf { it.transactionCount } ?: 0
+    val isLoaded = true
+    val grandTotalDebit: Long = remember(categories) { categories.sumOf { it.totalSpent } }
+    val totalTransactions = remember(categories) { categories.sumOf { it.transactionCount } }
     val hasSpending = totalTransactions > 0
 
     val dailyAverage: Double = if (elapsedDays > 0) grandTotalDebit.toDouble() / elapsedDays else 0.0
     val deltaPct: Double? = if (stats.prevSpent > 0L) ((grandTotalDebit - stats.prevSpent).toDouble() / stats.prevSpent.toDouble()) * 100.0 else null
 
-    var selectedCategoryForBreakdown by remember { mutableStateOf<String?>(null) }
-    var selectedMerchantForBreakdown by remember { mutableStateOf<String?>(null) }
-
-    var isAnimationTriggered by remember { mutableStateOf(false) }
-    LaunchedEffect(isAppLocked) {
-        if (!isAppLocked) {
-            isAnimationTriggered = false
-            delay(180)
-            isAnimationTriggered = true
-        } else {
-            isAnimationTriggered = false
-        }
-    }
-
-    val animatedGrandTotal by animateFloatAsState(
-        targetValue = if (isAnimationTriggered) grandTotalDebit.toFloat() else 0f,
-        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
-        label = "grandTotalAnimation"
-    )
+    var selectedCategoryForBreakdown by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedMerchantForBreakdown by rememberSaveable { mutableStateOf<String?>(null) }
+    var returnToCategoryBreakdown by rememberSaveable { mutableStateOf<String?>(null) }
+    var returnToMerchantBreakdown by rememberSaveable { mutableStateOf<String?>(null) }
 
     val cycleProgress = (elapsedDays.toFloat() / cycleLengthDays).coerceIn(0f, 1f)
-    val animatedCycle by animateFloatAsState(
-        targetValue = if (isAnimationTriggered) cycleProgress else 0f,
-        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
-        label = "cycleProgressAnimation"
-    )
 
-    var startBarAnimations by remember { mutableStateOf(false) }
+    val startBarAnimations = !isAppLocked
     val seenSections = remember { mutableSetOf<String>() }
-
-    // Re-trigger the bar animations every time the account filter or cycle changes
-    LaunchedEffect(selectedAccountFilter, cycleOffset) {
-        startBarAnimations = false
-        delay(50)
-        startBarAnimations = true
-    }
 
     val listState = rememberLazyListState()
     val isScrolled by remember {
@@ -456,23 +461,6 @@ fun InsightsScreen(
             }
 
             // --- CATEGORY BUDGET WARNINGS (Active current cycle only, two-stage dismissal) ---
-            val activeWarnings = if (isCurrent && selectedAccountFilter == null) {
-                com.expensetracker.offline.ui.dashboard.computeCategoryBudgetStatuses(
-                    transactions = allTransactions,
-                    categoryBudgets = categoryBudgets,
-                    startDayOfMonth = startDayOfMonth,
-                    pendingDeleteIds = pendingDeleteIds.keys
-                ).filter { status ->
-                    if (!status.isOverBudget && !status.isAtLimit && !status.isNearLimit) return@filter false
-                    val dismissedLevel = dismissedCategoryWarningLevels.entries
-                        .firstOrNull { it.key.equals(status.category, ignoreCase = true) }
-                        ?.value
-                    when {
-                        status.isOverBudget -> dismissedLevel != com.expensetracker.offline.data.repository.SettingsRepository.WARNING_LEVEL_OVER
-                        else -> dismissedLevel == null
-                    }
-                }
-            } else emptyList()
 
             if (activeWarnings.isNotEmpty()) {
                 item(key = "budget_warnings") {
@@ -558,7 +546,7 @@ fun InsightsScreen(
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            MoneyHero(amount = animatedGrandTotal / 100.0, fractionDigits = 2, size = 44.sp)
+                            MoneyHero(amount = grandTotalDebit / 100.0, fractionDigits = 2, size = 44.sp)
 
                             Spacer(modifier = Modifier.height(4.dp))
                             val budgetContextSuffix = if (hasSpending && monthlyBudget > 0L && selectedAccountFilter == null) {
@@ -577,7 +565,7 @@ fun InsightsScreen(
                             // Cycle clock: where we are in the billing cycle
                             Spacer(modifier = Modifier.height(18.dp))
                             InsightsProgressBar(
-                                progress = animatedCycle,
+                                progress = if (startBarAnimations) cycleProgress else 0f,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(modifier = Modifier.height(8.dp))
@@ -603,9 +591,13 @@ fun InsightsScreen(
                                 )
                             }
 
+                            val monthlyBudgetPaise = monthlyBudget * 100L
+                            val hasActiveBudgetHere = monthlyBudgetPaise > 0L && selectedAccountFilter == null
                             val showProjected = hasSpending && isCurrent && daysLeft > 0 && elapsedDays >= 3
+                            val showSafeAllowance = hasSpending && isCurrent && hasActiveBudgetHere && daysLeft > 0
+                            val showPrevComparison = hasSpending && !showSafeAllowance && stats.hasReliablePrevBaseline
                             val showNoSpend = hasSpending && stats.spendFreeDays > 0
-                            if (showProjected || deltaPct != null || showNoSpend) {
+                            if (showProjected || showSafeAllowance || showPrevComparison || showNoSpend) {
                                 Spacer(modifier = Modifier.height(16.dp))
                                 HorizontalDivider(
                                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
@@ -617,27 +609,55 @@ fun InsightsScreen(
                                 ) {
                                     if (showProjected) {
                                         val projPaise = (dailyAverage * cycleLengthDays).toLong()
-                                        val overBudget = monthlyBudget > 0L && selectedAccountFilter == null && projPaise > monthlyBudget * 100L
+                                        val overBudget = hasActiveBudgetHere && projPaise > monthlyBudgetPaise
+                                        val projCaption = when {
+                                            overBudget -> "${formatRupees(projPaise - monthlyBudgetPaise)} over budget"
+                                            hasActiveBudgetHere -> "${formatRupees(monthlyBudgetPaise - projPaise)} under budget"
+                                            else -> "by cycle end"
+                                        }
                                         HeroFact(
                                             modifier = Modifier.weight(1f),
                                             label = "Projected",
                                             value = formatRupees(dailyAverage * cycleLengthDays),
-                                            caption = if (overBudget) "above budget" else "by cycle end",
+                                            amountPaise = projPaise,
+                                            caption = projCaption,
                                             valueColor = if (overBudget) InsightsColors.negative else MaterialTheme.colorScheme.onSurface
                                         )
                                     }
-                                    if (deltaPct != null) {
+                                    if (showSafeAllowance) {
+                                        val remainingPaise = monthlyBudgetPaise - grandTotalDebit
+                                        if (remainingPaise > 0L) {
+                                            val safePerDayPaise = remainingPaise / daysLeft
+                                            HeroFact(
+                                                modifier = Modifier.weight(1f),
+                                                label = "Safe daily pace",
+                                                value = "${formatRupees(safePerDayPaise)}/day",
+                                                caption = "${formatRupees(remainingPaise)} left for ${daysLeft}d",
+                                                valueColor = if (grandTotalDebit.toDouble() / monthlyBudgetPaise.toDouble() >= 0.90) MaterialTheme.colorScheme.onSurface else InsightsColors.positive
+                                            )
+                                        } else {
+                                            val overPaise = grandTotalDebit - monthlyBudgetPaise
+                                            HeroFact(
+                                                modifier = Modifier.weight(1f),
+                                                label = "Budget status",
+                                                value = "+${formatRupees(overPaise)}",
+                                                caption = "above ${formatRupees(monthlyBudgetPaise)} cap",
+                                                valueColor = InsightsColors.negative
+                                            )
+                                        }
+                                    } else if (showPrevComparison) {
+                                        val diffPaise = grandTotalDebit - stats.prevSpent
                                         val muted = MaterialTheme.colorScheme.onSurfaceVariant
                                         val (trendText, trendColor) = when {
-                                            abs(deltaPct) < 1.0 -> "On par" to muted
-                                            deltaPct > 0 -> "▲ ${deltaPct.toInt()}%" to InsightsColors.negative
-                                            else -> "▼ ${abs(deltaPct).toInt()}%" to InsightsColors.positive
+                                            abs(diffPaise) < 50_00L -> "Same pace" to muted
+                                            diffPaise > 0L -> "+${formatRupees(diffPaise)}" to InsightsColors.negative
+                                            else -> "−${formatRupees(abs(diffPaise))}" to InsightsColors.positive
                                         }
                                         HeroFact(
                                             modifier = Modifier.weight(1f),
-                                            label = "vs last cycle",
+                                            label = if (isCurrent) "vs last cycle (${elapsedDays}d)" else "vs prior cycle",
                                             value = trendText,
-                                            caption = if (isCurrent) "at this point" else "previous cycle",
+                                            caption = "was ${formatRupees(stats.prevSpent)} last cycle",
                                             valueColor = trendColor
                                         )
                                     }
@@ -675,6 +695,7 @@ fun InsightsScreen(
                                 icon = Icons.Default.CalendarToday,
                                 label = "Daily average",
                                 value = formatRupees(dailyAverage),
+                                amountPaise = dailyAverage.toLong(),
                                 caption = "over $elapsedDays ${if (elapsedDays == 1) "day" else "days"}",
                                 accent = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -683,6 +704,7 @@ fun InsightsScreen(
                                 icon = Icons.Default.ReceiptLong,
                                 label = "Largest",
                                 value = formatRupees(stats.largestAmount),
+                                amountPaise = stats.largestAmount,
                                 caption = stats.largestPayee ?: "—",
                                 accent = MaterialTheme.colorScheme.onSurfaceVariant,
                                 onClick = stats.largestTxnId?.let { id ->
@@ -746,7 +768,7 @@ fun InsightsScreen(
                 }
             }
 
-            if (isLoaded && hasSpending && categories != null && merchants != null) {
+            if (isLoaded && hasSpending) {
                 item(key = "categories") {
                     EntranceItem(
                         "categories",
@@ -849,11 +871,13 @@ fun InsightsScreen(
             onDismiss = { selectedCategoryForBreakdown = null },
             budgetPaise = catBudget,
             onManageBudgetClick = {
+                returnToCategoryBreakdown = catName
                 selectedCategoryForBreakdown = null
                 initialCategoryForBudgetSheet = catName
                 showManageCategoryBudgetsSheet = true
             },
             onTransactionClick = { txn ->
+                returnToCategoryBreakdown = catName
                 selectedCategoryForBreakdown = null
                 activeTransactionForEditId = txn.id
             }
@@ -867,6 +891,7 @@ fun InsightsScreen(
             allTransactions = filteredTransactions,
             onDismiss = { selectedMerchantForBreakdown = null },
             onTransactionClick = { txn ->
+                returnToMerchantBreakdown = merchantName
                 selectedMerchantForBreakdown = null
                 activeTransactionForEditId = txn.id
             }
@@ -937,19 +962,29 @@ fun InsightsScreen(
                 .filter { it.isNotBlank() }
                 .distinct()
         }
+        val returnFromEdit = {
+            activeTransactionForEditId = null
+            if (returnToCategoryBreakdown != null) {
+                selectedCategoryForBreakdown = returnToCategoryBreakdown
+                returnToCategoryBreakdown = null
+            } else if (returnToMerchantBreakdown != null) {
+                selectedMerchantForBreakdown = returnToMerchantBreakdown
+                returnToMerchantBreakdown = null
+            }
+        }
         EditTransactionSheet(
             transaction = txn,
             availableCategories = availableCats,
-            onDismiss = { activeTransactionForEditId = null },
+            onDismiss = returnFromEdit,
             onSave = { updatedTxn ->
                 viewModel.updateTransaction(updatedTxn, learnRule = true)
                 haptic.confirm()
-                activeTransactionForEditId = null
+                returnFromEdit()
             },
             onDelete = { id ->
                 haptic.confirm()
-                activeTransactionForEditId = null
                 viewModel.stageTransactionDelete(id)
+                returnFromEdit()
             },
             onDuplicate = { txnToDuplicate ->
                 haptic.confirm()
@@ -960,7 +995,7 @@ fun InsightsScreen(
             },
             linkedAccounts = linkedAccounts,
             totalOwedByOthers = allTransactions.find { it.transaction.id == txn.id }?.debts?.sumOf { it.amountOwed.toLong() } ?: 0L,
-            onUndoRepayment = { splitViewModel.undoRepayment(txn) },
+            onUndoRepayment = { viewModel.undoRepayment(txn) },
             onUpdateAllPast = { oldPayee, newPayee, newCategory ->
                 viewModel.updatePayeeAndCategoryForAll(oldPayee, newPayee, newCategory)
             },
@@ -983,7 +1018,7 @@ fun InsightsScreen(
                 (listOf("You") + existingFriends + recentFriends).distinct()
             },
             onSaveSplit = { splitParticipants ->
-                splitViewModel.saveMultiSplit(txn.id, splitParticipants, "You")
+                viewModel.saveMultiSplit(txn.id, splitParticipants, "You")
             }
         )
     }
@@ -1007,6 +1042,10 @@ fun InsightsScreen(
             onDismiss = {
                 showManageCategoryBudgetsSheet = false
                 initialCategoryForBudgetSheet = null
+                if (returnToCategoryBreakdown != null) {
+                    selectedCategoryForBreakdown = returnToCategoryBreakdown
+                    returnToCategoryBreakdown = null
+                }
             },
             initialCategory = initialCategoryForBudgetSheet,
             transactions = allTransactions,
