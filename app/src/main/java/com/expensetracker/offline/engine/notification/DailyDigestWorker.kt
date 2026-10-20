@@ -17,9 +17,17 @@ class DailyDigestWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        if (!SettingsRepository(applicationContext).dailyDigestEnabled) return Result.success()
-
+        val settingsRepo = SettingsRepository(applicationContext)
         val db = AppDatabase.getInstance(applicationContext)
+        val dao = db.transactionDao()
+
+        if (settingsRepo.billRemindersEnabled) {
+            val recentTxns = dao.getRecentTransactions(500)
+            DailySummaryReceiver.checkAndNotifyUpcomingBills(applicationContext, recentTxns)
+        }
+
+        if (!settingsRepo.dailyDigestEnabled) return Result.success()
+
         val cal = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
@@ -27,14 +35,11 @@ class DailyDigestWorker(
             set(Calendar.MILLISECOND, 0)
         }
         val startOfDay = cal.timeInMillis
-        // FIXED: Subtract 1ms to ensure strict 23:59:59.999 boundary
         val endOfDay = cal.apply { add(Calendar.DATE, 1) }.timeInMillis - 1
 
-        // FIXED: getMySpendBetween returns Long paise (PO-H)
-        val spentPaise = db.transactionDao().getMySpendBetween(startOfDay, endOfDay)
-        val count = db.transactionDao().getMySpendCountBetween(startOfDay, endOfDay)
+        val spentPaise = dao.getMySpendBetween(startOfDay, endOfDay)
+        val count = dao.getMySpendCountBetween(startOfDay, endOfDay)
 
-        // showNotification converts paise to rupees and handles Auto-Capture health check internally
         DailySummaryReceiver.showNotification(applicationContext, spentPaise, count)
 
         return Result.success()
