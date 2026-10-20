@@ -1,6 +1,7 @@
 package com.expensetracker.offline.ui.theme
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Category
@@ -56,6 +57,10 @@ private enum class CategoryKind(val color: Color?, val icon: ImageVector, val ke
         Color(0xFF06B6D4), Icons.Default.ReceiptLong, // Cyan
         setOf("bills", "bill", "utilities", "utility", "recharge", "electricity", "internet", "wifi", "broadband",
             "emi", "insurance", "loan")
+    ),
+    TRANSFER(
+        Color(0xFF64748B), Icons.AutoMirrored.Filled.CompareArrows, // Slate
+        setOf("transfer", "transfers", "self", "sweep")
     ),
     BANK(
         Color(0xFF64748B), Icons.Default.AccountBalance, // Slate

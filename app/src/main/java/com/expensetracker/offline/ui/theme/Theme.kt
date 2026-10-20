@@ -11,37 +11,90 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
+// Complete Monochromatic Zinc Dark Palette — overrides every M3 slot so zero default purple/pink leaks
 private val DarkColorScheme = darkColorScheme(
-    primary = GreenPrimary,
-    secondary = GreenSecondary,
-    background = DarkBackground,
-    surface = DarkSurface,
-    surfaceVariant = DarkSurfaceVariant,
+    primary = DarkTextPrimary,
     onPrimary = DarkBackground,
+    primaryContainer = DarkSurfaceVariant,
+    onPrimaryContainer = DarkTextPrimary,
+    inversePrimary = LightTextPrimary,
+    secondary = DarkTextPrimary,
+    onSecondary = DarkBackground,
+    secondaryContainer = DarkSurfaceVariant,
+    onSecondaryContainer = DarkTextPrimary,
+    tertiary = GreenSecondary,
+    onTertiary = DarkBackground,
+    tertiaryContainer = DarkSurfaceVariant,
+    onTertiaryContainer = DarkTextPrimary,
+    background = DarkBackground,
     onBackground = DarkTextPrimary,
+    surface = DarkSurface,
     onSurface = DarkTextPrimary,
+    surfaceVariant = DarkSurfaceVariant,
     onSurfaceVariant = DarkTextSecondary,
+    surfaceTint = Color.Transparent,
+    inverseSurface = LightSurface,
+    inverseOnSurface = LightTextPrimary,
+    error = ExpenseRed,
+    onError = Color.White,
+    errorContainer = Color(0xFF3B1219),
+    onErrorContainer = Color(0xFFFCA5A5),
+    outline = Color(0xFF52525B),
     outlineVariant = DarkOutline,
-    error = ExpenseRed
+    scrim = Color(0xCC000000),
+    surfaceBright = Color(0xFF27272A),
+    surfaceDim = DarkBackground,
+    surfaceContainerLowest = DarkBackground,
+    surfaceContainerLow = DarkSurface,
+    surfaceContainer = DarkSurface,
+    surfaceContainerHigh = DarkSurfaceVariant,
+    surfaceContainerHighest = Color(0xFF3F3F46)
 )
 
+// Complete Monochromatic Zinc Light Palette — overrides every M3 slot so zero default purple/lavender leaks
 private val LightColorScheme = lightColorScheme(
-    primary = GreenPrimary,
-    secondary = GreenSecondary,
-    background = LightBackground,
-    surface = LightSurface,
-    surfaceVariant = LightSurfaceVariant,
+    primary = LightTextPrimary,
     onPrimary = LightSurface,
+    primaryContainer = LightSurfaceVariant,
+    onPrimaryContainer = LightTextPrimary,
+    inversePrimary = DarkTextPrimary,
+    secondary = LightTextPrimary,
+    onSecondary = LightSurface,
+    secondaryContainer = LightSurfaceVariant,
+    onSecondaryContainer = LightTextPrimary,
+    tertiary = GreenPrimary,
+    onTertiary = LightSurface,
+    tertiaryContainer = LightSurfaceVariant,
+    onTertiaryContainer = LightTextPrimary,
+    background = LightBackground,
     onBackground = LightTextPrimary,
+    surface = LightSurface,
     onSurface = LightTextPrimary,
+    surfaceVariant = LightSurfaceVariant,
     onSurfaceVariant = LightTextSecondary,
+    surfaceTint = Color.Transparent,
+    inverseSurface = DarkSurface,
+    inverseOnSurface = DarkTextPrimary,
+    error = ExpenseRed,
+    onError = Color.White,
+    errorContainer = Color(0xFFFEE2E2),
+    onErrorContainer = Color(0xFF991B1B),
+    outline = Color(0xFFA1A1AA),
     outlineVariant = LightOutline,
-    error = ExpenseRed
+    scrim = Color(0x66000000),
+    surfaceBright = LightSurface,
+    surfaceDim = Color(0xFFF4F4F5),
+    surfaceContainerLowest = LightSurface,
+    surfaceContainerLow = LightBackground,
+    surfaceContainer = LightSurfaceVariant,
+    surfaceContainerHigh = Color(0xFFE4E4E7),
+    surfaceContainerHighest = Color(0xFFD4D4D8)
 )
 
 @Composable

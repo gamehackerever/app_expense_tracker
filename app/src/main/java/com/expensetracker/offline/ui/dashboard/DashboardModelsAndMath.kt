@@ -175,7 +175,7 @@ data class DebtInfo(
     val outstanding: Long
 )
 
-internal data class SplitLinkInfo(
+data class SplitLinkInfo(
     val linkedCreditsByDebtId: Map<Long, List<TransactionEntity>>,
     val linkedDebtIdByCreditId: Map<Long, Long>
 )
@@ -191,8 +191,24 @@ internal fun outstandingFor(debt: SplitDebtEntity, linkInfo: SplitLinkInfo): Lon
     return outstanding
 }
 
-internal fun outstandingOwed(item: TransactionWithDebts, linkInfo: SplitLinkInfo): Long =
-    item.debts.sumOf { outstandingFor(it, linkInfo) }
+internal fun mySpendShare(item: TransactionWithDebts): Long {
+    val paidBy = item.transaction.paidBy?.trim()
+    return if (paidBy != null && paidBy.isNotEmpty() && !paidBy.equals("You", ignoreCase = true)) {
+        item.debts.firstOrNull { it.debtorName.trim().equals("You", ignoreCase = true) }?.amountOwed ?: 0L
+    } else {
+        val othersSum = item.debts.filter { !it.debtorName.trim().equals("You", ignoreCase = true) }.sumOf { it.amountOwed.toLong() }
+        (item.transaction.amount - othersSum).coerceAtLeast(0L)
+    }
+}
+
+internal fun outstandingOwed(item: TransactionWithDebts, linkInfo: SplitLinkInfo): Long {
+    val paidBy = item.transaction.paidBy?.trim()
+    return if (paidBy != null && paidBy.isNotEmpty() && !paidBy.equals("You", ignoreCase = true)) {
+        item.debts.filter { it.debtorName.trim().equals("You", ignoreCase = true) }.sumOf { outstandingFor(it, linkInfo) }
+    } else {
+        item.debts.filter { !it.debtorName.trim().equals("You", ignoreCase = true) }.sumOf { outstandingFor(it, linkInfo) }
+    }
+}
 
 internal fun isRepaymentCredit(credit: TransactionEntity): Boolean = credit.linkedDebtId != null
 
@@ -405,9 +421,8 @@ internal fun computeCycleCategoryNetSpend(
         val key = txn.category.trim().lowercase()
         if (key.isEmpty() || key == "split settlement") continue
 
-        if (txn.type == TransactionType.DEBIT && !txn.excludeFromSpend) {
-            val debtsSum = item.debts.sumOf { d -> d.amountOwed.toLong() }
-            val myShare = (txn.amount - debtsSum).coerceAtLeast(0L)
+        if (txn.type == TransactionType.DEBIT && !txn.excludeFromSpend && !key.equals("transfer", ignoreCase = true)) {
+            val myShare = mySpendShare(item)
             grossByKey[key] = (grossByKey[key] ?: 0L) + myShare
             countByKey[key] = (countByKey[key] ?: 0) + 1
         } else if (isRefundCredit(txn)) {

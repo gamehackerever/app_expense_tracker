@@ -17,6 +17,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -115,14 +116,30 @@ internal data class CycleStats(
 internal fun matchesAccount(txn: TransactionEntity, filter: AccountInfo?): Boolean =
     filter == null || (txn.bankName == filter.bankName && txn.accountNumber == filter.accountNumber)
 
-// Your own share of a bill = amount minus what other people owe (same rule the Dashboard uses).
-internal fun myShareOf(item: TransactionWithDebts): Long =
-    (item.transaction.amount - item.debts.sumOf { it.amountOwed.toLong() }).coerceAtLeast(0L)
+// Your own share of a bill = amount minus what other people owe (or your debt row when a friend paid).
+internal fun myShareOf(item: TransactionWithDebts): Long {
+    val paidBy = item.transaction.paidBy?.trim()
+    return if (paidBy != null && paidBy.isNotEmpty() && !paidBy.equals("You", ignoreCase = true)) {
+        item.debts.firstOrNull { it.debtorName.trim().equals("You", ignoreCase = true) }?.amountOwed ?: 0L
+    } else {
+        val othersSum = item.debts.filter { !it.debtorName.trim().equals("You", ignoreCase = true) }.sumOf { it.amountOwed.toLong() }
+        (item.transaction.amount - othersSum).coerceAtLeast(0L)
+    }
+}
 
 internal fun isSpendDebit(txn: TransactionEntity): Boolean =
     txn.type == TransactionType.DEBIT &&
             !txn.excludeFromSpend &&
-            txn.category != "Split Settlement"
+            txn.category != "Split Settlement" &&
+            !txn.category.equals("Transfer", ignoreCase = true)
+
+internal fun isIncomeCredit(txn: TransactionEntity): Boolean =
+    txn.type == TransactionType.CREDIT &&
+            txn.linkedDebtId == null &&
+            !txn.excludeFromSpend &&
+            txn.category != "Split Settlement" &&
+            !txn.category.equals("Transfer", ignoreCase = true) &&
+            !com.expensetracker.offline.ui.dashboard.isRefundCredit(txn)
 
 /**
  * Clean, gapless pill progress bar without Material3 LinearProgressIndicator's trailing stop-dot
@@ -1349,4 +1366,334 @@ internal fun rememberEntered(delayMs: Long = 0L): Boolean {
         entered = true
     }
     return entered
+}
+
+
+// ─────────────────────── Cash Flow, 6-Cycle Trend & Calendar Heatmap ───────────────────────
+
+internal data class CycleTrendPoint(
+    val label: String,
+    val spentPaise: Long,
+    val incomePaise: Long,
+    val isSelected: Boolean
+)
+
+@Composable
+internal fun CashFlowSummaryCard(
+    totalIncomePaise: Long,
+    discretionarySpendPaise: Long,
+    investmentsPaise: Long,
+    isAnimating: Boolean
+) {
+    val totalOutflow = discretionarySpendPaise + investmentsPaise
+    val netSavingsPaise = totalIncomePaise - discretionarySpendPaise
+    val savingsRatePct = if (totalIncomePaise > 0L) {
+        ((netSavingsPaise.toDouble() / totalIncomePaise.toDouble()) * 100.0).roundToInt()
+    } else null
+
+    val entered = rememberEntered(200)
+    val expenseRatio = if (totalIncomePaise > 0L) {
+        (discretionarySpendPaise.toFloat() / totalIncomePaise.toFloat()).coerceIn(0f, 1f)
+    } else if (totalOutflow > 0L) {
+        (discretionarySpendPaise.toFloat() / totalOutflow.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+
+    val animProgress by animateFloatAsState(
+        targetValue = if (isAnimating && entered) expenseRatio else 0f,
+        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+        label = "cashFlowBar"
+    )
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AppRadius.large),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+    ) {
+        Column(
+            modifier = Modifier.padding(AppSpacing.cardPadding),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Cash flow & wealth",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (savingsRatePct != null) {
+                    InsightsBadge(
+                        text = if (savingsRatePct >= 0) "$savingsRatePct% saved" else "${-savingsRatePct}% deficit",
+                        color = if (savingsRatePct >= 0) InsightsColors.positive else InsightsColors.negative
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                HeroFact(
+                    modifier = Modifier.weight(1f),
+                    label = "Income",
+                    value = formatRupees(totalIncomePaise),
+                    caption = "credits received",
+                    valueColor = InsightsColors.positive
+                )
+                HeroFact(
+                    modifier = Modifier.weight(1f),
+                    label = "Discretionary",
+                    value = formatRupees(discretionarySpendPaise),
+                    caption = "excl. investments",
+                    valueColor = MaterialTheme.colorScheme.onSurface
+                )
+                if (investmentsPaise > 0L) {
+                    HeroFact(
+                        modifier = Modifier.weight(1f),
+                        label = "Investments",
+                        value = formatRupees(investmentsPaise),
+                        caption = "SIPs & wealth",
+                        valueColor = Color(0xFF14B8A6)
+                    )
+                } else {
+                    HeroFact(
+                        modifier = Modifier.weight(1f),
+                        label = "Net cash flow",
+                        value = (if (netSavingsPaise >= 0L) "+" else "−") + formatRupees( kotlin.math.abs(netSavingsPaise) ),
+                        caption = if (netSavingsPaise >= 0L) "surplus" else "net outflow",
+                        valueColor = if (netSavingsPaise >= 0L) InsightsColors.positive else InsightsColors.negative
+                    )
+                }
+            }
+
+            InsightsProgressBar(
+                progress = animProgress,
+                color = if (totalIncomePaise > 0L && discretionarySpendPaise > totalIncomePaise) InsightsColors.negative else MaterialTheme.colorScheme.onSurface,
+                trackColor = InsightsColors.positive.copy(alpha = 0.18f),
+                height = 6.dp
+            )
+        }
+    }
+}
+
+@Composable
+internal fun MultiCycleTrendCard(
+    points: List<CycleTrendPoint>,
+    monthlyBudgetPaise: Long,
+    isAnimating: Boolean
+) {
+    if (points.isEmpty()) return
+    var selectedIdx by remember(points) { mutableStateOf(points.indexOfLast { it.isSelected }.coerceAtLeast(0)) }
+    val selectedPoint = points.getOrNull(selectedIdx) ?: points.last()
+    val maxVal = remember(points, monthlyBudgetPaise) {
+        maxOf(
+            points.maxOfOrNull { maxOf(it.spentPaise, it.incomePaise) } ?: 1L,
+            monthlyBudgetPaise,
+            100L
+        )
+    }
+    val entered = rememberEntered(250)
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AppRadius.large),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+    ) {
+        Column(
+            modifier = Modifier.padding(AppSpacing.cardPadding),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "${selectedPoint.label} cycle",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "Spent ${formatRupees(selectedPoint.spentPaise)}" +
+                                (if (selectedPoint.incomePaise > 0L) " · In ${formatRupees(selectedPoint.incomePaise)}" else ""),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Text(
+                    "6-cycle trend",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(120.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                points.forEachIndexed { idx, pt ->
+                    val isSel = idx == selectedIdx
+                    val targetSpendRatio = (pt.spentPaise.toFloat() / maxVal.toFloat()).coerceIn(0.04f, 1f)
+                    val animSpend by animateFloatAsState(
+                        targetValue = if (isAnimating && entered) targetSpendRatio else 0.04f,
+                        animationSpec = tween(durationMillis = 700, delayMillis = idx * 50, easing = FastOutSlowInEasing),
+                        label = "trendBar_$idx"
+                    )
+                    val isOverBudget = monthlyBudgetPaise > 0L && pt.spentPaise > monthlyBudgetPaise
+                    val barColor = when {
+                        isOverBudget && isSel -> InsightsColors.negative
+                        isSel -> MaterialTheme.colorScheme.onSurface
+                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(AppRadius.small))
+                            .quietClickable { selectedIdx = idx },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            contentAlignment = Alignment.BottomCenter
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(0.68f)
+                                    .fillMaxHeight(animSpend)
+                                    .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
+                                    .background(barColor)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = pt.label,
+                            fontSize = 11.sp,
+                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSel) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun DailyCalendarHeatmapCard(
+    cycleStartMillis: Long,
+    cycleLengthDays: Int,
+    dailySpendMap: Map<Int, Long>
+) {
+    val maxDaySpend = remember(dailySpendMap) { (dailySpendMap.values.maxOrNull() ?: 0L).coerceAtLeast(1L) }
+    var selectedDayIndex by remember(cycleStartMillis) { mutableStateOf<Int?>(null) }
+    val dateFmt = remember { SimpleDateFormat("d MMM", Locale.getDefault()) }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AppRadius.large),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+    ) {
+        Column(
+            modifier = Modifier.padding(AppSpacing.cardPadding),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Daily spending rhythm",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val selIdx = selectedDayIndex
+                if (selIdx != null) {
+                    val dayTs = cycleStartMillis + selIdx * DAY_MS
+                    val dayAmt = dailySpendMap[selIdx] ?: 0L
+                    Text(
+                        "${dateFmt.format(java.util.Date(dayTs))}: ${formatRupees(dayAmt)}",
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                } else {
+                    Text(
+                        "Tap a day to inspect",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            val rows = (cycleLengthDays + 6) / 7
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (r in 0 until rows) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for (c in 0 until 7) {
+                            val dayIdx = r * 7 + c
+                            if (dayIdx < cycleLengthDays) {
+                                val spent = dailySpendMap[dayIdx] ?: 0L
+                                val intensity = if (spent <= 0L) 0f else (spent.toFloat() / maxDaySpend.toFloat()).coerceIn(0.18f, 1f)
+                                val isSel = selectedDayIndex == dayIdx
+                                val cellBg = if (spent <= 0L) {
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f + 0.72f * intensity)
+                                }
+                                val textColor = if (intensity > 0.55f) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(cellBg)
+                                        .then(
+                                            if (isSel) Modifier.border(1.5.dp, AppColors.positive, RoundedCornerShape(8.dp))
+                                            else Modifier
+                                        )
+                                        .quietClickable {
+                                            selectedDayIndex = if (selectedDayIndex == dayIdx) null else dayIdx
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "${dayIdx + 1}",
+                                        fontSize = 11.sp,
+                                        fontWeight = if (spent > 0L) FontWeight.Bold else FontWeight.Medium,
+                                        color = textColor
+                                    )
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.weight(1f).height(34.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

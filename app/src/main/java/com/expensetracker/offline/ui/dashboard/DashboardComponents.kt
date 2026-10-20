@@ -102,6 +102,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalFocusManager
@@ -278,6 +279,7 @@ fun ManageCategoriesDialog(
                         onValueChange = { categoryName = it },
                         placeholder = { Text("New category name", fontSize = 14.sp) },
                         singleLine = true,
+                        colors = sheetFieldColors(),
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Text,
                             imeAction = ImeAction.Done
@@ -285,6 +287,7 @@ fun ManageCategoriesDialog(
                         keyboardActions = KeyboardActions(
                             onDone = {
                                 if (categoryName.isNotBlank()) {
+                                    haptic.confirm()
                                     onAddCategory(categoryName.trim())
                                     categoryName = ""
                                 }
@@ -298,15 +301,23 @@ fun ManageCategoriesDialog(
                     Button(
                         onClick = {
                             if (categoryName.isNotBlank()) {
+                                haptic.confirm()
                                 onAddCategory(categoryName.trim())
                                 categoryName = ""
                             }
                         },
                         enabled = categoryName.isNotBlank(),
                         shape = RoundedCornerShape(AppRadius.small),
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.onSurface,
+                            contentColor = MaterialTheme.colorScheme.surface,
+                            disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        ),
                         contentPadding = PaddingValues(horizontal = 16.dp),
                         modifier = Modifier.height(52.dp)
-                    ) { Text("Add") }
+                    ) { Text("Add", fontWeight = FontWeight.Bold) }
                 }
 
                 if (customCategories.isNotEmpty()) {
@@ -334,9 +345,16 @@ fun ManageCategoriesDialog(
                 }
 
                 Spacer(modifier = Modifier.height(32.dp))
-                Button(onClick = { haptic.tap(); onDismiss() }, modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp), shape = RoundedCornerShape(AppRadius.small)) { Text("Done", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+                Button(
+                    onClick = { haptic.tap(); onDismiss() },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(AppRadius.small),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.onSurface,
+                        contentColor = MaterialTheme.colorScheme.surface
+                    )
+                ) { Text("Done", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
             }
         }
     }
@@ -1680,10 +1698,7 @@ fun ManageCategoryBudgetsSheet(
         )
     }
 
-    BackHandler(enabled = selectedCategoryForEdit != null && initialCategory == null) {
-        haptic.tap()
-        selectedCategoryForEdit = null
-    }
+    val sheetContentHeight = (LocalConfiguration.current.screenHeightDp * 0.72f).dp.coerceIn(480.dp, 620.dp)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1692,22 +1707,33 @@ fun ManageCategoryBudgetsSheet(
         containerColor = MaterialTheme.colorScheme.background,
         dragHandle = { BottomSheetDefaults.DragHandle() }
     ) {
+        BackHandler(enabled = selectedCategoryForEdit != null && initialCategory == null) {
+            haptic.tap()
+            selectedCategoryForEdit = null
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(sheetContentHeight)
                 .navigationBarsPadding()
                 .imePadding()
         ) {
             AnimatedContent(
                 targetState = selectedCategoryForEdit,
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopStart,
                 transitionSpec = {
-                    if (targetState != null) {
-                        (slideInHorizontally { width -> width / 3 } + fadeIn(tween(180)))
-                            .togetherWith(slideOutHorizontally { width -> -width / 3 } + fadeOut(tween(120)))
-                    } else {
-                        (slideInHorizontally { width -> -width / 3 } + fadeIn(tween(180)))
-                            .togetherWith(slideOutHorizontally { width -> width / 3 } + fadeOut(tween(120)))
-                    }
+                    val forward = targetState != null
+                    val enter = slideInHorizontally(
+                        animationSpec = tween(240, easing = FastOutSlowInEasing),
+                        initialOffsetX = { width -> if (forward) width else -width }
+                    ) + fadeIn(tween(200))
+                    val exit = slideOutHorizontally(
+                        animationSpec = tween(220, easing = FastOutSlowInEasing),
+                        targetOffsetX = { width -> if (forward) -width / 2 else width / 2 }
+                    ) + fadeOut(tween(150))
+                    enter.togetherWith(exit).using(SizeTransform(clip = true) { _, _ -> tween(0) })
                 },
                 label = "categoryBudgetSheetTransition"
             ) { editingCategory ->
@@ -1790,12 +1816,12 @@ private fun CategoryBudgetListContent(
     val totalAllocatedPaise = remember(statuses) { statuses.sumOf { it.limitPaise } }
     val totalCappedSpentPaise = remember(statuses) { statuses.sumOf { it.spentPaise } }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
-                .weight(1f, fill = false)
+                .weight(1f)
                 .padding(horizontal = 24.dp)
-                .padding(top = 8.dp, bottom = 16.dp)
+                .padding(top = 8.dp, bottom = 8.dp)
         ) {
             SheetHeader(
                 title = "Category budgets",
@@ -1807,7 +1833,7 @@ private fun CategoryBudgetListContent(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 480.dp),
+                    .weight(1f),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 contentPadding = PaddingValues(bottom = 8.dp)
             ) {
@@ -2155,10 +2181,10 @@ private fun CategoryBudgetFormContent(
         chips.entries.toList()
     }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
-                .weight(1f, fill = false)
+                .weight(1f)
                 .padding(horizontal = 24.dp)
                 .padding(top = 8.dp, bottom = 16.dp)
                 .verticalScroll(rememberScrollState()),

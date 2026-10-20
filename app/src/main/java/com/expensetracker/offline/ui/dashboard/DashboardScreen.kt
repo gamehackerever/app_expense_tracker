@@ -176,8 +176,10 @@ fun DashboardScreen(
 
     val transactionsWithDebts by viewModel.allTransactionsWithDebts.collectAsState()
     val unsettledSplitsWithDebts by viewModel.unsettledSplitsWithDebts.collectAsState()
-    val moneyOwedToYouState = viewModel.totalMoneyOwed.collectAsState(initial = null)
-    val moneyOwedToYou: Long = moneyOwedToYouState.value ?: 0L
+    val moneyOwedToYouState by viewModel.totalMoneyOwed.collectAsState()
+    val moneyOwedToYou: Long = moneyOwedToYouState ?: 0L
+    val moneyYouOweState by viewModel.totalMoneyYouOwe.collectAsState()
+    val moneyYouOwe: Long = moneyYouOweState ?: 0L
 
     val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsState()
 
@@ -566,9 +568,8 @@ fun DashboardScreen(
                     if (isDesc) break else continue
                 }
                 if (txn.id in pendingIds) continue
-                if (txn.type == TransactionType.DEBIT && !txn.excludeFromSpend && txn.category != "Split Settlement") {
-                    val debtsSum = item.debts.sumOf { it.amountOwed.toLong() }
-                    gross += maxOf(0L, txn.amount - debtsSum)
+                if (txn.type == TransactionType.DEBIT && !txn.excludeFromSpend && txn.category != "Split Settlement" && !txn.category.equals("Transfer", ignoreCase = true)) {
+                    gross += mySpendShare(item)
                 } else if (isRefundCredit(txn)) {
                     refunds += txn.amount
                 }
@@ -837,29 +838,55 @@ fun DashboardScreen(
                         }
                     }
                     Spacer(modifier = Modifier.height(24.dp))
-                    Button(onClick = { selectedBillImageUri = null }, modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp), shape = RoundedCornerShape(AppRadius.small)) { Text("Close", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+                    Button(
+                        onClick = { haptic.tap(); selectedBillImageUri = null },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(AppRadius.small),
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.onSurface,
+                            contentColor = MaterialTheme.colorScheme.surface
+                        )
+                    ) { Text("Close", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
                 }
             }
         }
     }
 
     if (showAddExpenseSheet) {
+        val recentSplitPeople = remember(transactionsWithDebts) {
+            val friends = transactionsWithDebts
+                .asSequence()
+                .take(300)
+                .flatMap { it.debts.asSequence() }
+                .map { it.debtorName.trim() }
+                .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
+                .distinct()
+                .take(6)
+                .toList()
+            listOf("You") + friends
+        }
+        var pendingNewExpenseSplit by remember { mutableStateOf<List<SplitParticipant>>(emptyList()) }
         AddExpenseSheet(
             availableCategories = allAvailableCategories,
             onDismiss = { showAddExpenseSheet = false },
             linkedAccounts = linkedAccounts,
             transactionsHistory = transactions,
+            initialSplitPeople = recentSplitPeople,
             onAddToFixedCosts = { suggestion ->
                 addFixedCost(suggestion)
+            },
+            onSaveSplit = { participants ->
+                pendingNewExpenseSplit = participants
             },
             onSave = { amount, payee, category, type, timestamp, itemsSummary, receiptUri, bank, acct ->
                 viewModel.addManualExpense(
                     amount = amount, payee = payee, category = category, type = type,
                     timestamp = timestamp, itemsSummary = itemsSummary, receiptImageUri = receiptUri,
-                    bankName = bank, accountNumber = acct
+                    bankName = bank, accountNumber = acct,
+                    splitParticipants = pendingNewExpenseSplit
                 )
+                pendingNewExpenseSplit = emptyList()
                 haptic.confirm()
                 if (type == TransactionType.DEBIT &&
                     necessitiesList.none { NecessityManager.matches(it, payee, category) }
@@ -919,7 +946,8 @@ fun DashboardScreen(
         )
     }
 
-    activeCreditTransactionToLink?.let { creditTxn ->
+    val creditTxn = activeCreditTransactionToLink
+    if (creditTxn != null) {
         Dialog(onDismissRequest = { activeCreditTransactionToLinkId = null }) {
             Surface(modifier = Modifier
                 .fillMaxWidth()
@@ -965,9 +993,13 @@ fun DashboardScreen(
                         }
                     }
                     Spacer(modifier = Modifier.height(24.dp))
-                    OutlinedButton(onClick = { activeCreditTransactionToLinkId = null }, modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp), shape = RoundedCornerShape(AppRadius.small)) { Text("Cancel", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
+                    OutlinedButton(
+                        onClick = { haptic.tap(); activeCreditTransactionToLinkId = null },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(AppRadius.small),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
+                    ) { Text("Cancel", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
                 }
             }
         }
@@ -1113,6 +1145,7 @@ fun DashboardScreen(
             contextLabel = selectedAccount?.bankName ?: "All Accounts",
             contextBalance = effectiveBalance,
             safeToSpendBreakdown = safeToSpendBreakdown,
+            transactions = transactions,
             onAccountSelected = { selected ->
                 viewModel.selectedAccount.value = selected
             },
@@ -1170,7 +1203,8 @@ fun DashboardScreen(
     }
 
     // Dialogs live here (not inside a LazyColumn item) so scrolling never disposes them.
-    repaymentToUndo?.let { txn ->
+    val txn = repaymentToUndo
+    if (txn != null) {
         AppDialog(
             title = "Undo this repayment?",
             onDismiss = { repaymentToUndo = null },
@@ -1286,7 +1320,9 @@ fun DashboardScreen(
         }
     }
 
-    activeTransactionForEdit?.let { txn ->
+    val activeTxnForEdit = activeTransactionForEdit
+    if (activeTxnForEdit != null) {
+        val txn = activeTxnForEdit
         val editCategories = remember(allAvailableCategories, txn.category) {
             val list = allAvailableCategories.toMutableList()
             list.remove(txn.category)
@@ -1373,11 +1409,35 @@ fun DashboardScreen(
             onLinkToBill = {
                 activeTransactionForEditId = null
                 activeCreditTransactionToLinkId = txn.id
+            },
+            initialSplitPeople = remember(txn.id, transactionsWithDebts) {
+                val existingFriends = transactionsWithDebts
+                    .find { it.transaction.id == txn.id }
+                    ?.debts
+                    ?.map { it.debtorName.trim() }
+                    ?.filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
+                    .orEmpty()
+                val recentFriends = transactionsWithDebts
+                    .asSequence()
+                    .take(200)
+                    .flatMap { it.debts.asSequence() }
+                    .map { it.debtorName.trim() }
+                    .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
+                    .distinct()
+                    .take(5)
+                    .toList()
+                (listOf("You") + existingFriends + recentFriends).distinct()
+            },
+            onSaveSplit = { splitParticipants ->
+                viewModel.saveMultiSplit(txn.id, splitParticipants, "You")
+                showSnack("Saved itemized bill split")
             }
         )
     }
 
-    activeTransactionForSplit?.let { bill ->
+    val activeBillForSplit = activeTransactionForSplit
+    if (activeBillForSplit != null) {
+        val bill = activeBillForSplit
 
         // 1. Context-Aware: People you frequently split with at THIS specific merchant (bounded off-thread)
         val contextualSplitPartners by produceState(initialValue = emptyList<String>(), bill, transactionsWithDebts) {
@@ -1417,8 +1477,8 @@ fun DashboardScreen(
             transaction = bill.transaction,
             initialDebts = bill.debts,
             onDismiss = { activeTransactionForSplitId = null },
-            onSaveSplit = { participants ->
-                viewModel.saveMultiSplit(bill.transaction.id, participants)
+            onSaveSplit = { participants, paidBy ->
+                viewModel.saveMultiSplit(bill.transaction.id, participants, paidBy)
                 haptic.confirm()
             },
             onResetSplit = { viewModel.resetSplit(bill.transaction.id) },
@@ -2255,44 +2315,53 @@ fun DashboardScreen(
                 }
             }
 
-            if (necessitiesList.isNotEmpty() || moneyOwedToYou > 0L || linkedAccounts.isNotEmpty() || accountBalances.isNotEmpty() || latestBalance != null) {
+            if (necessitiesList.isNotEmpty() || moneyOwedToYou > 0L || moneyYouOwe > 0L || linkedAccounts.isNotEmpty() || accountBalances.isNotEmpty() || latestBalance != null) {
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        val hasOwed = moneyOwedToYou > 0L
+                        val hasOwed = moneyOwedToYou > 0L || moneyYouOwe > 0L
+                        val showOwedToYouPrimary = moneyOwedToYou >= moneyYouOwe
 
-                    SafeToSpendCard(
-                        modifier = if (hasOwed) Modifier.weight(1f).fillMaxHeight() else Modifier.fillMaxWidth().fillMaxHeight(),
-                        breakdown = safeToSpendBreakdown,
-                        revealed = isBalanceRevealed,
-                        isFlipped = isBalanceCardFlipped,
-                        checking = isCheckingBalance,
-                        onClick = {
-                            haptic.tap()
-                            if (isBalanceRevealed) showAccountsDialog = true else requestBalanceUnlock()
-                        }
-                    )
-
-                    if (hasOwed) {
-                        QuickStatCard(
-                            modifier = Modifier.weight(1f).fillMaxHeight(),
-                            icon = Icons.Default.Handshake,
-                            label = "Owed to you",
-                            onClick = { haptic.tap(); showSettleDebtDialog = true }
-                        ) {
-                            Row(verticalAlignment = Alignment.Bottom) {
-                                Text("₹", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AppColors.positive, modifier = Modifier.padding(bottom = 2.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(CurrencyFormat.amount(shownOwed, 0), fontWeight = FontWeight.Bold, fontSize = 24.sp, color = AppColors.positive)
+                        SafeToSpendCard(
+                            modifier = if (hasOwed) Modifier.weight(1f).fillMaxHeight() else Modifier.fillMaxWidth().fillMaxHeight(),
+                            breakdown = safeToSpendBreakdown,
+                            revealed = isBalanceRevealed,
+                            isFlipped = isBalanceCardFlipped,
+                            checking = isCheckingBalance,
+                            onClick = {
+                                haptic.tap()
+                                if (isBalanceRevealed) showAccountsDialog = true else requestBalanceUnlock()
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text("Tap to settle", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        )
+
+                        if (hasOwed) {
+                            val primaryAmt = if (showOwedToYouPrimary) shownOwed else moneyYouOwe
+                            val primaryColor = if (showOwedToYouPrimary) AppColors.positive else AppColors.warning
+                            val secondaryText = when {
+                                moneyOwedToYou > 0L && moneyYouOwe > 0L ->
+                                    if (showOwedToYouPrimary) "You owe ${CurrencyFormat.withSymbol(moneyYouOwe, 0)}"
+                                    else "Owed ${CurrencyFormat.withSymbol(moneyOwedToYou, 0)}"
+                                else -> "Tap to settle"
+                            }
+                            QuickStatCard(
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                                icon = Icons.Default.Handshake,
+                                label = if (showOwedToYouPrimary) "Owed to you" else "You owe",
+                                onClick = { haptic.tap(); showSettleDebtDialog = true }
+                            ) {
+                                Row(verticalAlignment = Alignment.Bottom) {
+                                    Text("₹", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = primaryColor, modifier = Modifier.padding(bottom = 2.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(CurrencyFormat.amount(primaryAmt, 0), fontWeight = FontWeight.Bold, fontSize = 24.sp, color = primaryColor)
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(secondaryText, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
                 }
-            }
             }
 
             if (pendingReviewCount > 0) {

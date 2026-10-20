@@ -289,6 +289,65 @@ fun InsightsScreen(
         }
     }
 
+    val cycleIncomePaise by produceState(initialValue = 0L, filteredTransactions) {
+        value = withContext(Dispatchers.Default) {
+            filteredTransactions
+                .filter { isIncomeCredit(it.transaction) }
+                .sumOf { it.transaction.amount }
+        }
+    }
+
+    val cycleInvestmentsPaise by produceState(initialValue = 0L, filteredTransactions) {
+        value = withContext(Dispatchers.Default) {
+            filteredTransactions
+                .filter { isSpendDebit(it.transaction) && it.transaction.category.equals("Investments", ignoreCase = true) }
+                .sumOf { myShareOf(it) }
+        }
+    }
+
+    val dailySpendMap by produceState(initialValue = emptyMap<Int, Long>(), filteredTransactions, cycleStartMillis) {
+        value = withContext(Dispatchers.Default) {
+            val map = HashMap<Int, Long>()
+            for (item in filteredTransactions) {
+                if (isSpendDebit(item.transaction)) {
+                    val share = myShareOf(item)
+                    if (share > 0L) {
+                        val dayIdx = ((item.transaction.timestamp - cycleStartMillis) / DAY_MS).toInt().coerceAtLeast(0)
+                        map[dayIdx] = (map[dayIdx] ?: 0L) + share
+                    }
+                }
+            }
+            map
+        }
+    }
+
+    val trendPoints by produceState(initialValue = emptyList<CycleTrendPoint>(), allTransactions, accountFilter, startDayOfMonth, cycleOffset, pendingDeleteIds) {
+        value = withContext(Dispatchers.Default) {
+            val monthFmt = SimpleDateFormat("MMM", Locale.getDefault())
+            ((-5)..0).map { rel ->
+                val targetOffset = cycleOffset + rel
+                val (cStart, cEnd) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, targetOffset)
+                var spent = 0L
+                var income = 0L
+                for (item in allTransactions) {
+                    val t = item.transaction.timestamp
+                    if (t > cEnd) continue
+                    if (t < cStart) continue
+                    if (item.transaction.id in pendingDeleteIds || !matchesAccount(item.transaction, accountFilter)) continue
+                    if (isSpendDebit(item.transaction)) spent += myShareOf(item)
+                    else if (isIncomeCredit(item.transaction)) income += item.transaction.amount
+                }
+                val label = monthFmt.format(java.util.Date(cStart))
+                CycleTrendPoint(
+                    label = label,
+                    spentPaise = spent,
+                    incomePaise = income,
+                    isSelected = rel == 0
+                )
+            }
+        }
+    }
+
     val merchants = payeeInsights
     val categories = categoryInsights
     val isLoaded = merchants != null && categories != null
@@ -679,6 +738,46 @@ fun InsightsScreen(
                 }
             }
 
+            // ── Cash Flow & Wealth (Income vs Discretionary vs Investments) ──
+            if (hasSpending || cycleIncomePaise > 0L) {
+                item(key = "cash_flow") {
+                    EntranceItem("cash_flow", 3, seenSections, Modifier.animateItem(fadeInSpec = null)) {
+                        CashFlowSummaryCard(
+                            totalIncomePaise = cycleIncomePaise,
+                            discretionarySpendPaise = (grandTotalDebit - cycleInvestmentsPaise).coerceAtLeast(0L),
+                            investmentsPaise = cycleInvestmentsPaise,
+                            isAnimating = startBarAnimations
+                        )
+                    }
+                }
+            }
+
+            // ── 6-Cycle Spending & Income Trend Bar Chart ──
+            if (trendPoints.any { it.spentPaise > 0L || it.incomePaise > 0L }) {
+                item(key = "multi_cycle_trend") {
+                    EntranceItem("multi_cycle_trend", 4, seenSections, Modifier.animateItem(fadeInSpec = null)) {
+                        MultiCycleTrendCard(
+                            points = trendPoints,
+                            monthlyBudgetPaise = if (selectedAccountFilter == null) monthlyBudget * 100L else 0L,
+                            isAnimating = startBarAnimations
+                        )
+                    }
+                }
+            }
+
+            // ── Daily Calendar Heatmap ──
+            if (hasSpending) {
+                item(key = "daily_heatmap") {
+                    EntranceItem("daily_heatmap", 4, seenSections, Modifier.animateItem(fadeInSpec = null)) {
+                        DailyCalendarHeatmapCard(
+                            cycleStartMillis = cycleStartMillis,
+                            cycleLengthDays = cycleLengthDays,
+                            dailySpendMap = dailySpendMap
+                        )
+                    }
+                }
+            }
+
             // ── Spending breakdown (reacts to the filter above) ──
             if (isLoaded && !hasSpending) {
                 item(key = "empty") {
@@ -782,7 +881,8 @@ fun InsightsScreen(
         }
     }
 
-    selectedCategoryForBreakdown?.let { catName ->
+    val catName = selectedCategoryForBreakdown
+    if (catName != null) {
         val catBudget = categoryBudgets.entries.firstOrNull { it.key.equals(catName, ignoreCase = true) }?.value
         CategoryTransactionsSheet(
             categoryName = catName,
@@ -801,7 +901,8 @@ fun InsightsScreen(
         )
     }
 
-    selectedMerchantForBreakdown?.let { merchantName ->
+    val merchantName = selectedMerchantForBreakdown
+    if (merchantName != null) {
         MerchantTransactionsSheet(
             merchantName = merchantName,
             allTransactions = filteredTransactions,
@@ -866,7 +967,9 @@ fun InsightsScreen(
         }
     }
 
-    activeTransactionForEdit?.let { txn ->
+    val activeTxnForEdit = activeTransactionForEdit
+    if (activeTxnForEdit != null) {
+        val txn = activeTxnForEdit
         val customCats = remember { prefs.getStringSet("key_custom_categories", emptySet()) ?: emptySet() }
         val availableCats = remember(customCats, allTransactions) {
             (com.expensetracker.offline.engine.categorizer.CategoryClassifier.PREDEFINED_CATEGORIES +
@@ -901,6 +1004,27 @@ fun InsightsScreen(
             onUndoRepayment = { viewModel.undoRepayment(txn) },
             onUpdateAllPast = { oldPayee, newPayee, newCategory ->
                 viewModel.updatePayeeAndCategoryForAll(oldPayee, newPayee, newCategory)
+            },
+            initialSplitPeople = remember(txn.id, allTransactions) {
+                val existingFriends = allTransactions
+                    .find { it.transaction.id == txn.id }
+                    ?.debts
+                    ?.map { it.debtorName.trim() }
+                    ?.filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
+                    .orEmpty()
+                val recentFriends = allTransactions
+                    .asSequence()
+                    .take(200)
+                    .flatMap { it.debts.asSequence() }
+                    .map { it.debtorName.trim() }
+                    .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
+                    .distinct()
+                    .take(5)
+                    .toList()
+                (listOf("You") + existingFriends + recentFriends).distinct()
+            },
+            onSaveSplit = { splitParticipants ->
+                viewModel.saveMultiSplit(txn.id, splitParticipants, "You")
             }
         )
     }

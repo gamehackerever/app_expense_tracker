@@ -1,6 +1,5 @@
-﻿package com.expensetracker.offline.ui.components
+package com.expensetracker.offline.ui.components
 
-import android.text.format.DateFormat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
@@ -80,11 +79,8 @@ import com.expensetracker.offline.ui.theme.getCategoryIcon
 import com.expensetracker.offline.ui.theme.hasCategoryIcon
 import java.math.BigDecimal
 import java.text.NumberFormat
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
-// FIXED: Centralized CurrencyFormat using safe BigDecimal math over Long (Paise)
 object TimeFormatCache {
     private var cachedTimeFormat: java.text.DateFormat? = null
     private val cachedDateFormat by lazy { java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()) }
@@ -122,7 +118,6 @@ object CurrencyFormat {
 
     fun withSymbol(paise: Long, decimals: Int = 2): String = "₹${amount(paise, decimals)}"
 
-    /** Whole amounts drop the decimals (₹404); amounts with paise keep them (₹404.50). */
     fun smart(paise: Long): String {
         val decimals = if (paise % 100L == 0L) 0 else 2
         return withSymbol(paise, decimals)
@@ -141,23 +136,18 @@ object CurrencyFormat {
     }
 }
 
-/** Which transactions get a small source marker on the meta line. Default marks the exception (hand-entered). */
 enum class SourceMarker { AUTO, MANUAL, NONE }
 
 private val CardShapeDp = AppRadius.large
 private val TabularNumbers = TextStyle(fontFeatureSettings = "tnum", letterSpacing = (-0.5).sp)
 
-/** One type scale for every row: title (payee, amount), body (meta line), caption (everything else). */
 private object RowType {
     val title = 16.sp
     val body = 13.sp
     val caption = 12.sp
 }
 
-/** Items/notes stay on one line so rows keep an even height; the full text is in the edit sheet. */
 private const val DetailMaxLines = 1
-
-/** Width of badge + gap, used to inset dividers so they start under the text. */
 private val DividerInset = 76.dp
 
 @Composable
@@ -194,7 +184,7 @@ fun DashboardTransactionCard(
     debts: List<SplitDebtEntity> = emptyList(),
     isSettled: Boolean,
     settledBy: String?,
-    outstandingAmount: Long? = null, // FIXED: Migrated to Long
+    outstandingAmount: Long? = null,
     selectionMode: Boolean = false,
     isSelected: Boolean = false,
     showActions: Boolean = true,
@@ -218,11 +208,17 @@ fun DashboardTransactionCard(
     val isSplitDebit = isDebit && isSplit
     val isRepayment = isCredit && transaction.linkedDebtId != null
     val isDebitSettled = isDebit && isSettled
+    val paidByOther = transaction.paidBy?.trim()?.takeIf { it.isNotEmpty() && !it.equals("You", ignoreCase = true) }
 
-    // FIXED: Strict Long/Paise math to eliminate floating point settlement bugs
-    val originalOwed = remember(debts) { debts.sumOf { it.amountOwed.toLong() } }
-    val myShare = remember(transaction.amount, originalOwed) {
-        (transaction.amount - originalOwed).coerceAtLeast(0L)
+    val originalOwed = remember(debts, paidByOther) {
+        if (paidByOther != null) {
+            debts.firstOrNull { it.debtorName.trim().equals("You", ignoreCase = true) }?.amountOwed ?: 0L
+        } else {
+            debts.sumOf { it.amountOwed.toLong() }
+        }
+    }
+    val myShare = remember(transaction.amount, originalOwed, paidByOther) {
+        if (paidByOther != null) originalOwed else (transaction.amount - originalOwed).coerceAtLeast(0L)
     }
 
     val headlineAmount = if (isSplitDebit) myShare else transaction.amount
@@ -317,7 +313,13 @@ fun DashboardTransactionCard(
             statusColor = colors.onSurface; onStatusClick = onNavigateToOriginalBill
         }
         isSplitDebit && isDebitSettled -> {
-            statusText = settledLabel(settledBy); statusDot = positive; statusIcon = null
+            statusText = if (paidByOther != null) "Settled with $paidByOther" else settledLabel(settledBy)
+            statusDot = positive; statusIcon = null
+            statusColor = colors.onSurfaceVariant; onStatusClick = null
+        }
+        isSplitDebit && paidByOther != null -> {
+            statusText = "You owe $paidByOther ${CurrencyFormat.smart(owes)}"
+            statusDot = warning; statusIcon = null
             statusColor = colors.onSurfaceVariant; onStatusClick = null
         }
         isSplitDebit -> {
@@ -690,9 +692,8 @@ private fun settledLabel(settledBy: String?): String {
     }
 }
 
-// FIXED: Receives Long and uses updated CurrencyFormat logic
 private fun owedLabel(debts: List<SplitDebtEntity>, owes: Long): String {
-    val unsettled = debts.filter { it.status == DebtStatus.OPEN && it.settledAt == null }
+    val unsettled = debts.filter { it.status == DebtStatus.OPEN && it.settledAt == null && !it.debtorName.equals("You", ignoreCase = true) }
     val firstName = unsettled.singleOrNull()
         ?.debtorName?.trim()?.split(" ")?.firstOrNull { it.isNotBlank() }
         .orEmpty()
@@ -718,7 +719,26 @@ private fun shortBankCode(bankName: String): String = when {
     bankName.contains("IndusInd", true) -> "INDUS"
     bankName.contains("Yes Bank", true) -> "YES"
     bankName.contains("South Indian", true) -> "SIB"
+    bankName.contains("Baroda", true) -> "BOB"
+    bankName.contains("Bank of India", true) -> "BOI"
+    bankName.contains("Indian Overseas", true) -> "IOB"
+    bankName.contains("Indian Bank", true) -> "INDB"
+    bankName.contains("Central Bank", true) -> "CBI"
+    bankName.contains("IDBI", true) -> "IDBI"
+    bankName.contains("Bandhan", true) -> "BDN"
+    bankName.contains("RBL", true) -> "RBL"
+    bankName.contains("Karur Vysya", true) -> "KVB"
+    bankName.contains("City Union", true) -> "CUB"
+    bankName.contains("Karnataka", true) -> "KBL"
+    bankName.contains("Kerala Gramin", true) -> "KGB"
+    bankName.contains("Kerala Bank", true) -> "KSCB"
+    bankName.contains("AU Small", true) -> "AU"
+    bankName.contains("Equitas", true) -> "EQUI"
+    bankName.contains("Ujjivan", true) -> "UJJ"
+    bankName.contains("American Express", true) || bankName.contains("Amex", true) -> "AMEX"
+    bankName.contains("Standard Chartered", true) -> "SCB"
+    bankName.contains("OneCard", true) -> "ONECARD"
+    bankName.contains("Slice", true) -> "SLICE"
     else -> bankName.trim().split(" ").firstOrNull { it.isNotBlank() }?.take(5)?.uppercase()
         ?: bankName.take(5).uppercase()
 }
-
