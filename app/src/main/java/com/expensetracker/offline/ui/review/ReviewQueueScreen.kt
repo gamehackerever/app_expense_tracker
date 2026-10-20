@@ -2,7 +2,11 @@ package com.expensetracker.offline.ui.review
 
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.VectorConverter
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
@@ -47,7 +51,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -73,10 +76,6 @@ import com.expensetracker.offline.ui.components.SheetChip
 import com.expensetracker.offline.ui.components.SheetSegmentedControl
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.ExpenseRed
-import com.expensetracker.offline.util.tick
-import com.expensetracker.offline.util.click
-import com.expensetracker.offline.util.confirm
-import com.expensetracker.offline.util.delete
 import com.expensetracker.offline.ui.theme.IncomeGreen
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
@@ -106,7 +105,7 @@ fun ReviewQueueScreen(
     onBack: () -> Unit
 ) {
     val items by viewModel.pendingReviewItems.collectAsState()
-    val linkedAccounts by viewModel.linkedAccounts.collectAsState() // NEW: Grab linked accounts
+    val linkedAccounts by viewModel.linkedAccounts.collectAsState()
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
@@ -150,10 +149,12 @@ fun ReviewQueueScreen(
             Column {
                 TopAppBar(
                     title = {
-                        if (isSelectionMode) {
-                            Text("${selectedIds.size} Selected", fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                        } else {
-                            Text("Needs Review", fontWeight = FontWeight.Bold, fontSize = 20.sp, letterSpacing = (-0.3).sp)
+                        AnimatedContent(
+                            targetState = if (isSelectionMode) "${selectedIds.size} Selected" else "Needs Review",
+                            transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+                            label = "reviewTopBarTitle"
+                        ) { titleText ->
+                            Text(titleText, fontWeight = FontWeight.Bold, fontSize = 20.sp, letterSpacing = (-0.3).sp)
                         }
                     },
                     navigationIcon = {
@@ -262,7 +263,7 @@ fun ReviewQueueScreen(
                     ReviewCard(
                         modifier = Modifier.animateItem(),
                         item = item,
-                        linkedAccounts = linkedAccounts, // NEW: Passed in
+                        linkedAccounts = linkedAccounts,
                         isSelectionMode = isSelectionMode,
                         isSelected = selectedIds.contains(item.id),
                         onToggleSelect = {
@@ -277,7 +278,6 @@ fun ReviewQueueScreen(
                                 selectedIds = setOf(item.id)
                             }
                         },
-                        // UPDATED: Now receives the bank details from the callback
                         onResolve = { amt, payee, type, cat, bankName, accNum ->
                             // Update the item copy before resolving it so the ViewModel gets the manual bank changes
                             viewModel.resolveReview(item, amt, payee, type, cat, bankName, accNum)

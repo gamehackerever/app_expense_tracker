@@ -2,12 +2,14 @@
 
 package com.expensetracker.offline.ui.insights
 
-import android.content.Context
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.*
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -29,19 +31,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.ReceiptLong
-import androidx.compose.material.icons.filled.Store
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -49,12 +46,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -374,7 +368,6 @@ internal fun CategoryRow(
     onClick: () -> Unit
 ) {
     val categoryColor = getCategoryColor(insight.category)
-    val categoryIcon = getCategoryIcon(insight.category)
     val share = if (grandTotal > 0L) (insight.totalSpent.toDouble() / grandTotal.toDouble()) else 0.0
     val percentage = share * 100.0
     val avgPerTxn = if (insight.transactionCount > 0) insight.totalSpent.toDouble() / insight.transactionCount else 0.0
@@ -448,7 +441,6 @@ internal fun CategoryRowWithBudget(
     isAnimating: Boolean,
     onClick: () -> Unit
 ) {
-    val categoryIcon = getCategoryIcon(insight.category)
     val categoryColor = getCategoryColor(insight.category)
     val pct = if (budgetPaise > 0L) (insight.totalSpent.toFloat() / budgetPaise).coerceAtLeast(0f) else 0f
     val isOver = budgetPaise > 0L && insight.totalSpent > budgetPaise
@@ -1108,14 +1100,24 @@ internal fun HeroFact(modifier: Modifier, label: String, value: String, caption:
 @Composable
 internal fun Modifier.quietClickable(
     enabled: Boolean = true,
-    pressedAlpha: Float = 0.6f,
+    pressedAlpha: Float = 0.72f,
+    pressedScale: Float = 0.98f,
     onClick: () -> Unit
 ): Modifier {
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val alpha by animateFloatAsState(if (pressed && enabled) pressedAlpha else 1f, tween(100), label = "quietPress")
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) pressedScale else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+        label = "quietScale"
+    )
     return this
-        .graphicsLayer { this.alpha = alpha }
+        .graphicsLayer {
+            this.alpha = alpha
+            this.scaleX = scale
+            this.scaleY = scale
+        }
         .clickable(enabled = enabled, interactionSource = source, indication = null, onClick = onClick)
 }
 
@@ -1300,7 +1302,21 @@ internal fun CycleSelector(
                     .padding(vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Crossfade(targetState = label, label = "cycleLabel") { text ->
+                AnimatedContent(
+                    targetState = startMillis to label,
+                    transitionSpec = {
+                        val movingForward = targetState.first >= initialState.first
+                        val slideDir = if (movingForward) 1 else -1
+                        (slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { fullWidth -> slideDir * (fullWidth / 4) } +
+                                fadeIn(tween(220)))
+                            .togetherWith(
+                                slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { fullWidth -> -slideDir * (fullWidth / 4) } +
+                                        fadeOut(tween(150))
+                            )
+                            .using(SizeTransform(clip = false))
+                    },
+                    label = "cycleLabelSlide"
+                ) { (_, text) ->
                     Text(
                         text,
                         fontWeight = FontWeight.Bold,
@@ -1309,15 +1325,23 @@ internal fun CycleSelector(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Text(
-                    subtitle,
-                    fontSize = 12.sp,
-                    fontWeight = if (isCurrent) FontWeight.Normal else FontWeight.SemiBold,
-                    color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant
-                    else MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                AnimatedContent(
+                    targetState = subtitle to isCurrent,
+                    transitionSpec = {
+                        fadeIn(tween(200)) togetherWith fadeOut(tween(140))
+                    },
+                    label = "cycleSubtitleFade"
+                ) { (subText, current) ->
+                    Text(
+                        subText,
+                        fontSize = 12.sp,
+                        fontWeight = if (current) FontWeight.Normal else FontWeight.SemiBold,
+                        color = if (current) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             IconButton(onClick = onNext, enabled = !isCurrent) {
@@ -1558,12 +1582,16 @@ internal fun MultiCycleTrendCard(
                         else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
                     }
 
+                    val haptic = LocalHapticFeedback.current
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(AppRadius.small))
-                            .quietClickable { selectedIdx = idx },
+                            .quietClickable {
+                                if (selectedIdx != idx) haptic.tap()
+                                selectedIdx = idx
+                            },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Bottom
                     ) {
@@ -1602,6 +1630,7 @@ internal fun DailyCalendarHeatmapCard(
     cycleLengthDays: Int,
     dailySpendMap: Map<Int, Long>
 ) {
+    val haptic = LocalHapticFeedback.current
     val maxDaySpend = remember(dailySpendMap) { (dailySpendMap.values.maxOrNull() ?: 0L).coerceAtLeast(1L) }
     var selectedDayIndex by remember(cycleStartMillis) { mutableStateOf<Int?>(null) }
     val dateFmt = remember { SimpleDateFormat("d MMM", Locale.getDefault()) }
@@ -1676,6 +1705,7 @@ internal fun DailyCalendarHeatmapCard(
                                             else Modifier
                                         )
                                         .quietClickable {
+                                            haptic.tap()
                                             selectedDayIndex = if (selectedDayIndex == dayIdx) null else dayIdx
                                         },
                                     contentAlignment = Alignment.Center
