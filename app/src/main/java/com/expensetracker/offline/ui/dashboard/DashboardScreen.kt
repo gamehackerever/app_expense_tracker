@@ -3,15 +3,11 @@
 package com.expensetracker.offline.ui.dashboard
 
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
-import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
-import android.util.Log
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
@@ -23,23 +19,16 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
 import com.expensetracker.offline.ui.insights.MoneyHero
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -47,22 +36,16 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Event
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Handshake
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.RateReview
-import androidx.compose.material.icons.filled.ReceiptLong
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -78,17 +61,11 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -98,19 +75,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
-import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
@@ -143,8 +116,6 @@ import kotlinx.coroutines.flow.first
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.ceil
 
-import com.expensetracker.offline.util.tick
-import com.expensetracker.offline.util.click
 import com.expensetracker.offline.util.confirm
 import com.expensetracker.offline.util.delete
 
@@ -1157,13 +1128,13 @@ fun DashboardScreen(
             onManageNecessities = {
                 showAccountsDialog = false
                 isBalanceRevealed = false
-                isBalanceCardFlipped = prefs.getBoolean("key_balance_card_flipped", false) // <-- ADDED
+                isBalanceCardFlipped = prefs.getBoolean("key_balance_card_flipped", false)
                 onNavigateToNecessities()
             },
             onDismiss = {
                 showAccountsDialog = false
                 isBalanceRevealed = false
-                isBalanceCardFlipped = prefs.getBoolean("key_balance_card_flipped", false) // <-- ADDED
+                isBalanceCardFlipped = prefs.getBoolean("key_balance_card_flipped", false)
             }
         )
     }
@@ -1791,11 +1762,6 @@ fun DashboardScreen(
                             )
                         }
 
-                        val progress by animateFloatAsState(
-                            targetValue = completedSteps / tasks.size.toFloat(),
-                            label = "setupProgress"
-                        )
-
                         Column {
                             Surface(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1919,27 +1885,52 @@ fun DashboardScreen(
                         }
                     }
 
-                    Surface(
-                        shape = RoundedCornerShape(AppRadius.pill),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                    val timeRanges = TimeRange.entries
+                    val selectedRangeIdx = timeRanges.indexOf(selectedTimeRange).coerceAtLeast(0)
+                    var rangeSegmentWidthPx by remember { mutableFloatStateOf(0f) }
+                    val animatedRangeIdx by animateFloatAsState(
+                        targetValue = selectedRangeIdx.toFloat(),
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMediumLow
+                        ),
+                        label = "timeRangeThumbIdx"
+                    )
+                    val pillShape = RoundedCornerShape(AppRadius.pill)
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .clip(pillShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(4.dp)
+                            .onSizeChanged { size ->
+                                rangeSegmentWidthPx = size.width.toFloat() / timeRanges.size.coerceAtLeast(1)
+                            }
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(4.dp)
-                        ) {
-                            TimeRange.entries.forEach { range ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(1f / timeRanges.size.coerceAtLeast(1))
+                                .fillMaxHeight()
+                                .graphicsLayer { translationX = rangeSegmentWidthPx * animatedRangeIdx }
+                                .shadow(1.dp, pillShape)
+                                .background(MaterialTheme.colorScheme.surface, pillShape)
+                        )
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            timeRanges.forEach { range ->
                                 val isSelected = selectedTimeRange == range
-                                val tabColor by animateColorAsState(
-                                    targetValue = if (isSelected) MaterialTheme.colorScheme.surface
-                                    else MaterialTheme.colorScheme.surface.copy(alpha = 0f),
-                                    animationSpec = tween(200),
-                                    label = "timeRangeTab"
+                                val labelColor by animateColorAsState(
+                                    targetValue = if (isSelected) MaterialTheme.colorScheme.onSurface
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    animationSpec = tween(180),
+                                    label = "timeRangeLabelColor"
                                 )
-                                Surface(
+                                Box(
                                     modifier = Modifier
                                         .weight(1f)
                                         .fillMaxHeight()
-                                        .clip(RoundedCornerShape(AppRadius.pill))
+                                        .clip(pillShape)
                                         .quietSelectable(
                                             selected = isSelected,
                                             role = Role.Tab,
@@ -1948,20 +1939,16 @@ fun DashboardScreen(
                                                 selectedTimeRange = range
                                             }
                                         ),
-                                    shape = RoundedCornerShape(AppRadius.pill),
-                                    color = tabColor,
-                                    shadowElevation = if (isSelected) 1.dp else 0.dp
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = range.tabLabel,
-                                            fontSize = 13.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
+                                    Text(
+                                        text = range.tabLabel,
+                                        fontSize = 13.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = labelColor,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                             }
                         }
@@ -2010,12 +1997,21 @@ fun DashboardScreen(
                                 } else {
                                     selectedTimeRange.spendLabel
                                 }
-                                Text(
-                                    "Total spent $heroSpendLabel",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                AnimatedContent(
+                                    targetState = "Total spent $heroSpendLabel",
+                                    transitionSpec = {
+                                        (fadeIn(tween(200)) + slideInVertically(tween(200)) { it / 4 })
+                                            .togetherWith(fadeOut(tween(140)))
+                                    },
+                                    label = "heroSpendTitleAnim"
+                                ) { titleText ->
+                                    Text(
+                                        titleText,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
 
                                 if (isMonthlyView) {
                                     Surface(
@@ -2055,7 +2051,7 @@ fun DashboardScreen(
                             MoneyHero(amount = shownSpent, fractionDigits = 2, size = 44.sp)
 
                             if (monthlyBudget > 0 && isMonthlyView) {
-                                val (cycleStart, cycleEnd) = remember(startDayOfMonth) { BillingCycleHelper.getCycleRange(startDayOfMonth) }
+                                val (_, cycleEnd) = remember(startDayOfMonth) { BillingCycleHelper.getCycleRange(startDayOfMonth) }
                                 val daysLeft = remember(cycleEnd) {
                                     (ceil((cycleEnd - System.currentTimeMillis()).toDouble() / 86_400_000.0).toInt()).coerceAtLeast(1)
                                 }
@@ -2393,7 +2389,6 @@ fun DashboardScreen(
                                 }
                             }
                             Spacer(modifier = Modifier.width(8.dp))
-                            // Replace the primaryContainer Surface with this:
                             Surface(
                                 shape = RoundedCornerShape(AppRadius.pill),
                                 color = MaterialTheme.colorScheme.onSurface // Stark neutral background
@@ -2605,12 +2600,20 @@ fun DashboardScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            "$visibleCount ${if (visibleCount == 1) "entry" else "entries"}",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        AnimatedContent(
+                            targetState = "$visibleCount ${if (visibleCount == 1) "entry" else "entries"}",
+                            transitionSpec = {
+                                fadeIn(tween(180)) togetherWith fadeOut(tween(120))
+                            },
+                            label = "visibleEntriesAnim"
+                        ) { countText ->
+                            Text(
+                                countText,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         if (hasActiveListFilter) {
                             Surface(
                                 shape = RoundedCornerShape(AppRadius.pill),
@@ -2681,7 +2684,6 @@ fun DashboardScreen(
                                 if (!isFiltering) {
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Button(
-                                        // FIX: Pass "SMS" to trigger the scrolling and highlighting
                                         onClick = { haptic.tap(); onNavigateToSettings("SMS") },
                                         shape = RoundedCornerShape(AppRadius.pill),
                                         colors = ButtonDefaults.buttonColors(

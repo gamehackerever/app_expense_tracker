@@ -4,42 +4,29 @@ package com.expensetracker.offline.ui.dashboard
 
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.Intent
-import android.content.SharedPreferences
-import android.graphics.Bitmap
-import android.os.PowerManager
 import android.provider.Settings
-import android.util.Log
 import androidx.activity.compose.BackHandler
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
-import com.expensetracker.offline.ui.insights.MoneyHero
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.text.KeyboardActions
 import kotlin.math.roundToInt
 import androidx.compose.foundation.text.KeyboardOptions
@@ -56,107 +43,59 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Category
-import androidx.compose.material.icons.filled.ChevronRight
 import com.expensetracker.offline.ui.theme.getCategoryIcon
-import com.expensetracker.offline.ui.theme.getCategoryColor
 import com.expensetracker.offline.ui.theme.hasCategoryIcon
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.FlashOn
-import androidx.compose.material.icons.filled.Handshake
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.RateReview
-import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.core.content.ContextCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.fragment.app.FragmentActivity
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
-import com.expensetracker.offline.data.local.entity.SplitDebtEntity
-import com.expensetracker.offline.data.local.entity.TransactionEntity
-import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
-import com.expensetracker.offline.ui.viewmodel.MainViewModel
-import com.expensetracker.offline.util.ImageUtil
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.roundToInt
 import com.expensetracker.offline.ui.components.*
-import androidx.core.content.edit
-import com.expensetracker.offline.data.local.dao.AccountInfo
-import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
 import com.expensetracker.offline.util.BillingCycleHelper
-import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
-import com.expensetracker.offline.util.NecessityManager
-import com.expensetracker.offline.util.NecessityManager.KEY_NECESSITIES_MIGRATED
-import com.expensetracker.offline.util.NecessityManager.saveNecessities
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
-import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.ceil
 
-import com.expensetracker.offline.util.tick
-import com.expensetracker.offline.util.click
 import com.expensetracker.offline.util.confirm
 import com.expensetracker.offline.util.delete
 
@@ -1024,7 +963,6 @@ internal fun NecessityBreakdownDialog(
 internal val dayLabelFormat = SimpleDateFormat("EEE, d MMM yyyy", Locale.getDefault())
 
 internal fun dayLabel(ts: Long): String {
-    val now = Calendar.getInstance()
     val todayStart = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }.timeInMillis
@@ -1185,14 +1123,24 @@ fun Context.findFragmentActivity(): FragmentActivity? {
 @Composable
 internal fun Modifier.quietClickable(
     enabled: Boolean = true,
-    pressedAlpha: Float = 0.7f,
+    pressedAlpha: Float = 0.75f,
+    pressedScale: Float = 0.98f,
     onClick: () -> Unit
 ): Modifier {
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val alpha by animateFloatAsState(if (pressed && enabled) pressedAlpha else 1f, tween(100), label = "quietPress")
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) pressedScale else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+        label = "quietScale"
+    )
     return this
-        .graphicsLayer { this.alpha = alpha }
+        .graphicsLayer {
+            this.alpha = alpha
+            this.scaleX = scale
+            this.scaleY = scale
+        }
         .clickable(enabled = enabled, interactionSource = source, indication = null, onClick = onClick)
 }
 
