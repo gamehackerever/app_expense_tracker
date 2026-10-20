@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -18,6 +19,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -56,8 +58,6 @@ import com.expensetracker.offline.ui.review.ReviewQueueScreen
 import com.expensetracker.offline.ui.settings.SettingsScreen
 import com.expensetracker.offline.ui.theme.ExpenseTrackerTheme
 import com.expensetracker.offline.ui.viewmodel.MainViewModel
-import com.expensetracker.offline.ui.viewmodel.ReviewViewModel
-import com.expensetracker.offline.ui.viewmodel.SplitViewModel
 import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
 import com.expensetracker.offline.util.NecessityManager
@@ -71,42 +71,19 @@ object AppLockState {
 class MainActivity : FragmentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
-    private val reviewViewModel: ReviewViewModel by viewModels()
-    private val splitViewModel: SplitViewModel by viewModels()
     private var isRequestingPermissions = false
     private var lastUnlockTime = 0L
 
-    private fun enableHighRefreshRateAndGpuRendering() {
-        window.setFlags(
-            android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-        )
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            try {
-                @Suppress("DEPRECATION")
-                val display = windowManager.defaultDisplay
-                @Suppress("DEPRECATION")
-                val maxMode = display.supportedModes.maxByOrNull { it.refreshRate }
-                if (maxMode != null) {
-                    window.attributes = window.attributes.apply {
-                        preferredDisplayModeId = maxMode.modeId
-                    }
-                }
-            } catch (_: Exception) {
-                // Fallback for devices restricting display mode queries
-            }
-        }
-    }
+    private var intentTrigger by androidx.compose.runtime.mutableIntStateOf(0)
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        intentTrigger++
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableHighRefreshRateAndGpuRendering()
 
         val prefs = getSharedPreferences("expense_tracker_prefs", MODE_PRIVATE)
 
@@ -115,10 +92,20 @@ class MainActivity : FragmentActivity() {
                 mutableStateOf(prefs.getString("key_app_theme_mode", "SYSTEM") ?: "SYSTEM")
             }
 
+            var isAppLockSettingEnabled by remember {
+                mutableStateOf(prefs.getBoolean("key_app_lock_enabled", false))
+            }
+
             DisposableEffect(Unit) {
                 val listener = SharedPreferences.OnSharedPreferenceChangeListener { p, key ->
-                    if (key == "key_app_theme_mode") {
-                        appThemeMode = p.getString(key, "SYSTEM") ?: "SYSTEM"
+                    when (key) {
+                        "key_app_theme_mode" -> {
+                            appThemeMode = p.getString(key, "SYSTEM") ?: "SYSTEM"
+                        }
+                        "key_app_lock_enabled" -> {
+                            val enabled = p.getBoolean(key, false)
+                            isAppLockSettingEnabled = enabled
+                        }
                     }
                 }
                 prefs.registerOnSharedPreferenceChangeListener(listener)
@@ -131,13 +118,14 @@ class MainActivity : FragmentActivity() {
                 }
 
                 var isAppLocked by remember {
-                    mutableStateOf(prefs.getBoolean("key_app_lock_enabled", false) && AppLockState.isLocked)
+                    mutableStateOf(isAppLockSettingEnabled && AppLockState.isLocked)
                 }
 
                 val lifecycleOwner = LocalLifecycleOwner.current
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
-                        if (!prefs.getBoolean("key_app_lock_enabled", false)) return@LifecycleEventObserver
+                        val lockEnabled = prefs.getBoolean("key_app_lock_enabled", false)
+                        if (!lockEnabled) return@LifecycleEventObserver
                         if (!prefs.getBoolean("key_disclosure_accepted", false)) return@LifecycleEventObserver
                         if (isRequestingPermissions) return@LifecycleEventObserver
 
@@ -169,6 +157,8 @@ class MainActivity : FragmentActivity() {
                         onDecline = { finish() }
                     )
                 } else {
+                    com.expensetracker.offline.ui.components.SecureScreenEffect(enabled = isAppLocked)
+
                     LaunchedEffect(isAppLocked) {
                         if (!isAppLocked) checkAndRequestPermissions()
                     }
@@ -178,12 +168,7 @@ class MainActivity : FragmentActivity() {
                             .fillMaxSize()
                             .background(MaterialTheme.colorScheme.background)
                     ) {
-                        AppNavigation(
-                            viewModel = viewModel,
-                            reviewViewModel = reviewViewModel,
-                            splitViewModel = splitViewModel,
-                            isAppLocked = isAppLocked
-                        )
+                        AppNavigation(viewModel = viewModel, isAppLocked = isAppLocked, intentTrigger = intentTrigger)
 
                         AnimatedVisibility(
                             visible = isAppLocked,
@@ -275,19 +260,22 @@ fun AppLockScreen(onUnlock: () -> Unit) {
         if (isPrompting) return
         if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
 
-        val status = BiometricManager.from(context).canAuthenticate(authenticators)
+        val bm = BiometricManager.from(context)
+        val status = bm.canAuthenticate(authenticators)
         when (status) {
             BiometricManager.BIOMETRIC_SUCCESS -> { errorMessage = null }
-            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED,
-            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> {
-                context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
-                    .edit { putBoolean("key_app_lock_enabled", false) }
-                Toast.makeText(context, "App Lock turned off: No device lock setup.", Toast.LENGTH_LONG).show()
-                currentOnUnlock()
-                return
+            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> {
+                val credentialOnly = bm.canAuthenticate(BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                if (credentialOnly != BiometricManager.BIOMETRIC_SUCCESS) {
+                    context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+                        .edit { putBoolean("key_app_lock_enabled", false) }
+                    Toast.makeText(context, "App Lock turned off: No device screen lock is set up.", Toast.LENGTH_LONG).show()
+                    currentOnUnlock()
+                    return
+                }
             }
             else -> {
-                errorMessage = "Biometric hardware unavailable. Please use PIN/Password."
+                errorMessage = "Authentication temporarily unavailable. Tap Unlock to try again."
                 return
             }
         }
@@ -380,11 +368,24 @@ fun ProminentDisclosureScreen(onAccept: () -> Unit, onDecline: () -> Unit) {
 @Composable
 fun AppNavigation(
     viewModel: MainViewModel,
-    reviewViewModel: ReviewViewModel,
-    splitViewModel: SplitViewModel,
-    isAppLocked: Boolean = false
+    isAppLocked: Boolean = false,
+    intentTrigger: Int = 0
 ) {
     val navController = rememberNavController()
+    val context = LocalContext.current
+    val activity = context.findFragmentActivity()
+
+    LaunchedEffect(intentTrigger, isAppLocked) {
+        if (!isAppLocked) {
+            val targetRoute = activity?.intent?.getStringExtra("OPEN_ROUTE")
+            if (!targetRoute.isNullOrBlank()) {
+                activity.intent?.removeExtra("OPEN_ROUTE")
+                navController.navigate(targetRoute) {
+                    launchSingleTop = true
+                }
+            }
+        }
+    }
 
     NavHost(
         navController = navController,
@@ -393,27 +394,27 @@ fun AppNavigation(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
         enterTransition = {
-            fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)) +
-                    slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { (it * 0.12f).toInt() }
+            slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { (it * 0.16f).toInt() } +
+                    fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing))
         },
         exitTransition = {
-            fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing)) +
-                    slideOutHorizontally(animationSpec = tween(200, easing = FastOutSlowInEasing)) { -(it * 0.08f).toInt() }
+            slideOutHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { -(it * 0.07f).toInt() } +
+                    fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing))
         },
         popEnterTransition = {
-            fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)) +
-                    slideInHorizontally(animationSpec = tween(200, easing = FastOutSlowInEasing)) { -(it * 0.08f).toInt() }
+            slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { -(it * 0.07f).toInt() } +
+                    scaleIn(animationSpec = tween(220, easing = FastOutSlowInEasing), initialScale = 0.96f) +
+                    fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing))
         },
         popExitTransition = {
-            fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing)) +
-                    slideOutHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { (it * 0.12f).toInt() }
+            slideOutHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { (it * 0.18f).toInt() } +
+                    scaleOut(animationSpec = tween(220, easing = FastOutSlowInEasing), targetScale = 0.92f) +
+                    fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing))
         }
     ) {
         composable("dashboard") {
             DashboardScreen(
                 viewModel = viewModel,
-                reviewViewModel = reviewViewModel,
-                splitViewModel = splitViewModel,
                 isAppLocked = isAppLocked,
                 onNavigateToReview = { navController.navigate("review") },
                 onNavigateToSettings = { target ->
@@ -427,7 +428,6 @@ fun AppNavigation(
         composable("insights") {
             InsightsScreen(
                 viewModel = viewModel,
-                splitViewModel = splitViewModel,
                 isAppLocked = isAppLocked,
                 onBack = { navController.popBackStack() },
                 onNavigateToNecessities = { navController.navigate("necessities") },
@@ -440,7 +440,6 @@ fun AppNavigation(
         composable("review") {
             ReviewQueueScreen(
                 viewModel = viewModel,
-                reviewViewModel = reviewViewModel,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -485,6 +484,11 @@ fun AppNavigation(
                         }
                     }
                     viewModel.updateNecessityChunk(totalMonthlyReserve)
+                    com.expensetracker.offline.engine.notification.DailySummaryReceiver.checkAndNotifyUpcomingBills(
+                        context,
+                        txns.map { it.transaction }
+                    )
+                    com.expensetracker.offline.widget.ExpenseWidget.updateAll(context)
                 },
                 onNavigateBack = { navController.popBackStack() }
             )
