@@ -1,6 +1,8 @@
 package com.expensetracker.offline.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.expensetracker.offline.ExpenseTrackerApp
@@ -12,85 +14,53 @@ import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.data.repository.SettingsRepository
-import com.expensetracker.offline.data.repository.TransactionRepository
+import com.expensetracker.offline.ui.dashboard.SplitLinkInfo
+import com.expensetracker.offline.util.BackupResult
+import com.expensetracker.offline.util.RestoreResult
+import com.expensetracker.offline.engine.backup.AutoBackupWorker
+import com.expensetracker.offline.engine.backup.SecurePassphraseStore
 import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.engine.recurring.RecurringPayment
+import com.expensetracker.offline.util.BackupManager
 import com.expensetracker.offline.util.BalanceCache
 import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.NecessityItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.round
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository = TransactionRepository(
-        database = (application as ExpenseTrackerApp).database,
-        context = application.applicationContext
-    )
+    private val repository = (application as ExpenseTrackerApp).repository
     private val settingsRepo = SettingsRepository(application.applicationContext)
 
-    val pendingReviewItems: StateFlow<List<ReviewItemEntity>> = repository.pendingReviewItems
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val monthlyBudget = MutableStateFlow(settingsRepo.monthlyBudget)
+    val startDayOfMonth = MutableStateFlow(settingsRepo.startDayOfMonth)
+    val necessityChunkLimit = MutableStateFlow(settingsRepo.necessityChunkLimit)
+    val isBudgetExplicitlySet = MutableStateFlow(settingsRepo.isBudgetExplicitlySet)
 
-    val pendingReviewCount: StateFlow<Int> = repository.pendingReviewCount
-        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val categoryBudgets = MutableStateFlow(settingsRepo.getCategoryBudgets())
+    val dismissedCategoryWarnings = MutableStateFlow<Set<String>>(emptySet())
+    val dismissedCategoryWarningLevels = MutableStateFlow<Map<String, String>>(emptyMap())
 
     val unsettledSplitsWithDebts = repository.unsettledSplitsWithDebts
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    val startDayOfMonth = MutableStateFlow(1)
-    val monthlyBudget = MutableStateFlow(15000L)
-    val isBudgetExplicitlySet = MutableStateFlow(false)
-    val necessityChunkLimit = MutableStateFlow(0L)
-    val categoryBudgets = MutableStateFlow<Map<String, Long>>(emptyMap())
-    val dismissedCategoryWarningLevels = MutableStateFlow<Map<String, String>>(emptyMap())
-    val dismissedCategoryWarnings = MutableStateFlow<Set<String>>(emptySet())
-
     init {
-        refreshSettings()
+        val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+        val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
+        dismissedCategoryWarningLevels.value = levels
+        dismissedCategoryWarnings.value = levels.keys
     }
 
-    fun updateStartDayOfMonth(day: Int) {
-        val clamped = day.coerceIn(1, 28)
-        startDayOfMonth.value = clamped
+    fun setCategoryBudget(category: String, amountInPaise: Long) {
         viewModelScope.launch(Dispatchers.IO) {
-            settingsRepo.startDayOfMonth = clamped
-            val (cycleStart, _) = BillingCycleHelper.getCycleRange(clamped)
-            val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
-            dismissedCategoryWarningLevels.value = levels
-            dismissedCategoryWarnings.value = levels.keys
-        }
-    }
-
-    fun updateMonthlyBudget(rupees: Long) {
-        if (rupees <= 0L) return
-        monthlyBudget.value = rupees
-        isBudgetExplicitlySet.value = true
-        viewModelScope.launch(Dispatchers.IO) {
-            settingsRepo.monthlyBudget = rupees
-        }
-    }
-
-    fun setCategoryBudget(category: String, limitPaise: Long) {
-        viewModelScope.launch(Dispatchers.IO) {
-            settingsRepo.setCategoryBudget(category, limitPaise)
+            settingsRepo.setCategoryBudget(category, amountInPaise)
             categoryBudgets.value = settingsRepo.getCategoryBudgets()
-            val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
-            val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
-            dismissedCategoryWarningLevels.value = levels
-            dismissedCategoryWarnings.value = levels.keys
         }
     }
 
@@ -98,32 +68,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             settingsRepo.removeCategoryBudget(category)
             categoryBudgets.value = settingsRepo.getCategoryBudgets()
-            val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
-            val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
-            dismissedCategoryWarningLevels.value = levels
-            dismissedCategoryWarnings.value = levels.keys
-        }
-    }
-
-    fun refreshSettings() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val day = settingsRepo.startDayOfMonth
-            startDayOfMonth.value = day
-            monthlyBudget.value = settingsRepo.monthlyBudget
-            isBudgetExplicitlySet.value = settingsRepo.isBudgetExplicitlySet
-            necessityChunkLimit.value = settingsRepo.necessityChunkLimit
-            categoryBudgets.value = settingsRepo.getCategoryBudgets()
-
-            val (cycleStart, _) = BillingCycleHelper.getCycleRange(day)
-            val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
-            dismissedCategoryWarningLevels.value = levels
-            dismissedCategoryWarnings.value = levels.keys
         }
     }
 
     fun dismissCategoryWarning(category: String, level: String = SettingsRepository.WARNING_LEVEL_OVER) {
         viewModelScope.launch(Dispatchers.IO) {
-            val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+            val (cycleStart, _) = BillingCycleHelper.getCycleRange(startDayOfMonth.value)
             settingsRepo.dismissCategoryWarning(category, cycleStart, level)
             val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
             dismissedCategoryWarningLevels.value = levels
@@ -131,12 +81,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    val searchQuery = MutableStateFlow("")
-    val filterCategory = MutableStateFlow("All")
-    val filterStartTime = MutableStateFlow(0L)
-    val transactionLimit = MutableStateFlow(50)
+    fun updateStartDayOfMonth(day: Int) {
+        val clamped = day.coerceIn(1, 28)
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.startDayOfMonth = clamped
+        }
+        startDayOfMonth.value = clamped
+        val (cycleStart, _) = BillingCycleHelper.getCycleRange(clamped)
+        val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
+        dismissedCategoryWarningLevels.value = levels
+        dismissedCategoryWarnings.value = levels.keys
+    }
 
-    fun renameAllPayees(oldPayee: String, newPayee: String) {
+    fun updateMonthlyBudget(newBudget: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.monthlyBudget = newBudget
+        }
+        monthlyBudget.value = newBudget
+        isBudgetExplicitlySet.value = true
+    }
+
+    fun refreshSettings() {
+        monthlyBudget.value = settingsRepo.monthlyBudget
+        startDayOfMonth.value = settingsRepo.startDayOfMonth
+        necessityChunkLimit.value = settingsRepo.necessityChunkLimit
+        isBudgetExplicitlySet.value = settingsRepo.isBudgetExplicitlySet
+        categoryBudgets.value = settingsRepo.getCategoryBudgets()
+    }
+
+    fun exportBackupToUri(uri: Uri, password: String? = null, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>().applicationContext
+            val result = BackupManager.createBackup(context, uri.toString(), password ?: "")
+            withContext(Dispatchers.Main) { onResult(result is BackupResult.Success) }
+        }
+    }
+
+    fun importBackupFromUri(uri: Uri, password: String? = null, onResult: (RestoreResult) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>().applicationContext
+            val result = BackupManager.restoreBackup(context, uri.toString(), password ?: "")
+            if (result is RestoreResult.SuccessRestart) {
+                monthlyBudget.value = settingsRepo.monthlyBudget
+                startDayOfMonth.value = settingsRepo.startDayOfMonth
+                necessityChunkLimit.value = settingsRepo.necessityChunkLimit
+                isBudgetExplicitlySet.value = settingsRepo.isBudgetExplicitlySet
+                categoryBudgets.value = settingsRepo.getCategoryBudgets()
+            }
+            withContext(Dispatchers.Main) { onResult(result) }
+        }
+    }
+
+    fun configureAutoBackupPassphrase(passphrase: String?) {
+        val context = getApplication<Application>().applicationContext
+        if (passphrase != null) {
+            SecurePassphraseStore.save(context, passphrase)
+        } else {
+            SecurePassphraseStore.clear(context)
+        }
+        AutoBackupWorker.schedule(context)
+    }
+
+    val pendingReviewItems: StateFlow<List<ReviewItemEntity>> = repository.pendingReviewItems
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val pendingReviewCount: StateFlow<Int> = repository.pendingReviewCount
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    private val searchQuery = MutableStateFlow("")
+    private val filterCategory = MutableStateFlow("All")
+    private val filterStartTime = MutableStateFlow(0L)
+    private val transactionLimit = MutableStateFlow(100)
+
+    fun renamePayeeForAll(oldPayee: String, newPayee: String) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.renameAllPayees(oldPayee, newPayee)
         }
@@ -168,11 +185,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val allTransactionsWithDebts = repository.allTransactionsWithDebts
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    val splitLinkInfo: StateFlow<SplitLinkInfo> = allTransactionsWithDebts.map { list: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts> ->
+        val creditsWithLinks = ArrayList<TransactionEntity>()
+        for (i in 0 until list.size) {
+            val item = list[i]
+            val txn = item.transaction
+            if (txn.type == TransactionType.CREDIT && txn.linkedDebtId != null) {
+                creditsWithLinks.add(txn)
+            }
+        }
+        val linkedCreditsByDebtId = HashMap<Long, List<TransactionEntity>>()
+        val linkedDebtIdByCreditId = HashMap<Long, Long>()
+        for (i in 0 until creditsWithLinks.size) {
+            val txn = creditsWithLinks[i]
+            val debtId = txn.linkedDebtId!!
+            val subList = (linkedCreditsByDebtId[debtId] as? MutableList<TransactionEntity>) ?: ArrayList<TransactionEntity>().also { linkedCreditsByDebtId[debtId] = it }
+            subList.add(txn)
+            linkedDebtIdByCreditId[txn.id] = debtId
+        }
+        SplitLinkInfo(linkedCreditsByDebtId, linkedDebtIdByCreditId)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, SplitLinkInfo(emptyMap(), emptyMap()))
+
     val allTransactions: StateFlow<List<TransactionEntity>> = allTransactionsWithDebts
         .map { list -> list.map { it.transaction } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val totalMoneyOwed: StateFlow<Long?> = repository.totalMoneyOwed
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
+
+    val totalMoneyYouOwe: StateFlow<Long?> = repository.totalMoneyYouOwe
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -210,7 +251,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val parsed = FinancialParser.parse(body, address)
                         val bal = parsed.balance
                         if (parsed.isFinancial && bal != null) {
-                            // Newer-wins write (Long paise) so this can't roll the baseline back.
                             BalanceCache.updateIfNewer(
                                 BalanceCache.prefs(context), parsed.bankName, parsed.accountNumber,
                                 bal, c.getLong(dateCol)
@@ -227,7 +267,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _manualSyncBalance.value = -1L
                 }
             } catch (e: SecurityException) {
-                _manualSyncBalance.value = -1L // Gracefully show "No balance found"
+                _manualSyncBalance.value = -1L
             }
         }
     }
@@ -240,7 +280,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _manualSyncBalance.value = null
     }
 
-    // Hand-off from Insights ("Add to Fixed Costs") to the Fixed Costs form.
     private val _pendingNecessityPrefill = MutableStateFlow<NecessityItem?>(null)
     val pendingNecessityPrefill: StateFlow<NecessityItem?> = _pendingNecessityPrefill
 
@@ -284,7 +323,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _pendingDeleteIds.update { it - id }
     }
 
-    // FIXED: Persist necessityChunkLimit as Long (paise) via SettingsRepository
     fun updateNecessityChunk(limit: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             settingsRepo.necessityChunkLimit = limit
@@ -296,7 +334,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         amount: Long, payee: String, category: String, type: TransactionType,
         timestamp: Long = System.currentTimeMillis(), itemsSummary: String? = null,
         receiptImageUri: String? = null, bankName: String? = null,
-        accountNumber: String? = null, linkedDebtId: Long? = null
+        accountNumber: String? = null, linkedDebtId: Long? = null,
+        excludeFromSpend: Boolean = false,
+        splitParticipants: List<com.expensetracker.offline.ui.components.SplitParticipant> = emptyList()
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val entity = TransactionEntity(
@@ -305,9 +345,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 referenceId = null, rawContent = "Manual Entry",
                 itemsSummary = itemsSummary, receiptImageUri = receiptImageUri,
                 linkedDebtId = linkedDebtId, bankName = bankName,
-                accountNumber = accountNumber
+                accountNumber = accountNumber,
+                excludeFromSpend = excludeFromSpend || category.equals("Transfer", ignoreCase = true)
             )
-            repository.insertTransaction(entity)
+            val newId = repository.insertTransaction(entity)
+            if (newId > 0L && splitParticipants.isNotEmpty() && type == TransactionType.DEBIT) {
+                val debtsToSave = splitParticipants
+                    .filter { p ->
+                        val amt = p.exactAmountStr.replace(",", "").toDoubleOrNull() ?: 0.0
+                        amt > 0.0 && !p.isMe
+                    }
+                    .map { p ->
+                        val rupees = p.exactAmountStr.replace(",", "").toDoubleOrNull() ?: 0.0
+                        val amtPaise = round(rupees * 100.0).toLong()
+                        SplitDebtEntity(
+                            id = 0L,
+                            transactionId = newId,
+                            debtorName = p.name.trim(),
+                            originalAmount = amtPaise,
+                            amountOwed = amtPaise
+                        )
+                    }
+                if (debtsToSave.isNotEmpty()) {
+                    repository.saveMultiSplit(newId, debtsToSave, "You")
+                }
+            }
         }
     }
 
@@ -317,22 +379,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveMultiSplit(transactionId: Long, participants: List<com.expensetracker.offline.ui.components.SplitParticipant>) {
+    fun saveMultiSplit(
+        transactionId: Long,
+        participants: List<com.expensetracker.offline.ui.components.SplitParticipant>,
+        paidBy: String = "You"
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
+            val normalizedPayer = paidBy.trim().ifBlank { "You" }
+            val isPaidByMe = normalizedPayer.equals("You", ignoreCase = true)
             val debtsToSave = participants
-                .filter { !it.isMe && ((it.exactAmountStr.replace(",", "").toDoubleOrNull() ?: 0.0) > 0.0) }
+                .filter { p ->
+                    val amt = p.exactAmountStr.replace(",", "").toDoubleOrNull() ?: 0.0
+                    if (amt <= 0.0) false
+                    else if (isPaidByMe) !p.isMe
+                    else {
+                        val pName = if (p.isMe) "You" else p.name.trim()
+                        !pName.equals(normalizedPayer, ignoreCase = true)
+                    }
+                }
                 .map { p ->
                     val rupees = p.exactAmountStr.replace(",", "").toDoubleOrNull() ?: 0.0
                     val amtPaise = round(rupees * 100.0).toLong()
+                    val debtorName = if (p.isMe) "You" else p.name.trim()
                     SplitDebtEntity(
                         id = p.debtId ?: 0L,
                         transactionId = transactionId,
-                        debtorName = p.name.trim(),
+                        debtorName = debtorName,
                         originalAmount = amtPaise,
                         amountOwed = amtPaise
                     )
                 }
-            repository.saveMultiSplit(transactionId, debtsToSave)
+            repository.saveMultiSplit(transactionId, debtsToSave, normalizedPayer)
         }
     }
 
@@ -426,8 +503,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         accountNumber: String? = null
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            // Review items now carry bank/account/balance/ref from the ONE header-aware parse.
-            // Only legacy rows (before those columns existed) fall back to re-parsing, with the sender.
             val needsParse = reviewItem.bankName == null && reviewItem.balance == null && reviewItem.referenceId == null
             val parsed = if (needsParse) FinancialParser.parse(reviewItem.rawContent, reviewItem.sender, reviewItem.source) else null
             val bank = bankName ?: reviewItem.bankName ?: parsed?.bankName
@@ -449,9 +524,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 source = reviewItem.source,
                 itemsSummary = null,
                 receiptImageUri = null,
-                excludeFromSpend = parsed?.excludeFromSpend ?: false
+                excludeFromSpend = parsed?.excludeFromSpend ?: category.equals("Transfer", ignoreCase = true)
             )
-            // Insert + mark RESOLVED in one DB transaction (no half-approved items).
             repository.approveReviewItem(newTransaction, reviewItem.id)
             repository.learnCategoryRule(payee, category)
 
@@ -473,16 +547,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         transactionLimit.value = limit
     }
 
-    /**
-     * Approves review items in bulk using only what could be read from each message.
-     *  - Never guesses a category: unknown merchants stay "Uncategorized" (the old code defaulted
-     *    to "Food & Dining", which put wrong categories on the transactions).
-     *  - Never teaches a category rule, because nobody confirmed the category (the old code saved
-     *    a rule per item, so one bulk approve could poison future auto-categorisation).
-     *  - Items with no readable amount are left in the queue.
-     *
-     * @param onDone called on the main thread with how many were approved / left in the queue
-     */
     fun bulkResolveReviewItems(
         items: List<ReviewItemEntity>,
         onDone: (approved: Int, skipped: Int) -> Unit = { _, _ -> }
@@ -494,7 +558,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val context = getApplication<Application>().applicationContext
             val prefs = BalanceCache.prefs(context)
 
-            // Oldest first, so the newest balance is written last (newer-wins also guards this).
             items.sortedBy { it.timestamp }.forEach { item ->
                 val needsParse = item.bankName == null && item.balance == null && item.referenceId == null && item.type == null
                 val parsed = if (needsParse) FinancialParser.parse(item.rawContent, item.sender) else null
@@ -502,7 +565,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val payee = item.extractedPartialPayee ?: parsed?.payee ?: "Unknown"
                 val type = item.type ?: parsed?.type
 
-                // Never guess the type of a message we could not classify; leave it in the queue.
                 if (amt > 0 && type != null) {
                     val category = repository.classifyCategory(payee, item.rawContent)
                     val bank = item.bankName ?: parsed?.bankName
@@ -550,7 +612,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Returns how many rows were actually added (rows already in the app are skipped). */
     suspend fun importTransactions(transactions: List<TransactionEntity>): Int =
         withContext(Dispatchers.IO) { repository.insertTransactionsBulk(transactions) }
 

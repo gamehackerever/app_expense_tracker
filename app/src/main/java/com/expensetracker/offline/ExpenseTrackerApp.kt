@@ -2,6 +2,7 @@ package com.expensetracker.offline
 
 import android.app.Application
 import com.expensetracker.offline.data.local.AppDatabase
+import com.expensetracker.offline.data.repository.TransactionRepository
 import com.expensetracker.offline.engine.backup.AutoBackupWorker
 import com.expensetracker.offline.engine.notification.DailyDigestWorker
 import com.expensetracker.offline.engine.notification.DailySummaryReceiver
@@ -10,6 +11,10 @@ class ExpenseTrackerApp : Application() {
 
     val database: AppDatabase by lazy {
         AppDatabase.getInstance(this)
+    }
+
+    val repository: TransactionRepository by lazy {
+        TransactionRepository(database, this)
     }
 
     override fun onCreate() {
