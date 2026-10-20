@@ -1,6 +1,7 @@
 package com.expensetracker.offline.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -96,13 +97,13 @@ private fun PaymentChip(
     val shape = RoundedCornerShape(AppRadius.pill)
 
     // FIX: Solid neutral dark for selected state
-    val bg by animateColorAsState(if (selected) colors.onSurface else colors.surface, tween(150), label = "payBg")
+    val bg by animateColorAsState(if (selected) colors.onSurface else colors.surface, tween(200, easing = FastOutSlowInEasing), label = "payBg")
     val border by animateColorAsState(
         if (selected) Color.Transparent else colors.outlineVariant.copy(alpha = 0.3f), // Softer unselected border
-        tween(150),
+        tween(200, easing = FastOutSlowInEasing),
         label = "payBorder"
     )
-    val fg by animateColorAsState(if (selected) colors.surface else colors.onSurfaceVariant, tween(150), label = "payText")
+    val fg by animateColorAsState(if (selected) colors.surface else colors.onSurfaceVariant, tween(200, easing = FastOutSlowInEasing), label = "payText")
 
     Surface(
         shape = shape,

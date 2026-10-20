@@ -1,9 +1,9 @@
 package com.expensetracker.offline.ui.theme
 
 import android.app.Activity
-import android.graphics.drawable.ColorDrawable
 import android.os.Build
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
@@ -13,9 +13,11 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -101,36 +103,65 @@ private val LightColorScheme = lightColorScheme(
     surfaceContainerHighest = Color(0xFFD4D4D8)
 )
 
-@Composable
-private fun animateColor(target: Color, label: String): Color {
-    val animated by animateColorAsState(targetValue = target, animationSpec = tween(260), label = label)
-    return animated
-}
+private fun lerpColorScheme(start: ColorScheme, stop: ColorScheme, fraction: Float): ColorScheme = ColorScheme(
+    primary = lerp(start.primary, stop.primary, fraction),
+    onPrimary = lerp(start.onPrimary, stop.onPrimary, fraction),
+    primaryContainer = lerp(start.primaryContainer, stop.primaryContainer, fraction),
+    onPrimaryContainer = lerp(start.onPrimaryContainer, stop.onPrimaryContainer, fraction),
+    inversePrimary = lerp(start.inversePrimary, stop.inversePrimary, fraction),
+    secondary = lerp(start.secondary, stop.secondary, fraction),
+    onSecondary = lerp(start.onSecondary, stop.onSecondary, fraction),
+    secondaryContainer = lerp(start.secondaryContainer, stop.secondaryContainer, fraction),
+    onSecondaryContainer = lerp(start.onSecondaryContainer, stop.onSecondaryContainer, fraction),
+    tertiary = lerp(start.tertiary, stop.tertiary, fraction),
+    onTertiary = lerp(start.onTertiary, stop.onTertiary, fraction),
+    tertiaryContainer = lerp(start.tertiaryContainer, stop.tertiaryContainer, fraction),
+    onTertiaryContainer = lerp(start.onTertiaryContainer, stop.onTertiaryContainer, fraction),
+    background = lerp(start.background, stop.background, fraction),
+    onBackground = lerp(start.onBackground, stop.onBackground, fraction),
+    surface = lerp(start.surface, stop.surface, fraction),
+    onSurface = lerp(start.onSurface, stop.onSurface, fraction),
+    surfaceVariant = lerp(start.surfaceVariant, stop.surfaceVariant, fraction),
+    onSurfaceVariant = lerp(start.onSurfaceVariant, stop.onSurfaceVariant, fraction),
+    surfaceTint = lerp(start.surfaceTint, stop.surfaceTint, fraction),
+    inverseSurface = lerp(start.inverseSurface, stop.inverseSurface, fraction),
+    inverseOnSurface = lerp(start.inverseOnSurface, stop.inverseOnSurface, fraction),
+    error = lerp(start.error, stop.error, fraction),
+    onError = lerp(start.onError, stop.onError, fraction),
+    errorContainer = lerp(start.errorContainer, stop.errorContainer, fraction),
+    onErrorContainer = lerp(start.onErrorContainer, stop.onErrorContainer, fraction),
+    outline = lerp(start.outline, stop.outline, fraction),
+    outlineVariant = lerp(start.outlineVariant, stop.outlineVariant, fraction),
+    scrim = lerp(start.scrim, stop.scrim, fraction),
+    surfaceBright = lerp(start.surfaceBright, stop.surfaceBright, fraction),
+    surfaceDim = lerp(start.surfaceDim, stop.surfaceDim, fraction),
+    surfaceContainerLowest = lerp(start.surfaceContainerLowest, stop.surfaceContainerLowest, fraction),
+    surfaceContainerLow = lerp(start.surfaceContainerLow, stop.surfaceContainerLow, fraction),
+    surfaceContainer = lerp(start.surfaceContainer, stop.surfaceContainer, fraction),
+    surfaceContainerHigh = lerp(start.surfaceContainerHigh, stop.surfaceContainerHigh, fraction),
+    surfaceContainerHighest = lerp(start.surfaceContainerHighest, stop.surfaceContainerHighest, fraction)
+)
 
 @Composable
-private fun ColorScheme.animated(): ColorScheme = copy(
-    primary = animateColor(primary, "primary"),
-    onPrimary = animateColor(onPrimary, "onPrimary"),
-    primaryContainer = animateColor(primaryContainer, "primaryContainer"),
-    onPrimaryContainer = animateColor(onPrimaryContainer, "onPrimaryContainer"),
-    secondary = animateColor(secondary, "secondary"),
-    onSecondary = animateColor(onSecondary, "onSecondary"),
-    secondaryContainer = animateColor(secondaryContainer, "secondaryContainer"),
-    onSecondaryContainer = animateColor(onSecondaryContainer, "onSecondaryContainer"),
-    background = animateColor(background, "background"),
-    onBackground = animateColor(onBackground, "onBackground"),
-    surface = animateColor(surface, "surface"),
-    onSurface = animateColor(onSurface, "onSurface"),
-    surfaceVariant = animateColor(surfaceVariant, "surfaceVariant"),
-    onSurfaceVariant = animateColor(onSurfaceVariant, "onSurfaceVariant"),
-    outline = animateColor(outline, "outline"),
-    outlineVariant = animateColor(outlineVariant, "outlineVariant"),
-    surfaceContainerLowest = animateColor(surfaceContainerLowest, "surfaceContainerLowest"),
-    surfaceContainerLow = animateColor(surfaceContainerLow, "surfaceContainerLow"),
-    surfaceContainer = animateColor(surfaceContainer, "surfaceContainer"),
-    surfaceContainerHigh = animateColor(surfaceContainerHigh, "surfaceContainerHigh"),
-    surfaceContainerHighest = animateColor(surfaceContainerHighest, "surfaceContainerHighest")
-)
+private fun animateColorScheme(targetScheme: ColorScheme): ColorScheme {
+    val startScheme = remember { mutableStateOf(targetScheme) }
+    val endScheme = remember { mutableStateOf(targetScheme) }
+    val animatable = remember { Animatable(1f) }
+
+    LaunchedEffect(targetScheme) {
+        if (endScheme.value != targetScheme) {
+            startScheme.value = lerpColorScheme(startScheme.value, endScheme.value, animatable.value)
+            endScheme.value = targetScheme
+            animatable.snapTo(0f)
+            animatable.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+            )
+        }
+    }
+
+    return lerpColorScheme(startScheme.value, endScheme.value, animatable.value)
+}
 
 @Composable
 fun ExpenseTrackerTheme(
@@ -151,18 +182,15 @@ fun ExpenseTrackerTheme(
         darkTheme -> DarkColorScheme
         else -> LightColorScheme
     }
-    val colorScheme = targetScheme.animated()
+    val colorScheme = animateColorScheme(targetScheme)
 
     val view = LocalView.current
     if (!view.isInEditMode) {
-        SideEffect {
+        androidx.compose.runtime.LaunchedEffect(darkTheme) {
             val window = (view.context as? Activity)?.window
             if (window != null) {
-                val bgArgb = colorScheme.background.toArgb()
-                window.decorView.setBackgroundColor(bgArgb)
-                window.setBackgroundDrawable(ColorDrawable(bgArgb))
-                window.statusBarColor = bgArgb
-                window.navigationBarColor = bgArgb
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
                 val controller = WindowCompat.getInsetsController(window, view)
                 controller.isAppearanceLightStatusBars = !darkTheme
                 controller.isAppearanceLightNavigationBars = !darkTheme

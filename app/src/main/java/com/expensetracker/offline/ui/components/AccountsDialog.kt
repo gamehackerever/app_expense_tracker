@@ -7,6 +7,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -599,11 +600,11 @@ private fun AccountListItem(
             isPressed -> scheme.onSurface.copy(alpha = 0.02f)
             else -> scheme.surfaceVariant.copy(alpha = 0.25f)
         },
-        animationSpec = tween(200), label = "accountItemBg"
+        animationSpec = tween(200, easing = FastOutSlowInEasing), label = "accountItemBg"
     )
     val borderColor by animateColorAsState(
         targetValue = if (isSelected) scheme.onSurface.copy(alpha = 0.55f) else scheme.outlineVariant.copy(alpha = 0.30f),
-        animationSpec = tween(200), label = "accountItemBorder"
+        animationSpec = tween(200, easing = FastOutSlowInEasing), label = "accountItemBorder"
     )
 
     Surface(

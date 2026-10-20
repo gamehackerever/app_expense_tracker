@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -185,11 +186,11 @@ internal fun SettingsSection(
 ) {
     val bgColor by animateColorAsState(
         targetValue = if (isHighlighted) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f) else MaterialTheme.colorScheme.surface,
-        animationSpec = tween(500), label = "highlightBg"
+        animationSpec = tween(200, easing = FastOutSlowInEasing), label = "highlightBg"
     )
     val borderColor by animateColorAsState(
         targetValue = if (isHighlighted) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-        animationSpec = tween(500), label = "highlightBorder"
+        animationSpec = tween(200, easing = FastOutSlowInEasing), label = "highlightBorder"
     )
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {

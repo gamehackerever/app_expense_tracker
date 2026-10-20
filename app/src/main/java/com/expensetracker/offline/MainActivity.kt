@@ -18,7 +18,6 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -57,6 +56,8 @@ import com.expensetracker.offline.ui.review.ReviewQueueScreen
 import com.expensetracker.offline.ui.settings.SettingsScreen
 import com.expensetracker.offline.ui.theme.ExpenseTrackerTheme
 import com.expensetracker.offline.ui.viewmodel.MainViewModel
+import com.expensetracker.offline.ui.viewmodel.ReviewViewModel
+import com.expensetracker.offline.ui.viewmodel.SplitViewModel
 import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
 import com.expensetracker.offline.util.NecessityManager
@@ -70,8 +71,33 @@ object AppLockState {
 class MainActivity : FragmentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
+    private val reviewViewModel: ReviewViewModel by viewModels()
+    private val splitViewModel: SplitViewModel by viewModels()
     private var isRequestingPermissions = false
     private var lastUnlockTime = 0L
+
+    private fun enableHighRefreshRateAndGpuRendering() {
+        window.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+        )
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                @Suppress("DEPRECATION")
+                val display = windowManager.defaultDisplay
+                @Suppress("DEPRECATION")
+                val maxMode = display.supportedModes.maxByOrNull { it.refreshRate }
+                if (maxMode != null) {
+                    window.attributes = window.attributes.apply {
+                        preferredDisplayModeId = maxMode.modeId
+                    }
+                }
+            } catch (_: Exception) {
+                // Fallback for devices restricting display mode queries
+            }
+        }
+    }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
@@ -80,6 +106,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableHighRefreshRateAndGpuRendering()
 
         val prefs = getSharedPreferences("expense_tracker_prefs", MODE_PRIVATE)
 
@@ -151,7 +178,12 @@ class MainActivity : FragmentActivity() {
                             .fillMaxSize()
                             .background(MaterialTheme.colorScheme.background)
                     ) {
-                        AppNavigation(viewModel = viewModel, isAppLocked = isAppLocked)
+                        AppNavigation(
+                            viewModel = viewModel,
+                            reviewViewModel = reviewViewModel,
+                            splitViewModel = splitViewModel,
+                            isAppLocked = isAppLocked
+                        )
 
                         AnimatedVisibility(
                             visible = isAppLocked,
@@ -348,6 +380,8 @@ fun ProminentDisclosureScreen(onAccept: () -> Unit, onDecline: () -> Unit) {
 @Composable
 fun AppNavigation(
     viewModel: MainViewModel,
+    reviewViewModel: ReviewViewModel,
+    splitViewModel: SplitViewModel,
     isAppLocked: Boolean = false
 ) {
     val navController = rememberNavController()
@@ -359,29 +393,27 @@ fun AppNavigation(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
         enterTransition = {
-            fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
-                    slideInHorizontally(animationSpec = tween(260, easing = FastOutSlowInEasing)) { (it * 0.14f).toInt() } +
-                    scaleIn(animationSpec = tween(260, easing = FastOutSlowInEasing), initialScale = 0.965f)
+            fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)) +
+                    slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { (it * 0.12f).toInt() }
         },
         exitTransition = {
-            fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing)) +
-                    slideOutHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { -(it * 0.06f).toInt() } +
-                    scaleOut(animationSpec = tween(240, easing = FastOutSlowInEasing), targetScale = 0.975f)
+            fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing)) +
+                    slideOutHorizontally(animationSpec = tween(200, easing = FastOutSlowInEasing)) { -(it * 0.08f).toInt() }
         },
         popEnterTransition = {
-            fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
-                    slideInHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { -(it * 0.06f).toInt() } +
-                    scaleIn(animationSpec = tween(240, easing = FastOutSlowInEasing), initialScale = 0.975f)
+            fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)) +
+                    slideInHorizontally(animationSpec = tween(200, easing = FastOutSlowInEasing)) { -(it * 0.08f).toInt() }
         },
         popExitTransition = {
-            fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing)) +
-                    slideOutHorizontally(animationSpec = tween(250, easing = FastOutSlowInEasing)) { (it * 0.14f).toInt() } +
-                    scaleOut(animationSpec = tween(250, easing = FastOutSlowInEasing), targetScale = 0.965f)
+            fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing)) +
+                    slideOutHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { (it * 0.12f).toInt() }
         }
     ) {
         composable("dashboard") {
             DashboardScreen(
                 viewModel = viewModel,
+                reviewViewModel = reviewViewModel,
+                splitViewModel = splitViewModel,
                 isAppLocked = isAppLocked,
                 onNavigateToReview = { navController.navigate("review") },
                 onNavigateToSettings = { target ->
@@ -395,6 +427,7 @@ fun AppNavigation(
         composable("insights") {
             InsightsScreen(
                 viewModel = viewModel,
+                splitViewModel = splitViewModel,
                 isAppLocked = isAppLocked,
                 onBack = { navController.popBackStack() },
                 onNavigateToNecessities = { navController.navigate("necessities") },
@@ -407,6 +440,7 @@ fun AppNavigation(
         composable("review") {
             ReviewQueueScreen(
                 viewModel = viewModel,
+                reviewViewModel = reviewViewModel,
                 onBack = { navController.popBackStack() }
             )
         }
