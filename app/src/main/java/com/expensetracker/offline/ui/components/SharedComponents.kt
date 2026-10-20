@@ -1,19 +1,66 @@
 package com.expensetracker.offline.ui.components
 
+import android.app.Activity
+import android.content.ContextWrapper
+import android.view.WindowManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
 import com.expensetracker.offline.ui.theme.AppRadius
+import java.util.concurrent.atomic.AtomicInteger
+
+private val activeSecureScreenLocks = AtomicInteger(0)
+
+/**
+ * Dynamically enables [WindowManager.LayoutParams.FLAG_SECURE] on the host [Activity] window
+ * ONLY while [enabled] is true (e.g., when bank balances are revealed, the app lock screen is
+ * covering the UI, or a passphrase dialog is open), and clears it immediately afterwards so
+ * normal expense screens and insights can be screenshotted freely.
+ */
+@Composable
+fun SecureScreenEffect(enabled: Boolean = true) {
+    val context = LocalContext.current
+    DisposableEffect(enabled, context) {
+        val window = run {
+            var cur = context
+            while (cur is ContextWrapper) {
+                if (cur is Activity) return@run cur.window
+                cur = cur.baseContext
+            }
+            null
+        }
+        if (enabled && window != null) {
+            if (activeSecureScreenLocks.incrementAndGet() > 0) {
+                window.setFlags(
+                    WindowManager.LayoutParams.FLAG_SECURE,
+                    WindowManager.LayoutParams.FLAG_SECURE
+                )
+            }
+            onDispose {
+                if (activeSecureScreenLocks.decrementAndGet() <= 0) {
+                    activeSecureScreenLocks.set(0)
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+        } else {
+            onDispose { }
+        }
+    }
+}
 
 @Composable
 fun AppDialog(
@@ -25,13 +72,19 @@ fun AppDialog(
     dismissText: String? = "Cancel",
     destructive: Boolean = false,
     confirmEnabled: Boolean = true,
+    secure: Boolean = false,
     content: @Composable ColumnScope.() -> Unit = {}
 ) {
     val colors = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
     val buttonShape = RoundedCornerShape(AppRadius.small)
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            securePolicy = if (secure) SecureFlagPolicy.SecureOn else SecureFlagPolicy.Inherit
+        )
+    ) {
         Surface(
             modifier = modifier.fillMaxWidth().widthIn(max = 400.dp),
             shape = RoundedCornerShape(AppRadius.large),

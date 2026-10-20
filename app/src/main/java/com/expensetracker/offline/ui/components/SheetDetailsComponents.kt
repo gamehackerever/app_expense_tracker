@@ -33,6 +33,8 @@ fun SheetDetailsSection(
     note: String,
     onNoteChange: (String) -> Unit,
     receiptUri: String?,
+    autoLaunchReceiptPicker: Boolean = false,
+    onReceiptPickerLaunched: (() -> Unit)? = null,
     onReceiptChange: (String?) -> Unit,
     receiptFilePrefix: String,
     currentBillAmountPaise: Long? = null,
@@ -84,6 +86,14 @@ fun SheetDetailsSection(
         receiptOpen = true
         triggerScan(path, autoTriggered = true)
     }
+
+    LaunchedEffect(autoLaunchReceiptPicker) {
+        if (autoLaunchReceiptPicker) {
+            onReceiptPickerLaunched?.invoke()
+            pickReceipt()
+        }
+    }
+
     val receiptBitmap = rememberReceiptBitmap(receiptUri)
 
     val noteActive = noteOpen || note.isNotBlank()

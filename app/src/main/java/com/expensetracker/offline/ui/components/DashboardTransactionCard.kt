@@ -2,7 +2,6 @@ package com.expensetracker.offline.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -254,12 +253,12 @@ fun DashboardTransactionCard(
             grouped && isPressed -> colors.onSurface.copy(alpha = 0.04f).compositeOver(baseColor)
             else -> baseColor
         },
-        animationSpec = tween(200, easing = FastOutSlowInEasing),
+        animationSpec = tween(150),
         label = "cardBgColor"
     )
     val borderColor by animateColorAsState(
         targetValue = if (isSelected) colors.onSurface.copy(alpha = 0.55f) else colors.outlineVariant.copy(alpha = 0.30f),
-        animationSpec = tween(200, easing = FastOutSlowInEasing),
+        animationSpec = tween(150),
         label = "cardBorderColor"
     )
 

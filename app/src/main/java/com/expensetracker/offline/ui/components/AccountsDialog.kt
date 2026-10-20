@@ -7,7 +7,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -39,6 +38,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -66,6 +66,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -92,6 +93,7 @@ import java.time.temporal.ChronoUnit
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 private fun <T> smoothSize() = spring<T>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
 
@@ -108,6 +110,7 @@ fun AccountsDialog(
     onRefresh: () -> Unit,
     onManageNecessities: () -> Unit,
     onDismiss: () -> Unit,
+    onSetManualBalance: ((bankName: String, accountNumber: String?, balancePaise: Long) -> Unit)? = null,
     secure: Boolean = true
 ) {
     val context = LocalContext.current
@@ -115,6 +118,7 @@ fun AccountsDialog(
     val settingsRepo = remember { SettingsRepository(context) }
     var ccConfigVersion by remember { mutableIntStateOf(0) }
     var editingCcAccount by remember { mutableStateOf<AccountBalanceInsight?>(null) }
+    var showManualBalanceDialog by remember { mutableStateOf(false) }
 
     val listMaxHeight = minOf(maxOf((LocalConfiguration.current.screenHeightDp * 0.36f).dp, 160.dp), 340.dp)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -184,6 +188,21 @@ fun AccountsDialog(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
+                if (onSetManualBalance != null) {
+                    IconButton(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            showManualBalanceDialog = true
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Set or update account balance",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
                 IconButton(
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -224,8 +243,25 @@ fun AccountsDialog(
             Spacer(Modifier.height(18.dp))
 
             if (accountBalances.isEmpty()) {
-                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     Text("No accounts detected yet.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (onSetManualBalance != null) {
+                        OutlinedButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                showManualBalanceDialog = true
+                            },
+                            shape = RoundedCornerShape(AppRadius.small)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Add Account / Set Balance", fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                        }
+                    }
                 }
             } else {
                 val single = accountBalances.size == 1
@@ -236,7 +272,6 @@ fun AccountsDialog(
                     }
                 }
 
-                // Single hero card: shows Available Balance and flips to Safe to Spend (no duplicate balance card below!)
                 BalanceFlipCard(
                     contextLabel = activeAccountInsight?.bankName ?: contextLabel,
                     accountNumber = activeAccountInsight?.accountNumber,
@@ -281,7 +316,6 @@ fun AccountsDialog(
                                 }
                             )
                         } else {
-                            // Subtle 1-line Credit Card configuration trigger without repeating balance
                             Surface(
                                 shape = RoundedCornerShape(AppRadius.medium),
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f),
@@ -398,6 +432,94 @@ fun AccountsDialog(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    if (showManualBalanceDialog && onSetManualBalance != null) {
+        val defaultAccount = selectedAccount ?: accountBalances.firstOrNull()?.let { AccountInfo(it.bankName, it.accountNumber) }
+        var bankInput by remember(defaultAccount) { mutableStateOf(defaultAccount?.bankName ?: "Cash Wallet") }
+        var acctNumInput by remember(defaultAccount) { mutableStateOf(defaultAccount?.accountNumber.orEmpty()) }
+        val existingBalPaise = remember(bankInput, acctNumInput, accountBalances) {
+            accountBalances.firstOrNull {
+                it.bankName.equals(bankInput.trim(), ignoreCase = true) &&
+                        (it.accountNumber ?: "") == acctNumInput.trim()
+            }?.latestBalance
+        }
+        var balanceStr by remember(existingBalPaise) {
+            mutableStateOf(
+                if (existingBalPaise != null && existingBalPaise > 0L)
+                    String.format(Locale.US, "%.2f", existingBalPaise / 100.0).removeSuffix(".00")
+                else ""
+            )
+        }
+        val parsedBalancePaise = remember(balanceStr) {
+            balanceStr.trim().replace(",", "").toDoubleOrNull()?.takeIf { it >= 0.0 }?.let { (it * 100.0).roundToLong() }
+        }
+
+        AppDialog(
+            title = "Set Account / Wallet Balance",
+            onDismiss = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                showManualBalanceDialog = false
+            },
+            confirmText = "Save Balance",
+            confirmEnabled = bankInput.trim().isNotEmpty() && parsedBalancePaise != null,
+            onConfirm = {
+                val bal = parsedBalancePaise ?: return@AppDialog
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onSetManualBalance(
+                    bankInput.trim(),
+                    acctNumInput.trim().takeIf { it.isNotEmpty() },
+                    bal
+                )
+                statusText = "Balance updated for ${bankInput.trim()}"
+                statusVisible = true
+                showManualBalanceDialog = false
+            }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Set or adjust the current balance for a bank account or manual wallet. Future manual transactions on this account will automatically update it.",
+                    fontSize = 13.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 19.sp
+                )
+                OutlinedTextField(
+                    value = bankInput,
+                    onValueChange = { bankInput = it.take(40) },
+                    label = { Text("Account / Wallet Name") },
+                    placeholder = { Text("e.g., Cash Wallet, HDFC Bank") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(AppRadius.small),
+                    colors = sheetFieldColors(),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = acctNumInput,
+                        onValueChange = { acctNumInput = it.filter { c -> c.isDigit() }.take(4) },
+                        label = { Text("Last 4 Digits (Opt)") },
+                        placeholder = { Text("1234") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(AppRadius.small),
+                        colors = sheetFieldColors(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(0.9f)
+                    )
+                    OutlinedTextField(
+                        value = balanceStr,
+                        onValueChange = { balanceStr = it.filter { c -> c.isDigit() || c == '.' }.take(12) },
+                        label = { Text("Current Balance (₹)") },
+                        placeholder = { Text("0.00") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(AppRadius.small),
+                        colors = sheetFieldColors(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1.1f)
+                    )
                 }
             }
         }
@@ -600,11 +722,11 @@ private fun AccountListItem(
             isPressed -> scheme.onSurface.copy(alpha = 0.02f)
             else -> scheme.surfaceVariant.copy(alpha = 0.25f)
         },
-        animationSpec = tween(200, easing = FastOutSlowInEasing), label = "accountItemBg"
+        animationSpec = tween(200), label = "accountItemBg"
     )
     val borderColor by animateColorAsState(
         targetValue = if (isSelected) scheme.onSurface.copy(alpha = 0.55f) else scheme.outlineVariant.copy(alpha = 0.30f),
-        animationSpec = tween(200, easing = FastOutSlowInEasing), label = "accountItemBorder"
+        animationSpec = tween(200), label = "accountItemBorder"
     )
 
     Surface(

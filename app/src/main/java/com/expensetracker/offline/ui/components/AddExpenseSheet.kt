@@ -48,13 +48,15 @@ fun AddExpenseSheet(
     transactionsHistory: List<TransactionEntity> = emptyList(),
     onAddToFixedCosts: (NecessityManager.BillSuggestion) -> Unit = {},
     availableCategories: List<String> = emptyList(),
+    autoLaunchReceiptPicker: Boolean = false,
+    onReceiptPickerLaunched: () -> Unit = {},
     onDismiss: () -> Unit,
     linkedAccounts: List<AccountInfo>,
     initialSplitPeople: List<String> = listOf("You"),
     onSave: (
         amount: Long, payee: String, category: String, type: TransactionType,
         timestamp: Long, itemsSummary: String?, receiptUri: String?,
-        bankName: String?, accountNumber: String?
+        bankName: String?, accountNumber: String?, excludeFromSpend: Boolean
     ) -> Unit,
     onSaveSplit: ((List<SplitParticipant>) -> Unit)? = null
 ) {
@@ -389,7 +391,7 @@ fun AddExpenseSheet(
                             exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
                         ) {
                             val suggestion = fixedCostSuggestion
-                        if (suggestion != null) {
+                            if (suggestion != null) {
                                 SheetFixedCostSuggestion(
                                     suggestion = suggestion,
                                     onClick = { onAddToFixedCosts(suggestion) }
@@ -403,6 +405,8 @@ fun AddExpenseSheet(
                     note = itemsSummary,
                     onNoteChange = { itemsSummary = it },
                     receiptUri = receiptImageUri,
+                    autoLaunchReceiptPicker = autoLaunchReceiptPicker,
+                    onReceiptPickerLaunched = onReceiptPickerLaunched,
                     onReceiptChange = { new ->
                         if (receiptImageUri != new) deleteReceiptFile(context, receiptImageUri)
                         receiptImageUri = new
@@ -442,6 +446,7 @@ fun AddExpenseSheet(
                             }
                         }
                         val finalCategory = if (isTransferMode) "Transfer" else selectedCategory
+                        val finalExclude = excludeFromSpend || isTransferMode || finalCategory.equals("Transfer", ignoreCase = true)
                         if (finalAmount > 0 && !isSaving) {
                             isSaving = true
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -460,7 +465,7 @@ fun AddExpenseSheet(
                             onSave(
                                 finalAmount, finalPayee, finalCategory, transactionType,
                                 transactionDateMillis, itemsSummary.ifBlank { null }, receiptImageUri,
-                                selectedBankName, selectedAccountNumber
+                                selectedBankName, selectedAccountNumber, finalExclude
                             )
                             onDismiss()
                         }
