@@ -1184,9 +1184,9 @@ internal fun Modifier.quietSelectable(
 fun DashboardProgressBar(
     progress: Float,
     color: Color,
+    modifier: Modifier = Modifier,
     trackColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
-    height: androidx.compose.ui.unit.Dp = 4.dp,
-    modifier: Modifier = Modifier
+    height: androidx.compose.ui.unit.Dp = 4.dp
 ) {
     val clamped = progress.coerceIn(0f, 1f)
     Box(

@@ -56,10 +56,13 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
+import com.expensetracker.offline.ui.viewmodel.SplitViewModel
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InsightsScreen(
     viewModel: MainViewModel,
+    splitViewModel: SplitViewModel,
     isAppLocked: Boolean = false,
     onBack: () -> Unit,
     onNavigateToSettings: (String?) -> Unit = {},
@@ -957,7 +960,7 @@ fun InsightsScreen(
             },
             linkedAccounts = linkedAccounts,
             totalOwedByOthers = allTransactions.find { it.transaction.id == txn.id }?.debts?.sumOf { it.amountOwed.toLong() } ?: 0L,
-            onUndoRepayment = { viewModel.undoRepayment(txn) },
+            onUndoRepayment = { splitViewModel.undoRepayment(txn) },
             onUpdateAllPast = { oldPayee, newPayee, newCategory ->
                 viewModel.updatePayeeAndCategoryForAll(oldPayee, newPayee, newCategory)
             },
@@ -980,7 +983,7 @@ fun InsightsScreen(
                 (listOf("You") + existingFriends + recentFriends).distinct()
             },
             onSaveSplit = { splitParticipants ->
-                viewModel.saveMultiSplit(txn.id, splitParticipants, "You")
+                splitViewModel.saveMultiSplit(txn.id, splitParticipants, "You")
             }
         )
     }

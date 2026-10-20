@@ -88,6 +88,8 @@ import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.ui.viewmodel.MainViewModel
+import com.expensetracker.offline.ui.viewmodel.ReviewViewModel
+import com.expensetracker.offline.ui.viewmodel.SplitViewModel
 import com.expensetracker.offline.util.ImageUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -124,6 +126,8 @@ import com.expensetracker.offline.util.delete
 @Composable
 fun DashboardScreen(
     viewModel: MainViewModel,
+    reviewViewModel: ReviewViewModel,
+    splitViewModel: SplitViewModel,
     isAppLocked: Boolean = false,
     onNavigateToReview: () -> Unit = {},
     onNavigateToSettings: (targetSection: String?) -> Unit = {},
@@ -145,11 +149,11 @@ fun DashboardScreen(
 
     var lastBackMs by remember { mutableLongStateOf(0L) }
 
-    val transactionsWithDebts by viewModel.allTransactionsWithDebts.collectAsState()
-    val unsettledSplitsWithDebts by viewModel.unsettledSplitsWithDebts.collectAsState()
-    val moneyOwedToYouState by viewModel.totalMoneyOwed.collectAsState()
+    val transactionsWithDebts by splitViewModel.allTransactionsWithDebts.collectAsState()
+    val unsettledSplitsWithDebts by splitViewModel.unsettledSplitsWithDebts.collectAsState()
+    val moneyOwedToYouState by splitViewModel.totalMoneyOwed.collectAsState()
     val moneyOwedToYou: Long = moneyOwedToYouState ?: 0L
-    val moneyYouOweState by viewModel.totalMoneyYouOwe.collectAsState()
+    val moneyYouOweState by splitViewModel.totalMoneyYouOwe.collectAsState()
     val moneyYouOwe: Long = moneyYouOweState ?: 0L
 
     val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsState()
@@ -189,7 +193,7 @@ fun DashboardScreen(
 
     val transactions by viewModel.allTransactions.collectAsState()
     val latestBalance by viewModel.latestBalance.collectAsState()
-    val pendingReviewCount by viewModel.pendingReviewCount.collectAsState()
+    val pendingReviewCount by reviewViewModel.pendingReviewCount.collectAsState()
 
     val chunkLimit by viewModel.necessityChunkLimit.collectAsState()
     var showNecessityBreakdownDialog by remember { mutableStateOf(false) }
@@ -207,7 +211,7 @@ fun DashboardScreen(
             necessitiesList = migrated
             withContext(Dispatchers.IO) {
                 saveNecessities(prefs, migrated)
-                prefs.edit().putBoolean(KEY_NECESSITIES_MIGRATED, true).commit()
+                prefs.edit().putBoolean(KEY_NECESSITIES_MIGRATED, true).apply()
             }
         }
     }
@@ -898,12 +902,12 @@ fun DashboardScreen(
                 val debt = settleList.find { it.debt.id == debtId }
                 if (debt != null) {
                     if (isForgiveness) {
-                        viewModel.forgiveDebt(debtId)
+                        splitViewModel.forgiveDebt(debtId)
                         showSnack("Remaining debt forgiven")
                     } else if (amount > 0L) {
                         val cappedAmount = minOf(amount, debt.outstanding)
                         val wasCapped = amount > debt.outstanding + SETTLEMENT_EPSILON
-                        viewModel.logCashRepayment(debtId, cappedAmount)
+                        splitViewModel.logCashRepayment(debtId, cappedAmount)
                         val capNote = if (wasCapped) " (capped to what's owed)" else ""
                         if (cappedAmount >= debt.outstanding - SETTLEMENT_EPSILON) {
                             showSnack("Debt fully settled!$capNote")
@@ -942,7 +946,7 @@ fun DashboardScreen(
                                         .clip(RoundedCornerShape(AppRadius.small))
                                         .quietClickable {
                                             haptic.confirm()
-                                            viewModel.linkDebtToRepayment(split.debt.id, creditTxn.id)
+                                            splitViewModel.linkDebtToRepayment(split.debt.id, creditTxn.id)
                                             activeCreditTransactionToLinkId = null
                                             showSnack("Linked to ${split.debt.debtorName} · ${split.parentTransaction.payee}")
                                         },
@@ -1182,7 +1186,7 @@ fun DashboardScreen(
             confirmText = "Undo",
             onConfirm = {
                 haptic.confirm()
-                viewModel.undoRepayment(txn)
+                splitViewModel.undoRepayment(txn)
                 showSnack("Repayment undone")
                 repaymentToUndo = null
             }
@@ -1336,7 +1340,7 @@ fun DashboardScreen(
             suggestedSettlementAmount = activeCreditSuggestion?.outstanding,
             onSettleSuggested = if (activeCreditSuggestion != null) {
                 {
-                    viewModel.linkDebtToRepayment(activeCreditSuggestion.debt.id, txn.id)
+                    splitViewModel.linkDebtToRepayment(activeCreditSuggestion.debt.id, txn.id)
                     showSnack("Linked repayment to ${activeCreditSuggestion.debt.debtorName}")
                 }
             } else null,
@@ -1370,7 +1374,7 @@ fun DashboardScreen(
                 viewModel.updatePayeeAndCategoryForAll(oldPayee, newPayee, newCategory)
             },
             onUndoRepayment = { id ->
-                viewModel.undoRepayment(txn)
+                splitViewModel.undoRepayment(txn)
                 showSnack("Repayment undone")
             },
             onSplit = {
@@ -1400,7 +1404,7 @@ fun DashboardScreen(
                 (listOf("You") + existingFriends + recentFriends).distinct()
             },
             onSaveSplit = { splitParticipants ->
-                viewModel.saveMultiSplit(txn.id, splitParticipants, "You")
+                splitViewModel.saveMultiSplit(txn.id, splitParticipants, "You")
                 showSnack("Saved itemized bill split")
             }
         )
@@ -1449,10 +1453,10 @@ fun DashboardScreen(
             initialDebts = bill.debts,
             onDismiss = { activeTransactionForSplitId = null },
             onSaveSplit = { participants, paidBy ->
-                viewModel.saveMultiSplit(bill.transaction.id, participants, paidBy)
+                splitViewModel.saveMultiSplit(bill.transaction.id, participants, paidBy)
                 haptic.confirm()
             },
-            onResetSplit = { viewModel.resetSplit(bill.transaction.id) },
+            onResetSplit = { splitViewModel.resetSplit(bill.transaction.id) },
             contextualNames = contextualSplitPartners, // NEW
             recentNames = globalSplitPartners          // NEW
         )
@@ -1508,74 +1512,33 @@ fun DashboardScreen(
             val isScrolled by remember {
                 derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 8 }
             }
-            val dividerAlpha by animateFloatAsState(if (isScrolled) 1f else 0f, tween(180), label = "headerDivider")
-            val captureHealthy = hasNotificationPermission && isIgnoringBatteryOptimizations
-            val statusColor = if (captureHealthy) AppColors.positive else AppColors.warning
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.background)
-                    .windowInsetsPadding(WindowInsets.statusBars)
-            ) {
-                Crossfade(targetState = isSelectionMode, animationSpec = tween(150), label = "headerMode") { selecting ->
-                    if (selecting) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 64.dp)
-                                .padding(horizontal = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(onClick = {
-                                haptic.tap()
-                                isSelectionMode = false
-                                selectedTxnIds = emptySet()
-                            }) {
-                                Icon(Icons.Default.Close, contentDescription = "Cancel selection")
-                            }
-                            Text(
-                                "${selectedTxnIds.size} selected",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f).padding(start = 8.dp)
-                            )
-                            IconButton(onClick = {
-                                if (selectedTxnIds.isNotEmpty()) {
-                                    haptic.tap()
-                                    showBulkDeleteConfirm = true
-                                }
-                            }) {
-                                Icon(
-                                    Icons.Default.DeleteOutline,
-                                    contentDescription = "Delete selected",
-                                    tint = if (selectedTxnIds.isNotEmpty()) AppColors.negative else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    } else {
-                        DashboardHeader(
-                            monthLabel = currentMonthName,
-                            cycleLabel = BillingCycleHelper.getCycleLabel(startDayOfMonth),
-                            statusColor = statusColor,
-                            searchActive = searchOpen || searchQuery.isNotEmpty(),
-                            showSettingsBadge = !isProTipsDismissed,
-                            onCycleClick = { haptic.tap(); showStartDayDialog = true },
-                            onSearch = {
-                                haptic.tap()
-                                searchOpen = !searchOpen
-                                if (!searchOpen) { searchQuery = ""; debouncedSearchQuery = "" }
-                            },
-                            onAnalytics = { haptic.tap(); onNavigateToInsights() },
-                            onSettings = { haptic.tap(); onNavigateToSettings(null) }
-                        )
-                    }
-                }
-                HorizontalDivider(
-                    thickness = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f * dividerAlpha)
-                )
-            }
+            DashboardTopBar(
+                isScrolled = isScrolled,
+                isSelectionMode = isSelectionMode,
+                selectedTxnIds = selectedTxnIds,
+                searchOpen = searchOpen,
+                searchQuery = searchQuery,
+                currentMonthName = currentMonthName,
+                startDayOfMonth = startDayOfMonth,
+                hasNotificationPermission = hasNotificationPermission,
+                isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
+                isProTipsDismissed = isProTipsDismissed,
+                haptic = haptic,
+                onCancelSelection = {
+                    isSelectionMode = false
+                    selectedTxnIds = emptySet()
+                },
+                onBulkDelete = {
+                    showBulkDeleteConfirm = true
+                },
+                onCycleClick = { showStartDayDialog = true },
+                onSearchToggle = {
+                    searchOpen = !searchOpen
+                    if (!searchOpen) { searchQuery = ""; debouncedSearchQuery = "" }
+                },
+                onAnalytics = { onNavigateToInsights() },
+                onSettings = { onNavigateToSettings(null) }
+            )
         },
         floatingActionButton = {
             AnimatedVisibility(
@@ -2409,150 +2372,23 @@ fun DashboardScreen(
             item {
                 // No spacedBy here: its gap would vanish in one frame when the search field leaves
                 // composition (the jerk). The gap lives inside AnimatedVisibility and animates with it.
-                Column {
-                    AnimatedVisibility(visible = searchOpen || searchQuery.isNotEmpty()) {
-                        Column {
-                            Surface(
-                                shape = RoundedCornerShape(AppRadius.small),
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                            ) {
-                                OutlinedTextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    placeholder = {
-                                        Text(
-                                            "Search payee, category, notes…",
-                                            fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.Search,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    },
-                                    trailingIcon = {
-                                        if (searchQuery.isNotEmpty()) {
-                                            IconButton(onClick = {
-                                                searchQuery = ""; haptic.tap()
-                                            }) {
-                                                Icon(
-                                                    Icons.Default.Clear,
-                                                    contentDescription = "Clear",
-                                                    modifier = Modifier.size(18.dp),
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                    },
-                                    keyboardOptions = KeyboardOptions(
-                                        keyboardType = KeyboardType.Text,
-                                        imeAction = ImeAction.Search
-                                    ),
-                                    keyboardActions = KeyboardActions(
-                                        onSearch = { focusManager.clearFocus() }
-                                    ),
-                                    singleLine = true,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = Color.Transparent,
-                                        unfocusedBorderColor = Color.Transparent
-                                    ),
-                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                            Spacer(Modifier.height(12.dp))
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        PremiumFilterChip(text = "All", isSelected = selectedFilterCategory == "All", onClick = { haptic.tap(); selectedFilterCategory = "All" })
-                        PremiumFilterChip(text = "Split only", isSelected = selectedFilterCategory == "Split Only", onClick = { haptic.tap(); selectedFilterCategory = "Split Only" })
-                        allAvailableCategories.forEach { category ->
-                            PremiumFilterChip(text = category, isSelected = selectedFilterCategory == category, onClick = { haptic.tap(); selectedFilterCategory = category })
-                        }
-                        PremiumFilterChip(text = "+ Manage", isSelected = false, onClick = { haptic.tap(); showManageCategoriesDialog = true })
-                    }
-
-                    if (linkedAccounts.isEmpty() || linkedAccounts.size > 1) {
-                        Spacer(Modifier.height(10.dp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (linkedAccounts.isEmpty()) {
-                                Surface(
-                                    shape = RoundedCornerShape(AppRadius.pill),
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(AppRadius.pill))
-                                        .quietClickable { haptic.tap(); showBankInfoDialog = true }
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.AccountBalanceWallet,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            "Auto-detect Banks",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-                            } else {
-                                PremiumFilterChip(
-                                    text = "All Accounts",
-                                    isSelected = selectedAccount == null,
-                                    onClick = { haptic.tap(); viewModel.selectedAccount.value = null }
-                                )
-
-                                val hasUnspecified = remember(transactions) {
-                                    transactions.asSequence().take(1000).any { it.bankName == null }
-                                }
-                                if (hasUnspecified) {
-                                    val isUnspecifiedSelected = selectedAccount?.bankName == "Unspecified"
-                                    PremiumFilterChip(
-                                        text = "Unspecified",
-                                        isSelected = isUnspecifiedSelected,
-                                        onClick = {
-                                            haptic.tap(); viewModel.selectedAccount.value = AccountInfo("Unspecified", null)
-                                        }
-                                    )
-                                }
-
-                                linkedAccounts.forEach { account ->
-                                    val label = if (account.accountNumber != null) "${account.bankName} (..${account.accountNumber})" else account.bankName
-                                    PremiumFilterChip(
-                                        text = label,
-                                        isSelected = selectedAccount == account && account.bankName != "Unspecified",
-                                        onClick = { haptic.tap(); viewModel.selectedAccount.value = account }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
+                DashboardSearchAndFilter(
+                    searchOpen = searchOpen,
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    onSearchClear = { searchQuery = "" },
+                    focusManager = focusManager,
+                    haptic = haptic,
+                    selectedFilterCategory = selectedFilterCategory,
+                    onCategorySelected = { selectedFilterCategory = it },
+                    allAvailableCategories = allAvailableCategories,
+                    onManageCategories = { showManageCategoriesDialog = true },
+                    linkedAccounts = linkedAccounts,
+                    selectedAccount = selectedAccount,
+                    onAccountSelected = { viewModel.selectedAccount.value = it },
+                    hasUnspecifiedAccount = transactions.asSequence().take(1000).any { it.bankName == null },
+                    onAutoDetectBanks = { showBankInfoDialog = true }
+                )
             }
             item {
                 val hasActiveListFilter = searchQuery.isNotBlank() || selectedFilterCategory != "All" || selectedAccount != null
@@ -2713,81 +2549,30 @@ fun DashboardScreen(
                 }
             } else {
                 grouped.forEach { dayGroup ->
-                    val label = dayGroup.label
-                    val rows = dayGroup.rows
-                    val daySpent = dayGroup.daySpentPaise
-                    stickyHeader(key = "hdr_$label", contentType = "day_header") {
-                        DayHeader(label, if (daySpent > 0) "Spent ${CurrencyFormat.smart(daySpent)}" else null)
-                    }
-                    // One lazy item per day: the rows share a single rounded surface separated by hairlines.
-                    item(key = "day_$label", contentType = "day_group") {
-                        TransactionGroup(modifier = Modifier.animateItem()) {
-                            rows.forEachIndexed { index, bill ->
-                                key(bill.transaction.id) {
-                                    if (index > 0) TransactionRowDivider()
-
-                                    val txn = bill.transaction
-                                    val deleteStartTime = pendingDeleteIds[txn.id]
-
-                                    if (deleteStartTime != null) {
-                                        TransactionUndoBar(
-                                            label = "\"${txn.payee}\" deleted",
-                                            startTimeMs = deleteStartTime,
-                                            modifier = Modifier,
-                                            onUndo = { viewModel.undoTransactionDelete(txn.id) }
-                                        )
-                                    } else {
-                                        val (isSettled, settledBy, outstandingAmount) = remember(bill, splitLinkInfo) {
-                                            when (txn.type) {
-                                                TransactionType.DEBIT -> {
-                                                    val owed = outstandingOwed(bill, splitLinkInfo)
-                                                    val settled = bill.debts.isNotEmpty() && owed <= 0L
-                                                    Triple(settled, if (settled) settledByLabel(bill) else null, owed)
-                                                }
-                                                TransactionType.CREDIT -> Triple(isRepaymentCredit(txn), null, null)
-                                                else -> Triple(false, null, null)
-                                            }
-                                        }
-
-                                        val billLabel = billLabelMap[txn.id]
-
-                                        val isSelected = selectedTxnIds.contains(txn.id)
-
-                                        DashboardTransactionCard(
-                                            grouped = true,
-                                            transaction = txn,
-                                            debts = bill.debts,
-                                            isSettled = isSettled,
-                                            settledBy = settledBy,
-                                            outstandingAmount = outstandingAmount,
-                                            selectionMode = isSelectionMode,
-                                            showBankBadge = linkedAccounts.size > 1,
-                                            isSelected = isSelected,
-                                            billLabel = billLabel,
-                                            onCardClick = {
-                                                if (isSelectionMode) {
-                                                    haptic.tap()
-                                                    selectedTxnIds = if (isSelected) selectedTxnIds - txn.id else selectedTxnIds + txn.id
-                                                    if (selectedTxnIds.isEmpty()) isSelectionMode = false
-                                                } else {
-                                                    haptic.tap()
-                                                    activeTransactionForEditId = txn.id
-                                                }
-                                            },
-                                            onLongClick = {
-                                                if (!isSelectionMode) {
-                                                    haptic.confirm()
-                                                    isSelectionMode = true
-                                                    selectedTxnIds = setOf(txn.id)
-                                                }
-                                            },
-                                            onNavigateToOriginalBill = { haptic.tap(); navigateToOriginalDebit(txn) }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    dashboardDayGroup(
+                        label = dayGroup.label,
+                        rows = dayGroup.rows,
+                        daySpentPaise = dayGroup.daySpentPaise,
+                        pendingDeleteIds = pendingDeleteIds,
+                        splitLinkInfo = splitLinkInfo,
+                        billLabelMap = billLabelMap,
+                        selectedTxnIds = selectedTxnIds,
+                        isSelectionMode = isSelectionMode,
+                        linkedAccountsSize = linkedAccounts.size,
+                        haptic = haptic,
+                        onUndoTransactionDelete = { id -> viewModel.undoTransactionDelete(id) },
+                        onSelectionChange = { id ->
+                            val isSelected = selectedTxnIds.contains(id)
+                            selectedTxnIds = if (isSelected) selectedTxnIds - id else selectedTxnIds + id
+                            if (selectedTxnIds.isEmpty()) isSelectionMode = false
+                        },
+                        onEditTransaction = { id -> activeTransactionForEditId = id },
+                        onEnableSelectionMode = { id ->
+                            isSelectionMode = true
+                            selectedTxnIds = setOf(id)
+                        },
+                        onNavigateToOriginalBill = { txn -> navigateToOriginalDebit(txn) }
+                    )
                 }
             }
         }
