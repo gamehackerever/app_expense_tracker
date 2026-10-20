@@ -3,11 +3,12 @@
 package com.expensetracker.offline.ui.necessities
 
 import android.app.DatePickerDialog
-import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -18,14 +19,12 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
@@ -64,7 +63,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.expensetracker.offline.data.local.dao.TransactionWithDebts
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.ui.components.CurrencyFormat
@@ -78,19 +76,15 @@ import com.expensetracker.offline.ui.components.SheetPrimaryButton
 import com.expensetracker.offline.ui.components.SheetSegmentedControl
 import com.expensetracker.offline.ui.components.SheetTextField
 import com.expensetracker.offline.ui.components.evaluateBasicMath
-import com.expensetracker.offline.ui.dashboard.computeSafeToSpend
-import com.expensetracker.offline.ui.insights.MoneyHero
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.getCategoryColor
 import com.expensetracker.offline.ui.theme.getCategoryIcon
-import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
 import com.expensetracker.offline.util.NecessityManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
@@ -1199,14 +1193,24 @@ internal fun lumpSumSuffix(months: Int): String = when (months) {
 @Composable
 internal fun Modifier.quietClickable(
     enabled: Boolean = true,
-    pressedAlpha: Float = 0.6f,
+    pressedAlpha: Float = 0.75f,
+    pressedScale: Float = 0.98f,
     onClick: () -> Unit
 ): Modifier {
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val alpha by animateFloatAsState(if (pressed && enabled) pressedAlpha else 1f, tween(100), label = "quietPress")
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) pressedScale else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+        label = "quietScale"
+    )
     return this
-        .graphicsLayer { this.alpha = alpha }
+        .graphicsLayer {
+            this.alpha = alpha
+            this.scaleX = scale
+            this.scaleY = scale
+        }
         .clickable(enabled = enabled, interactionSource = source, indication = null, onClick = onClick)
 }
 

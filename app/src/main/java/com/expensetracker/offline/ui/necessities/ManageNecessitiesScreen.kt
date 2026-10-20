@@ -2,95 +2,44 @@
 
 package com.expensetracker.offline.ui.necessities
 
-import android.app.DatePickerDialog
 import android.content.Context
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Event
-import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.LinkOff
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Savings
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
-import com.expensetracker.offline.data.local.entity.TransactionEntity
-import com.expensetracker.offline.data.local.entity.TransactionType
-import com.expensetracker.offline.ui.components.CurrencyFormat
-import com.expensetracker.offline.ui.components.NewCategoryDialog
-import com.expensetracker.offline.ui.components.SheetAmountCard
-import com.expensetracker.offline.ui.components.SheetCard
-import com.expensetracker.offline.ui.components.SheetCategoryPicker
-import com.expensetracker.offline.ui.components.SheetFooter
-import com.expensetracker.offline.ui.components.SheetHeader
-import com.expensetracker.offline.ui.components.SheetPrimaryButton
-import com.expensetracker.offline.ui.components.SheetSegmentedControl
-import com.expensetracker.offline.ui.components.SheetTextField
-import com.expensetracker.offline.ui.components.evaluateBasicMath
 import com.expensetracker.offline.ui.dashboard.computeSafeToSpend
 import com.expensetracker.offline.ui.insights.MoneyHero
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
-import com.expensetracker.offline.ui.theme.getCategoryColor
-import com.expensetracker.offline.ui.theme.getCategoryIcon
 import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
 import com.expensetracker.offline.util.NecessityManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
 import java.util.*
 
 
@@ -133,8 +82,9 @@ fun ManageNecessitiesScreen(
         context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
             .getInt("key_start_day_of_month", 1)
     }
-    // Same billing-cycle boundary the rest of the app uses (not the calendar month).
-    val cycleStartMillis = remember(startDayOfMonth) { BillingCycleHelper.getCycleRange(startDayOfMonth).first }
+    val cycleStartMillis = remember(startDayOfMonth) {
+        BillingCycleHelper.getCycleRange(startDayOfMonth).first
+    }
     val cycleKey = NecessityManager.currentCycleKey(startDayOfMonth)
     val now = remember { System.currentTimeMillis() }
 
