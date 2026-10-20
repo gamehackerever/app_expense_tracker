@@ -5,7 +5,6 @@ package com.expensetracker.offline.ui.settings
 import com.expensetracker.offline.util.BackupResult
 import com.expensetracker.offline.util.RestoreResult
 import com.expensetracker.offline.util.CsvResult
-import com.expensetracker.offline.util.tick
 
 import android.content.Context
 import android.content.Intent
@@ -15,7 +14,6 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -27,17 +25,9 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsFocusedAsState
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,7 +38,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -64,7 +53,6 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudSync
@@ -99,7 +87,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -120,16 +107,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -147,6 +128,7 @@ import com.expensetracker.offline.engine.scanner.SmsHistoryScanner
 import com.expensetracker.offline.data.repository.isValidUpiVpa
 import com.expensetracker.offline.ui.components.AppDialog
 import com.expensetracker.offline.ui.components.PremiumDropdownField
+import com.expensetracker.offline.ui.components.SheetSegmentedControl
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
@@ -164,31 +146,21 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-import android.content.ContextWrapper
-import androidx.biometric.BiometricPrompt
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.core.content.ContextCompat
-import androidx.fragment.app.FragmentActivity
 import com.expensetracker.offline.engine.backup.SecurePassphraseStore
-import android.content.ActivityNotFoundException
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import androidx.biometric.BiometricManager
 import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.core.app.NotificationManagerCompat
 import com.expensetracker.offline.BuildConfig
 import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.engine.scanner.ScanResponse
-import com.expensetracker.offline.util.BackupEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import java.io.ByteArrayOutputStream
-import java.io.InputStream
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -241,7 +213,6 @@ fun SettingsScreen(
         }
     }
 
-    // NEW: Centralized handler to prevent duplicate or overlapping snackbar logic
     fun handleRestoreResult(result: RestoreResult) {
         when (result) {
             is RestoreResult.SuccessRestart -> {
@@ -261,7 +232,6 @@ fun SettingsScreen(
         }
     }
 
-    // 1. Add this right inside your SettingsScreen composable at the top:
     val settingsRepo = remember { SettingsRepository(context) }
 
     // Moves a plain-text passphrase from older versions into Keystore-encrypted storage.
@@ -336,7 +306,6 @@ fun SettingsScreen(
     var tempConfirmPassphrase by remember { mutableStateOf("") }
     var showPassphrase by remember { mutableStateOf(false) }
 
-// FIXED: Initialize Undo state securely from Repository (P1)
     var lastImportedTxnIds by remember { mutableStateOf(settingsRepo.lastImportedTxnIds) }
     var lastImportedReviewIds by remember { mutableStateOf(settingsRepo.lastImportedReviewIds) }
     LaunchedEffect(backupFolderUri) {
@@ -607,7 +576,7 @@ fun SettingsScreen(
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(AppRadius.medium),
-                    color = MaterialTheme.colorScheme.errorContainer, // FIX: Soft error container instead of harsh white
+                    color = MaterialTheme.colorScheme.errorContainer,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f))
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -618,7 +587,7 @@ fun SettingsScreen(
                                 "Auto-capture needs attention",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer // FIX: Adapt text to error container
+                                color = MaterialTheme.colorScheme.onErrorContainer
                             )
                         }
                         if (!hasNotificationPermission) {
@@ -728,34 +697,17 @@ fun SettingsScreen(
                     }
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf("SYSTEM" to "System", "DARK" to "Dark", "LIGHT" to "Light").forEach { (mode, label) ->
-                        val isSelected = currentThemeMode == mode
-                        Surface(
-                            onClick = {
-                                haptic.tick()
-                                currentThemeMode = mode
-                                settingsRepo.appThemeMode = mode
-                            },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(AppRadius.small),
-                            color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceVariant,
-                            border = if (isSelected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                        ) {
-                            Text(
-                                text = label,
-                                modifier = Modifier.padding(vertical = 10.dp),
-                                textAlign = TextAlign.Center,
-                                fontSize = 13.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isSelected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                val themeModes = remember { listOf("SYSTEM" to "System", "DARK" to "Dark", "LIGHT" to "Light") }
+                val selectedThemeIndex = themeModes.indexOfFirst { it.first == currentThemeMode }.coerceAtLeast(0)
+                SheetSegmentedControl(
+                    options = themeModes.map { it.second },
+                    selectedIndex = selectedThemeIndex,
+                    onSelect = { idx ->
+                        val mode = themeModes[idx].first
+                        currentThemeMode = mode
+                        settingsRepo.appThemeMode = mode
                     }
-                }
+                )
             }
 
             // ─────────────────────────────────────────────────────────────────
