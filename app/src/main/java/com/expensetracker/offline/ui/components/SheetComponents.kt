@@ -10,7 +10,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -26,7 +28,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -171,11 +172,28 @@ fun SheetCard(
     verticalArrangement: Arrangement.Vertical = Arrangement.Top,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed && onClick != null) 0.985f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+        label = "sheetCardScale"
+    )
     Surface(
         modifier = modifier
             .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clip(shape)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+            .then(
+                if (onClick != null) Modifier.clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick
+                ) else Modifier
+            ),
         shape = shape,
         color = containerColor,
         border = BorderStroke(1.dp, borderColor)
@@ -264,7 +282,10 @@ fun SheetSegmentedControl(
 
     val animatedIndex by animateFloatAsState(
         targetValue = selectedIndex.toFloat(),
-        animationSpec = tween(220),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
         label = "segThumbIndex"
     )
 
@@ -347,14 +368,31 @@ fun SheetChip(
         label = "chipText"
     )
 
+    val chipInteraction = remember { MutableInteractionSource() }
+    val chipPressed by chipInteraction.collectIsPressedAsState()
+    val chipScale by animateFloatAsState(
+        targetValue = if (chipPressed) 0.96f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+        label = "chipScale"
+    )
+
     Surface(
         shape = pill,
         color = bg,
         border = if (isSelected) null else BorderStroke(1.dp, border),
-        modifier = modifier.clip(pill).clickable {
-            if (!isSelected) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            onClick()
-        }
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = chipScale
+                scaleY = chipScale
+            }
+            .clip(pill)
+            .clickable(
+                interactionSource = chipInteraction,
+                indication = null
+            ) {
+                if (!isSelected) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -788,7 +826,6 @@ fun SheetDetailsSection(
     var scannedItems by remember { mutableStateOf<List<ReceiptScanner.ScannedItem>>(emptyList()) }
     var scannedGrandTotalPaise by remember { mutableStateOf<Long?>(null) }
     var scannedTaxPaise by remember { mutableStateOf<Long?>(null) }
-    var lastAutoScannedUri by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun triggerScan(path: String, autoTriggered: Boolean = false) {
         isScanningOcr = true
@@ -821,7 +858,6 @@ fun SheetDetailsSection(
     val pickReceipt = rememberReceiptPicker(receiptFilePrefix) { path ->
         onReceiptChange(path)
         receiptOpen = true
-        lastAutoScannedUri = path
         triggerScan(path, autoTriggered = true)
     }
     val receiptBitmap = rememberReceiptBitmap(receiptUri)
