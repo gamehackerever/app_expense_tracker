@@ -184,12 +184,19 @@ object NecessityManager {
         )
     }
 
-    fun suggestionFor(txn: TransactionEntity, all: List<TransactionEntity>): BillSuggestion =
-        recurringSuggestion(txn.payee, all) ?: BillSuggestion(
-            txn.payee, txn.amount,
-            txn.category.takeIf { !it.equals("Uncategorized", true) },
-            NecessityFrequency.MONTHLY, txn.timestamp, 1
-        )
+    private val RECURRING_BILL_CATEGORIES = setOf("bills & utilities", "subscription", "subscriptions", "rent", "emi", "insurance")
+
+    fun suggestionFor(txn: TransactionEntity, all: List<TransactionEntity>): BillSuggestion? {
+        recurringSuggestion(txn.payee, all)?.let { return it }
+        val catLower = txn.category.trim().lowercase()
+        return if (catLower in RECURRING_BILL_CATEGORIES) {
+            BillSuggestion(
+                txn.payee, txn.amount,
+                txn.category.takeIf { !it.equals("Uncategorized", true) },
+                NecessityFrequency.MONTHLY, txn.timestamp, 1
+            )
+        } else null
+    }
 
     fun itemFrom(s: BillSuggestion): NecessityItem = NecessityItem(
         id = UUID.randomUUID().toString(),

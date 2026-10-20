@@ -36,6 +36,7 @@ class TransactionRepository(
     val pendingReviewCount: Flow<Int> = reviewItemDao.getPendingReviewCountFlow()
     val latestBalance: Flow<Long?> = transactionDao.getLatestBalanceFlow()
     val totalMoneyOwed: Flow<Long?> = transactionDao.getTotalMoneyOwedToYouFlow()
+    val totalMoneyYouOwe: Flow<Long?> = transactionDao.getTotalMoneyYouOweFlow()
 
     val unsettledSplitsWithDebts: Flow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> =
         splitDebtDao.getUnsettledTransactionsWithDebtsFlow()
@@ -74,14 +75,13 @@ class TransactionRepository(
         }
     }
 
-    suspend fun saveMultiSplit(transactionId: Long, debts: List<SplitDebtEntity>) {
+    suspend fun saveMultiSplit(transactionId: Long, debts: List<SplitDebtEntity>, paidBy: String = "You") {
         database.withTransaction {
+            transactionDao.updatePaidBy(transactionId, paidBy.trim().ifBlank { "You" })
             val existing = splitDebtDao.getDebtsForTransaction(transactionId)
             val existingMap = existing.associateBy { it.id }
             val keptIds = mutableSetOf<Long>()
 
-            // The unique index on (transactionId, debtorName) would throw on duplicates, so fold
-            // rows that share a name (case-insensitive) into one before writing.
             val folded = debts
                 .map { it.copy(debtorName = it.debtorName.trim()) }
                 .filter { it.debtorName.isNotEmpty() && it.amountOwed > 0L }
@@ -106,13 +106,11 @@ class TransactionRepository(
 
             val removedIds = existing.filter { it.id !in keptIds }.map { it.id }
             if (removedIds.isNotEmpty()) {
-                // UI warns first when repayments exist; repayments get unlinked (kept as income).
                 transactionDao.unlinkRepaymentsForDebts(removedIds)
                 splitDebtDao.deleteDebtsByIds(removedIds)
             }
             if (toUpsert.isNotEmpty()) splitDebtDao.upsertDebts(toUpsert)
 
-            // Recompute status for every debt on this bill (covers raised/lowered amounts and new rows).
             splitDebtDao.getDebtsForTransaction(transactionId).forEach { reconcileDebt(it.id) }
         }
         refreshWidget()
@@ -120,6 +118,7 @@ class TransactionRepository(
 
     suspend fun resetSplit(transactionId: Long) {
         database.withTransaction {
+            transactionDao.updatePaidBy(transactionId, "You")
             val ids = splitDebtDao.getDebtsForTransaction(transactionId).map { it.id }
             if (ids.isNotEmpty()) {
                 transactionDao.unlinkRepaymentsForDebts(ids)
@@ -147,7 +146,6 @@ class TransactionRepository(
     suspend fun linkDebtToRepayment(debtId: Long, creditId: Long) {
         database.withTransaction {
             val creditTx = transactionDao.getTransactionById(creditId)
-            // FIXED: Ensure we don't link a Debit, and ensure the credit isn't already claimed
             if (creditTx == null || creditTx.type != TransactionType.CREDIT || creditTx.linkedDebtId != null) {
                 return@withTransaction
             }
@@ -161,28 +159,36 @@ class TransactionRepository(
     suspend fun logCashRepayment(debtId: Long, amount: Long, timestamp: Long) {
         database.withTransaction {
             val debt = splitDebtDao.getDebtById(debtId) ?: return@withTransaction
+            val parent = transactionDao.getTransactionById(debt.transactionId)
+            val isYouOwe = parent?.paidBy != null && !parent.paidBy.equals("You", ignoreCase = true) &&
+                    debt.debtorName.equals("You", ignoreCase = true)
             val repaid = splitDebtDao.getRepaidAmountForDebt(debtId)
             val outstanding = (debt.amountOwed - repaid).coerceAtLeast(0L)
 
-            // FIXED: Cap the repayment so you can't overpay a debt and inflate income (PO-D)
             val capped = minOf(amount, outstanding)
             if (capped <= 0L) return@withTransaction
 
-            transactionDao.insertTransaction(
-                TransactionEntity(
-                    amount = capped,
-                    payee = debt.debtorName,
-                    timestamp = timestamp,
-                    type = TransactionType.CREDIT,
-                    source = TransactionSource.MANUAL,
-                    referenceId = null,
-                    rawContent = "Manual cash repayment",
-                    category = "Split Settlement",
-                    itemsSummary = "Cash repayment",
-                    linkedDebtId = debtId
+            // When settling a debt YOU owe to a friend, log a manual settlement entry or mark settled directly
+            if (isYouOwe && capped >= outstanding) {
+                splitDebtDao.markDebtSettled(debtId, timestamp)
+            } else {
+                transactionDao.insertTransaction(
+                    TransactionEntity(
+                        amount = capped,
+                        payee = if (isYouOwe) (parent?.paidBy ?: debt.debtorName) else debt.debtorName,
+                        timestamp = timestamp,
+                        type = TransactionType.CREDIT,
+                        source = TransactionSource.MANUAL,
+                        referenceId = null,
+                        rawContent = if (isYouOwe) "Manual debt settlement paid" else "Manual cash repayment",
+                        category = "Split Settlement",
+                        itemsSummary = if (isYouOwe) "Paid back ${parent?.paidBy ?: ""}".trim() else "Cash repayment",
+                        linkedDebtId = debtId,
+                        excludeFromSpend = true
+                    )
                 )
-            )
-            reconcileDebt(debtId)
+                reconcileDebt(debtId)
+            }
         }
         refreshWidget()
     }
@@ -193,7 +199,7 @@ class TransactionRepository(
             val debtId = credit.linkedDebtId ?: return@withTransaction
 
             transactionDao.unlinkRepayment(creditId)
-            reconcileDebt(debtId) // This will reopen the debt automatically
+            reconcileDebt(debtId)
         }
         refreshWidget()
     }
@@ -283,9 +289,8 @@ class TransactionRepository(
     suspend fun deleteTransaction(id: Long) = deleteTransactionsByIds(listOf(id))
 
     suspend fun clearAllTransactions() {
-        transactionDao.clearAllTransactions() // split_debts cascade away with their bills
+        transactionDao.clearAllTransactions()
         context?.let { ctx ->
-            // Balance baselines no longer match the data; drop them so the ghost check re-learns.
             com.expensetracker.offline.util.BalanceCache.clearAll(ctx)
         }
         refreshWidget()
@@ -296,12 +301,11 @@ class TransactionRepository(
         database.withTransaction {
             val debtIds = ids.mapNotNull { transactionDao.getTransactionById(it)?.linkedDebtId }.toSet()
             transactionDao.deleteTransactionsByIds(ids)
-            debtIds.forEach { reconcileDebt(it) } // deleting a repayment reopens the debt
+            debtIds.forEach { reconcileDebt(it) }
         }
         refreshWidget()
     }
 
-    /** Returns the most frequently split participants for a given merchant. */
     suspend fun predictSplitPartners(payee: String): List<String> {
         return database.transactionDao().searchAndFilterTransactionsFlow(payee, "Split Only", 0L, 10)
             .firstOrNull()
@@ -315,7 +319,6 @@ class TransactionRepository(
             ?: emptyList()
     }
 
-    /** Insert the approved transaction and close the review item in ONE transaction. */
     suspend fun approveReviewItem(transaction: TransactionEntity, reviewItemId: Long): Long {
         val id = database.withTransaction {
             val newId = transactionDao.insertTransaction(transaction)
@@ -349,11 +352,6 @@ class TransactionRepository(
         refreshWidget()
     }
 
-    /**
-     * Inserts imported rows and returns how many were new. Rows already in the app (same second,
-     * amount, type and payee) are skipped, so importing the same file twice changes nothing. All checks
-     * run before any insert, so two identical rows inside ONE file (two Rs 20 chai) both count.
-     */
     private data class TxnDedupeKey(
         val epochSecond: Long,
         val amount: Long,
@@ -365,8 +363,6 @@ class TransactionRepository(
         if (transactions.isEmpty()) return 0
 
         var totalInserted = 0
-        // Process in chunks of 500 sorted by timestamp so each range query is narrow and
-        // deduplication runs in O(1) per row via HashSet instead of O(N * M) nested loops.
         val sorted = transactions.sortedBy { it.timestamp }
         for (chunk in sorted.chunked(500)) {
             val minTime = chunk.first().timestamp - 1000L
@@ -430,7 +426,6 @@ class TransactionRepository(
         sender: String, timestamp: Long, source: TransactionSource
     ): IngestResult {
         val amount = parsed.amount
-        // Same debit often arrives twice (SMS + notification, or a repost with another timestamp).
         if (amount != null && amount > 0L) {
             val dup = reviewItemDao.countMatchingReviewItems(
                 amount, parsed.type, timestamp - DEDUPE_WINDOW_MS, timestamp + DEDUPE_WINDOW_MS,
@@ -468,7 +463,6 @@ class TransactionRepository(
         val result = database.withTransaction {
             val amount = parsed.amount
             val type = parsed.type
-            // Unreadable financial messages are ALWAYS kept (review queue), whatever the skip setting.
             if (amount == null || amount <= 0L || type == null) {
                 return@withTransaction queueForReview(parsed, sender, timestamp, source)
             }
@@ -484,14 +478,9 @@ class TransactionRepository(
                 val sameRef = bothRefs && existingMatch.referenceId == parsed.referenceId
 
                 when {
-                    // Different non-null refs => genuinely different transactions. Fall through to insert.
                     bothRefs && !sameRef -> Unit
-                    // Same ref, or this exact message text is already stored (carrier duplicate,
-                    // repeat of an already-merged row) => duplicate.
                     sameRef || existingMatch.rawContent.contains(parsed.rawText) ->
                         return@withTransaction IngestResult.Duplicate
-                    // SMS <-> notification for the same payment: merge, but only into a row that
-                    // came from the OTHER channel (never into MANUAL or already-MERGED rows).
                     (existingMatch.source == TransactionSource.SMS && source == TransactionSource.NOTIFICATION) ||
                     (existingMatch.source == TransactionSource.NOTIFICATION && source == TransactionSource.SMS) -> {
                         val bestPayee = if (source == TransactionSource.NOTIFICATION && !parsed.payee.isNullOrBlank()) {
@@ -513,29 +502,58 @@ class TransactionRepository(
                         transactionDao.updateTransaction(mergedTxn)
                         return@withTransaction IngestResult.Merged(mergedTxn.id)
                     }
-                    // Same channel, different text, no refs: two real payments of the same amount
-                    // (e.g. two Rs 20 chai). Insert both.
                     else -> Unit
                 }
             }
 
-            val isHighValue = type == TransactionType.DEBIT && amount > reviewThreshold
-            val isMissingPayee = parsed.payee.isNullOrBlank() || parsed.payee.equals("Unknown", ignoreCase = true) || parsed.payee.matches(NUMERIC_PAYEE_REGEX)
+            // Detect paired inter-account self-transfers (Debit on Account A + Credit of same amount on Account B)
+            val oppositeType = if (type == TransactionType.DEBIT) TransactionType.CREDIT else TransactionType.DEBIT
+            val oppositeLeg = if (parsed.bankName != null) {
+                transactionDao.findOppositeTransferLeg(
+                    amount = amount,
+                    oppositeType = oppositeType,
+                    startTime = timestamp - DEDUPE_WINDOW_MS,
+                    endTime = timestamp + DEDUPE_WINDOW_MS,
+                    targetTime = timestamp,
+                    currentBank = parsed.bankName,
+                    currentAccount = parsed.accountNumber
+                )
+            } else null
+
+            if (oppositeLeg != null && !oppositeLeg.excludeFromSpend) {
+                transactionDao.updateTransaction(
+                    oppositeLeg.copy(
+                        excludeFromSpend = true,
+                        category = if (oppositeLeg.category == "Uncategorized") "Transfer" else oppositeLeg.category,
+                        note = oppositeLeg.note ?: "Self-transfer (${parsed.bankName})"
+                    )
+                )
+            }
+
+            val isAutoTransfer = parsed.isTransfer || oppositeLeg != null
+            val isHighValue = type == TransactionType.DEBIT && amount > reviewThreshold && !isAutoTransfer
+            val isMissingPayee = (parsed.payee.isNullOrBlank() || parsed.payee.equals("Unknown", ignoreCase = true) || parsed.payee.matches(NUMERIC_PAYEE_REGEX)) && !isAutoTransfer
 
             if (!skipReview && (isHighValue || isMissingPayee)) {
                 return@withTransaction queueForReview(parsed, sender, timestamp, source)
             }
 
-            val resolvedPayee = if (parsed.payee.isNullOrBlank() || parsed.payee.equals("Unknown", ignoreCase = true)) fallbackPayee else parsed.payee
+            val resolvedPayee = when {
+                !parsed.payee.isNullOrBlank() && !parsed.payee.equals("Unknown", ignoreCase = true) -> parsed.payee
+                oppositeLeg != null -> "Transfer (${oppositeLeg.bankName ?: "Own A/c"})"
+                parsed.isTransfer -> "Self Transfer"
+                else -> fallbackPayee
+            }
             val aliasedPayee = settingsRepo?.getMerchantAlias(resolvedPayee) ?: resolvedPayee
-            val category = CategoryClassifier.classify(aliasedPayee, parsed.rawText, categoryRuleDao)
+            val category = if (isAutoTransfer) "Transfer" else CategoryClassifier.classify(aliasedPayee, parsed.rawText, categoryRuleDao)
 
             val id = transactionDao.insertTransaction(
                 TransactionEntity(
                     amount = amount, payee = aliasedPayee, timestamp = timestamp, type = type,
                     source = source, referenceId = parsed.referenceId, rawContent = parsed.rawText,
-                    category = category, note = parsed.note, balance = parsed.balance, bankName = parsed.bankName,
-                    accountNumber = parsed.accountNumber, excludeFromSpend = parsed.excludeFromSpend
+                    category = category, note = parsed.note ?: if (oppositeLeg != null) "Self-transfer (${oppositeLeg.bankName})" else null,
+                    balance = parsed.balance, bankName = parsed.bankName,
+                    accountNumber = parsed.accountNumber, excludeFromSpend = parsed.excludeFromSpend || isAutoTransfer
                 )
             )
             IngestResult.Inserted(id)
@@ -545,7 +563,6 @@ class TransactionRepository(
     }
 
     companion object {
-        /** Debits above Rs 1,000 (amounts are stored in PAISE) go to the review queue. */
         const val REVIEW_THRESHOLD_PAISE = 100_000L
         private const val DEDUPE_WINDOW_MS = 300_000L
         private val NUMERIC_PAYEE_REGEX = Regex("""^\d{8,12}.*""")

@@ -3,6 +3,14 @@ package com.expensetracker.offline.data.repository
 import android.content.Context
 import android.content.SharedPreferences
 
+data class CreditCardConfig(
+    val accountKey: String,
+    val isCreditCard: Boolean = true,
+    val creditLimitPaise: Long = 10_000_000L, // Default ₹1,00,000
+    val statementDay: Int = 15,
+    val dueDay: Int = 5
+)
+
 class SettingsRepository(context: Context) {
     val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -70,8 +78,6 @@ class SettingsRepository(context: Context) {
         get() = prefs.getInt(KEY_START_DAY_OF_MONTH, 1)
         set(value) = prefs.edit().putInt(KEY_START_DAY_OF_MONTH, value).apply()
 
-    // FIXED: Stored as Long (paise) to avoid Float precision loss above Rs 1,67,772,
-    // while reading legacy Float values gracefully on upgrade or V3 backup restore.
     var necessityChunkLimit: Long
         get() {
             if (!prefs.contains(KEY_NECESSITY_CHUNK)) return 0L
@@ -158,7 +164,6 @@ class SettingsRepository(context: Context) {
         prefs.edit().putString("$MERCHANT_ALIAS_PREFIX${oldPayee.trim().lowercase()}", newPayee.trim()).apply()
     }
 
-    // FIXED: Persist scan batches so the Undo button survives rotation (P1)
     var lastImportedTxnIds: List<Long>
         get() = prefs.getString(KEY_LAST_SCAN_TXNS, "")?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
         set(value) = prefs.edit().putString(KEY_LAST_SCAN_TXNS, value.joinToString(",")).apply()
@@ -214,7 +219,6 @@ class SettingsRepository(context: Context) {
             if (matchingKey != null) current.remove(matchingKey) else current.remove(cleanCategory)
         }
         saveCategoryBudgetsMap(current)
-        // Reset any dismissed warning for this category since its cap was explicitly updated or removed
         clearDismissedCategoryWarning(cleanCategory)
     }
 
@@ -228,11 +232,6 @@ class SettingsRepository(context: Context) {
         categoryBudgetsJson = obj.toString()
     }
 
-    /**
-     * Keeps category budgets consistent when a user deletes or merges a category.
-     * If [newCategory] is provided and does not yet have its own cap, the old cap is migrated to it;
-     * otherwise the deleted category's orphaned cap is removed.
-     */
     fun reassignCategoryBudget(oldCategory: String, newCategory: String?) {
         val cleanOld = oldCategory.trim()
         if (cleanOld.isEmpty()) return
@@ -258,19 +257,12 @@ class SettingsRepository(context: Context) {
         get() = prefs.getString(KEY_DISMISSED_BUDGET_WARNINGS, "{}") ?: "{}"
         set(value) = prefs.edit().putString(KEY_DISMISSED_BUDGET_WARNINGS, value).apply()
 
-    /**
-     * Records a dismissed warning for [category] in [cycleStartMillis] at a specific severity [level]
-     * ("NEAR" for >=80%, "OVER" for >=100%).
-     * If a user dismisses a "NEAR" warning and later exceeds 100% ("OVER"), the "OVER" alert will
-     * still surface so they aren't blindsided.
-     */
     fun dismissCategoryWarning(category: String, cycleStartMillis: Long, level: String = WARNING_LEVEL_OVER) {
         val cleanCategory = category.trim()
         if (cleanCategory.isEmpty()) return
         try {
             val currentLevels = getDismissedCategoryWarningLevels(cycleStartMillis).toMutableMap()
             val existingKey = currentLevels.keys.firstOrNull { it.equals(cleanCategory, ignoreCase = true) } ?: cleanCategory
-            // "OVER" supersedes "NEAR"
             if (currentLevels[existingKey] != WARNING_LEVEL_OVER) {
                 currentLevels[existingKey] = level
             }
@@ -324,7 +316,6 @@ class SettingsRepository(context: Context) {
                 }
                 return result
             }
-            // Fallback compatibility for legacy flat "categories" array
             val array = obj.optJSONArray("categories") ?: return emptyMap()
             for (i in 0 until array.length()) {
                 val cat = array.optString(i).trim()
@@ -347,6 +338,62 @@ class SettingsRepository(context: Context) {
         get() = prefs.getBoolean(KEY_CATEGORY_BUDGET_SETUP_DISMISSED, false)
         set(value) = prefs.edit().putBoolean(KEY_CATEGORY_BUDGET_SETUP_DISMISSED, value).apply()
 
+    // ── Credit Card Cycle & Limit Configurations ─────────────────────────────
+
+    fun accountKey(bankName: String, accountNumber: String?): String =
+        "${bankName.trim().lowercase()}|${accountNumber?.trim()?.lowercase() ?: "none"}"
+
+    fun isDefaultCreditCard(bankName: String): Boolean {
+        val lower = bankName.lowercase()
+        return lower.endsWith(" cc") || lower.contains("credit card") ||
+                lower in setOf("onecard", "slice", "american express", "amex", "lazypay", "simpl")
+    }
+
+    fun getCreditCardConfigs(): Map<String, CreditCardConfig> {
+        val raw = prefs.getString(KEY_CREDIT_CARD_CONFIGS_JSON, "{}") ?: "{}"
+        if (raw.isBlank() || raw == "{}") return emptyMap()
+        return try {
+            val obj = org.json.JSONObject(raw)
+            val map = mutableMapOf<String, CreditCardConfig>()
+            obj.keys().forEach { key ->
+                val item = obj.optJSONObject(key) ?: return@forEach
+                map[key] = CreditCardConfig(
+                    accountKey = key,
+                    isCreditCard = item.optBoolean("isCc", true),
+                    creditLimitPaise = item.optLong("limit", 10_000_000L),
+                    statementDay = item.optInt("stmtDay", 15).coerceIn(1, 28),
+                    dueDay = item.optInt("dueDay", 5).coerceIn(1, 28)
+                )
+            }
+            map
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun getCreditCardConfig(bankName: String, accountNumber: String?): CreditCardConfig? {
+        val key = accountKey(bankName, accountNumber)
+        val stored = getCreditCardConfigs()[key]
+        if (stored != null) return if (stored.isCreditCard) stored else null
+        return if (isDefaultCreditCard(bankName)) CreditCardConfig(accountKey = key) else null
+    }
+
+    fun saveCreditCardConfig(bankName: String, accountNumber: String?, config: CreditCardConfig) {
+        val key = accountKey(bankName, accountNumber)
+        val current = getCreditCardConfigs().toMutableMap()
+        current[key] = config.copy(accountKey = key)
+        val obj = org.json.JSONObject()
+        current.forEach { (k, c) ->
+            obj.put(k, org.json.JSONObject().apply {
+                put("isCc", c.isCreditCard)
+                put("limit", c.creditLimitPaise)
+                put("stmtDay", c.statementDay.coerceIn(1, 28))
+                put("dueDay", c.dueDay.coerceIn(1, 28))
+            })
+        }
+        prefs.edit().putString(KEY_CREDIT_CARD_CONFIGS_JSON, obj.toString()).apply()
+    }
+
     fun clearLastScanBatch() {
         prefs.edit().remove(KEY_LAST_SCAN_TXNS).remove(KEY_LAST_SCAN_REVIEWS).apply()
     }
@@ -361,6 +408,7 @@ class SettingsRepository(context: Context) {
         const val KEY_CATEGORY_BUDGETS_JSON = "key_category_budgets_json"
         const val KEY_CATEGORY_BUDGET_SETUP_DISMISSED = "key_category_budget_setup_dismissed"
         const val KEY_DISMISSED_BUDGET_WARNINGS = "key_dismissed_budget_warnings_v2"
+        const val KEY_CREDIT_CARD_CONFIGS_JSON = "key_credit_card_configs_json"
         const val WARNING_LEVEL_NEAR = "NEAR"
         const val WARNING_LEVEL_OVER = "OVER"
         const val KEY_START_DAY_OF_MONTH = "key_start_day_of_month"

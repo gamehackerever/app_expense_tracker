@@ -49,6 +49,9 @@ interface TransactionDao {
     @Query("UPDATE transactions SET bankName = :bankName, accountNumber = :accountNumber WHERE id = :transactionId AND bankName IS NULL")
     suspend fun updateBankDetails(transactionId: Long, bankName: String, accountNumber: String?)
 
+    @Query("UPDATE transactions SET paidBy = :paidBy WHERE id = :transactionId")
+    suspend fun updatePaidBy(transactionId: Long, paidBy: String)
+
     @Query("""
     SELECT bankName, accountNumber,
            (SELECT balance FROM transactions t2 
@@ -59,18 +62,12 @@ interface TransactionDao {
     """)
     fun getLatestBalancesForAllAccountsFlow(): Flow<List<AccountBalanceInsight>>
 
-    // @Upsert instead of REPLACE: REPLACE deletes the existing row first, and split_debts has
-    // ON DELETE CASCADE -> re-inserting an existing id would silently wipe that bill's debts.
     @Upsert
     suspend fun insertTransaction(transaction: TransactionEntity): Long
 
     @Update
     suspend fun updateTransaction(transaction: TransactionEntity)
 
-    /**
-     * CSV import uses this to skip rows already in the app. A CSV keeps time to the second while the
-     * database keeps milliseconds, so the caller passes the whole second as [fromTs]..[toTs].
-     */
     @Query("SELECT COUNT(*) FROM transactions WHERE timestamp BETWEEN :fromTs AND :toTs AND amount = :amount AND type = :type AND payee = :payee")
     suspend fun countSameTransaction(fromTs: Long, toTs: Long, amount: Long, type: TransactionType, payee: String): Int
 
@@ -83,9 +80,6 @@ interface TransactionDao {
     @Query("DELETE FROM transactions")
     suspend fun clearAllTransactions()
 
-    // Fetches recent transactions WITH their attached debts for the Dashboard/Insights UI.
-    // Bounded to 5,000 rows so a 1,000,000-row database never overflows Android's 2MB CursorWindow
-    // (SQLiteBlobTooBigException), while SQL aggregate queries still operate over the full table.
     @Transaction
     @Query("SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 5000")
     fun getAllTransactionsWithDebtsFlow(): Flow<List<TransactionWithDebts>>
@@ -106,11 +100,6 @@ interface TransactionDao {
     @Query("SELECT balance FROM transactions WHERE balance IS NOT NULL ORDER BY timestamp DESC LIMIT 1")
     fun getLatestBalanceFlow(): Flow<Long?>
 
-    /**
-     * Finds the stored row for the same payment. A row whose bank/account is still unknown (a UPI
-     * notification arrives before the bank SMS) must match too: in SQL `NULL = 'HDFC Bank'` is never
-     * true, so without the `IS NULL` branches the later SMS would be saved as a second transaction.
-     */
     @Query("""
         SELECT * FROM transactions 
         WHERE amount = :amount 
@@ -131,17 +120,62 @@ interface TransactionDao {
         accountNumber: String?
     ): TransactionEntity?
 
+    /**
+     * Detects the opposite leg of an inter-account self-transfer (same amount, opposite DEBIT/CREDIT
+     * type, within a narrow time window, on a DIFFERENT bank account).
+     */
+    @Query("""
+        SELECT * FROM transactions
+        WHERE amount = :amount
+          AND type = :oppositeType
+          AND timestamp BETWEEN :startTime AND :endTime
+          AND bankName IS NOT NULL
+          AND :currentBank IS NOT NULL
+          AND (bankName != :currentBank OR COALESCE(accountNumber, '') != COALESCE(:currentAccount, ''))
+        ORDER BY ABS(timestamp - :targetTime)
+        LIMIT 1
+    """)
+    suspend fun findOppositeTransferLeg(
+        amount: Long,
+        oppositeType: TransactionType,
+        startTime: Long,
+        endTime: Long,
+        targetTime: Long,
+        currentBank: String?,
+        currentAccount: String?
+    ): TransactionEntity?
+
     @Query("UPDATE transactions SET payee = :newPayee, category = :newCategory WHERE payee = :oldPayee")
     suspend fun updatePayeeAndCategoryBulk(oldPayee: String, newPayee: String, newCategory: String)
 
-    // Sum of every unsettled debt minus its own repayments (in Long paise)
+    // Sum of every unsettled debt owed TO YOU (where you paid the bill) minus repayments
     @Query("""
         SELECT SUM(
             MAX(0, sd.amountOwed - COALESCE((SELECT SUM(amount) FROM transactions t2 WHERE t2.linkedDebtId = sd.id), 0))
         ) 
-        FROM split_debts sd WHERE sd.status = 'OPEN' AND sd.settledAt IS NULL
+        FROM split_debts sd
+        INNER JOIN transactions t ON t.id = sd.transactionId
+        WHERE sd.status = 'OPEN'
+          AND sd.settledAt IS NULL
+          AND (t.paidBy IS NULL OR LOWER(TRIM(t.paidBy)) = 'you')
+          AND LOWER(TRIM(sd.debtorName)) != 'you'
     """)
     fun getTotalMoneyOwedToYouFlow(): Flow<Long?>
+
+    // Sum of every unsettled debt YOU OWE to someone else (where another person paid the bill)
+    @Query("""
+        SELECT SUM(
+            MAX(0, sd.amountOwed - COALESCE((SELECT SUM(amount) FROM transactions t2 WHERE t2.linkedDebtId = sd.id), 0))
+        ) 
+        FROM split_debts sd
+        INNER JOIN transactions t ON t.id = sd.transactionId
+        WHERE sd.status = 'OPEN'
+          AND sd.settledAt IS NULL
+          AND t.paidBy IS NOT NULL
+          AND LOWER(TRIM(t.paidBy)) != 'you'
+          AND LOWER(TRIM(sd.debtorName)) = 'you'
+    """)
+    fun getTotalMoneyYouOweFlow(): Flow<Long?>
 
     @Query("SELECT COUNT(*) FROM transactions WHERE type = 'DEBIT' AND category != 'Split Settlement' AND timestamp >= :startOfDay AND timestamp < :endOfDay")
     suspend fun getDailyDebitCount(startOfDay: Long, endOfDay: Long): Int
@@ -160,8 +194,6 @@ interface TransactionDao {
     @Query("UPDATE transactions SET payee = :newPayee WHERE payee = :oldPayee")
     suspend fun renamePayeeForAll(oldPayee: String, newPayee: String): Int
 
-    // Search also matches the names of people attached to the bill.
-    // ESCAPE '\' so a user typing % or _ is searched literally (escape in the caller).
     @Transaction
     @Query("""
         SELECT t.* FROM transactions t
@@ -181,14 +213,20 @@ interface TransactionDao {
     """)
     fun searchAndFilterTransactionsFlow(search: String, filterCategory: String, startTime: Long, limit: Int): Flow<List<TransactionWithDebts>>
 
-    // ONE SHARED DEFINITION OF SPEND IN PAISE (PO-H)
+    // ONE SHARED DEFINITION OF SPEND IN PAISE (PO-H) — handles both bills paid by You and bills paid by a friend
     @Query("""
         SELECT COALESCE(SUM(
-            MAX(0, amount - COALESCE((SELECT SUM(amountOwed) FROM split_debts WHERE transactionId = t.id), 0))
+            CASE
+                WHEN t.paidBy IS NOT NULL AND LOWER(TRIM(t.paidBy)) != 'you' THEN
+                    COALESCE((SELECT SUM(amountOwed) FROM split_debts WHERE transactionId = t.id AND LOWER(TRIM(debtorName)) = 'you'), 0)
+                ELSE
+                    MAX(0, amount - COALESCE((SELECT SUM(amountOwed) FROM split_debts WHERE transactionId = t.id AND LOWER(TRIM(debtorName)) != 'you'), 0))
+            END
         ), 0)
         FROM transactions t
         WHERE type = 'DEBIT' 
           AND category != 'Split Settlement' 
+          AND category != 'Transfer'
           AND excludeFromSpend = 0
           AND timestamp >= :startMillis AND timestamp <= :endMillis
     """)
@@ -199,6 +237,7 @@ interface TransactionDao {
         FROM transactions t
         WHERE type = 'DEBIT' 
           AND category != 'Split Settlement'
+          AND category != 'Transfer'
           AND excludeFromSpend = 0
           AND timestamp >= :startMillis AND timestamp <= :endMillis
     """)

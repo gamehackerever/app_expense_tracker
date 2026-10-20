@@ -185,9 +185,51 @@ class SmsHistoryScanner(
                         continue
                     }
 
+                    val oppositeType = if (parsedType == TransactionType.DEBIT) TransactionType.CREDIT else TransactionType.DEBIT
+                    val inBatchOppositeIdx = if (parsed.bankName != null) {
+                        batchTxns.indexOfFirst { t ->
+                            t.amount == amount && t.type == oppositeType &&
+                                    abs(t.timestamp - date) <= DUPLICATE_MATCH_WINDOW_MS &&
+                                    t.bankName != null &&
+                                    (t.bankName != parsed.bankName || (t.accountNumber ?: "") != (parsed.accountNumber ?: ""))
+                        }
+                    } else -1
+
+                    if (inBatchOppositeIdx >= 0) {
+                        val leg = batchTxns[inBatchOppositeIdx]
+                        batchTxns[inBatchOppositeIdx] = leg.copy(
+                            excludeFromSpend = true,
+                            category = if (leg.category == "Uncategorized") "Transfer" else leg.category,
+                            note = leg.note ?: "Self-transfer (${parsed.bankName})"
+                        )
+                    }
+
+                    val dbOppositeLeg = if (inBatchOppositeIdx < 0 && parsed.bankName != null) {
+                        transactionDao.findOppositeTransferLeg(
+                            amount = amount,
+                            oppositeType = oppositeType,
+                            startTime = date - DUPLICATE_MATCH_WINDOW_MS,
+                            endTime = date + DUPLICATE_MATCH_WINDOW_MS,
+                            targetTime = date,
+                            currentBank = parsed.bankName,
+                            currentAccount = parsed.accountNumber
+                        )
+                    } else null
+
+                    if (dbOppositeLeg != null && !dbOppositeLeg.excludeFromSpend) {
+                        transactionDao.updateTransaction(
+                            dbOppositeLeg.copy(
+                                excludeFromSpend = true,
+                                category = if (dbOppositeLeg.category == "Uncategorized") "Transfer" else dbOppositeLeg.category,
+                                note = dbOppositeLeg.note ?: "Self-transfer (${parsed.bankName})"
+                            )
+                        )
+                    }
+
+                    val isAutoTransfer = parsed.isTransfer || inBatchOppositeIdx >= 0 || dbOppositeLeg != null
                     val payee = parsed.payee
-                    val isHighValue = parsedType == TransactionType.DEBIT && amount > REVIEW_THRESHOLD_PAISE
-                    val isMissingPayee = payee.isNullOrBlank() || payee.equals("Unknown", ignoreCase = true) || payee.matches(NUMERIC_PAYEE_REGEX)
+                    val isHighValue = parsedType == TransactionType.DEBIT && amount > REVIEW_THRESHOLD_PAISE && !isAutoTransfer
+                    val isMissingPayee = (payee.isNullOrBlank() || payee.equals("Unknown", ignoreCase = true) || payee.matches(NUMERIC_PAYEE_REGEX)) && !isAutoTransfer
 
                     if (!skipScanReview && (isHighValue || isMissingPayee)) {
                         val alreadyInReview = reviewItemDao.countMatchingReviewItems(
@@ -213,9 +255,13 @@ class SmsHistoryScanner(
                             )
                         }
                     } else {
-                        val resolvedPayee = if (isMissingPayee || payee == null) fallbackPayee else payee
+                        val resolvedPayee = when {
+                            !isMissingPayee && payee != null -> payee
+                            isAutoTransfer -> "Self Transfer"
+                            else -> fallbackPayee
+                        }
                         val aliasedPayee = settingsRepo.getMerchantAlias(resolvedPayee) ?: resolvedPayee
-                        val category = CategoryClassifier.classify(aliasedPayee, body, categoryRuleDao)
+                        val category = if (isAutoTransfer) "Transfer" else CategoryClassifier.classify(aliasedPayee, body, categoryRuleDao)
 
                         batchTxns.add(
                             TransactionEntity(
@@ -225,7 +271,7 @@ class SmsHistoryScanner(
                                 rawContent = body, category = category, note = parsed.note,
                                 balance = parsed.balance,
                                 bankName = parsed.bankName, accountNumber = parsed.accountNumber,
-                                excludeFromSpend = parsed.excludeFromSpend
+                                excludeFromSpend = parsed.excludeFromSpend || isAutoTransfer
                             )
                         )
                     }

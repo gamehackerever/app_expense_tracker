@@ -4,7 +4,6 @@ import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import java.math.BigDecimal
 import java.util.regex.Pattern
-import kotlin.math.round
 
 object FinancialParser {
 
@@ -34,7 +33,9 @@ object FinancialParser {
     private val CREDIT_PATTERN = Pattern.compile("(?i)\\b(credit|credited|received|refunded|deposited|added|sent you|paid you|transfer(?:red)? from)\\b")
     private val DEBIT_PATTERN = Pattern.compile("(?i)\\b(debit|debited|spent|paid(?!\\s+you)|deducted|withdrawn|sent(?!\\s+you)|transfer(?:red)? to)\\b")
     private val CREDIT_CARD_PATTERN = Pattern.compile("(?i)\\bcredit\\s*(?:card|limit|line|bill)\\b")
-    private val CC_BILL_PATTERN = Pattern.compile("(?i)\\bcredit card bill\\b")
+    private val CC_ACCOUNT_DETECT_PATTERN = Pattern.compile("(?i)\\b(credit\\s*card|cc\\s+xx|card\\s+ending|onecard|slice\\s+card|amex|american\\s+express|lazypay|simpl)\\b")
+    private val CC_BILL_PATTERN = Pattern.compile("(?i)\\b(credit\\s*card\\s*(?:bill|payment)|cc\\s*bill\\s*payment|billdesk\\s*cc)\\b")
+    private val SELF_TRANSFER_PATTERN = Pattern.compile("(?i)\\b(self\\s*transfer|transfer(?:red)?\\s+to\\s+self|to\\s+own\\s+a/c|internal\\s+transfer|auto[-\\s]?sweep|sweep\\s*(?:in|out)|linked\\s+a/c)\\b")
     private val REFUND_FLAG_PATTERN = Pattern.compile("(?i)\\brefund(?:ed)?\\b")
 
     private val PROMO_PATTERNS = Pattern.compile("(?i)\\b(upgrade\\s+today|recharge\\s+(?:now|with|for)|plan|validity|per\\s+day|days\\b|pre-approved|apply\\s+now|congrats|congratulations|exclusive\\s+offer|special\\s+offer|discount|flat\\s+(?:rs|inr|₹)|free\\s+trial|win\\b|hurry|coupon|gift\\s+card|promo\\s+code|valid\\s+till|dial\\s+\\*|unlimited\\s+data|calls\\s+for\\s+just|bonus)\\b")
@@ -58,27 +59,69 @@ object FinancialParser {
     private val SMS_HEADER_REGEX = Regex("""(?i)^[a-z]{2}-[a-z0-9]{4,8}(?:-[a-z0-9]+)?$""")
     private val BANK_HEADER_REGEX = Regex("""(?i)^[a-z]{3,8}(?:bk|bnk|upi|bank)$""")
 
-    private val ACCOUNT_NUM_PATTERN = Pattern.compile("(?i)(?:a/c|acct|account)(?:\\s+no\\.?|\\s+number)?\\s*[:\\-]?\\s*[*xX]*(\\d{3,6})\\b")
+    private val ACCOUNT_NUM_PATTERN = Pattern.compile("(?i)(?:a/c|acct|account|card)(?:\\s+no\\.?|\\s+number|\\s+ending(?:\\s+in|\\s+with)?)?\\s*[:\\-]?\\s*[*xX]*(\\d{3,6})\\b")
 
     private val BANK_NAME_PATTERNS = listOf(
-        Pattern.compile("(?i)-\\s*([a-zA-Z\\s]+(?:Bank|SBI))\\s*$", Pattern.MULTILINE),
-        Pattern.compile("(?i)\\b((?:HDFC|SBI|ICICI|Axis|Kotak|PNB|Federal|Canara|Union|IDFC|IndusInd|Yes|South Indian)[\\sA-Za-z]*(?:Bank)?)\\b")
+        Pattern.compile("(?i)-\\s*([a-zA-Z\\s]+(?:Bank|SBI|Card))\\s*$", Pattern.MULTILINE),
+        Pattern.compile("(?i)\\b((?:HDFC|SBI|ICICI|Axis|Kotak|PNB|Federal|Canara|Union|IDFC|IndusInd|Yes|South Indian|Bank of Baroda|Bank of India|Indian|Indian Overseas|Central Bank|UCO|Punjab & Sind|IDBI|Bandhan|RBL|Karnataka|Karur Vysya|City Union|Tamilnad Mercantile|Dhanlaxmi|CSB|Saraswat|Kerala|Kerala Gramin|AU Small Finance|Equitas|Ujjivan|Utkarsh|Jana|DBS|Standard Chartered|HSBC|Citi|American Express|OneCard|Slice|Jupiter|Fi|Airtel Payments|Jio Payments|India Post)[\\sA-Za-z]*(?:Bank|Card)?)\\b")
     )
 
+    // Expanded to 55+ Indian banks, small finance banks, payments banks, credit cards, and wallets
     private val KNOWN_BANK_ALIASES: List<Pair<Regex, String>> = listOf(
-        Regex("(?i)\\bhdfc\\b") to "HDFC Bank",
-        Regex("(?i)\\bsbi\\b|state\\s*bank") to "SBI",
-        Regex("(?i)\\bicici\\b") to "ICICI Bank",
-        Regex("(?i)\\baxis\\b") to "Axis Bank",
-        Regex("(?i)\\bkotak\\b") to "Kotak Bank",
-        Regex("(?i)\\bpnb\\b|punjab\\s*national") to "PNB",
+        Regex("(?i)\\bhdfc\\b|hdfcbk|hdfcbank") to "HDFC Bank",
+        Regex("(?i)\\bsbi\\b|state\\s*bank|sbiinb|sbipsg|sbicrd") to "SBI",
+        Regex("(?i)\\bicici\\b|icicib") to "ICICI Bank",
+        Regex("(?i)\\baxis\\b|axisbk") to "Axis Bank",
+        Regex("(?i)\\bkotak\\b|kotakb") to "Kotak Bank",
+        Regex("(?i)\\bpnb\\b|punjab\\s*national|pnbsms") to "PNB",
         Regex("(?i)\\bfederal\\b|fedbnk|fedbk") to "Federal Bank",
-        Regex("(?i)\\bcanara\\b") to "Canara Bank",
-        Regex("(?i)\\bunion\\b") to "Union Bank",
-        Regex("(?i)\\bidfc\\b") to "IDFC First Bank",
-        Regex("(?i)\\bindusind\\b") to "IndusInd Bank",
-        Regex("(?i)\\byes\\b") to "Yes Bank",
-        Regex("(?i)\\bsib\\b|south\\s*indian|sibsms") to "South Indian Bank"
+        Regex("(?i)\\bcanara\\b|canbnk") to "Canara Bank",
+        Regex("(?i)\\bunion\\s*bank\\b|\\bubin\\b|unionb") to "Union Bank",
+        Regex("(?i)\\bidfc\\b|idfcfb") to "IDFC First Bank",
+        Regex("(?i)\\bindusind\\b|indusb") to "IndusInd Bank",
+        Regex("(?i)\\byes\\s*bank\\b|yesbnk|yesb") to "Yes Bank",
+        Regex("(?i)\\bsib\\b|south\\s*indian|sibsms|sibl") to "South Indian Bank",
+        Regex("(?i)\\bbob\\b|bank\\s*of\\s*baroda|baroda|bobtxn|bobsms") to "Bank of Baroda",
+        Regex("(?i)\\bboi\\b|bank\\s*of\\s*india|boisms|boiind") to "Bank of India",
+        Regex("(?i)\\bindian\\s*overseas\\b|\\biob\\b|iobchn|iobsms") to "Indian Overseas Bank",
+        Regex("(?i)\\bindian\\s*bank\\b|indbnk") to "Indian Bank",
+        Regex("(?i)\\bcentral\\s*bank\\b|cbin|centbk") to "Central Bank of India",
+        Regex("(?i)\\buco\\b|ucobnk") to "UCO Bank",
+        Regex("(?i)\\bpunjab\\s*(?:&|and)\\s*sind\\b|psbank") to "Punjab & Sind Bank",
+        Regex("(?i)\\bidbi\\b|idbibk") to "IDBI Bank",
+        Regex("(?i)\\bbandhan\\b|bdnbnk") to "Bandhan Bank",
+        Regex("(?i)\\brbl\\b|rblbnk|rblcrd") to "RBL Bank",
+        Regex("(?i)\\bkarnataka\\s*bank\\b|ktkbnk") to "Karnataka Bank",
+        Regex("(?i)\\bkarur\\s*vysya\\b|\\bkvb\\b|kvbl|kvbbnk") to "Karur Vysya Bank",
+        Regex("(?i)\\bcity\\s*union\\b|\\bcub\\b|cubank") to "City Union Bank",
+        Regex("(?i)\\btamilnad\\s*mercantile\\b|\\btmb\\b|tmbbnk") to "Tamilnad Mercantile Bank",
+        Regex("(?i)\\bdhanlaxmi\\b|dhlbnk") to "Dhanlaxmi Bank",
+        Regex("(?i)\\bcsb\\b|catholic\\s*syrian|csbbnk") to "CSB Bank",
+        Regex("(?i)\\bsaraswat\\b|srcb") to "Saraswat Bank",
+        Regex("(?i)\\bkerala\\s*gramin\\b|klgb|kgbsms") to "Kerala Gramin Bank",
+        Regex("(?i)\\bkerala\\s*bank\\b|kscb") to "Kerala Bank",
+        Regex("(?i)\\bau\\s*small\\s*finance\\b|\\baubank\\b|aubl") to "AU Small Finance Bank",
+        Regex("(?i)\\bequitas\\b|equitb") to "Equitas Bank",
+        Regex("(?i)\\bujjivan\\b|ujjivn") to "Ujjivan Bank",
+        Regex("(?i)\\butkarsh\\b|utksfb") to "Utkarsh Bank",
+        Regex("(?i)\\bjana\\s*small\\s*finance\\b|janabk") to "Jana Bank",
+        Regex("(?i)\\bdbs\\b|dbsbnk") to "DBS Bank",
+        Regex("(?i)\\bstandard\\s*chartered\\b|scbank|\\bscb\\b") to "Standard Chartered",
+        Regex("(?i)\\bhsbc\\b") to "HSBC",
+        Regex("(?i)\\bciti\\b|citibk") to "Citibank",
+        Regex("(?i)\\bamex\\b|american\\s*express") to "American Express",
+        Regex("(?i)\\bonecard\\b|fpl\\s*technologies") to "OneCard",
+        Regex("(?i)\\bslice\\b|sliceit") to "Slice",
+        Regex("(?i)\\bjupiter\\b") to "Jupiter",
+        Regex("(?i)\\bfi\\s*money\\b|epifi") to "Fi Money",
+        Regex("(?i)\\bairtel\\s*payments?\\s*bank\\b|airbnk|airp") to "Airtel Payments Bank",
+        Regex("(?i)\\bjio\\s*payments?\\s*bank\\b|jiopay|jiobnk") to "Jio Payments Bank",
+        Regex("(?i)\\bindia\\s*post\\b|\\bippb\\b|ippbsm") to "India Post Payments Bank",
+        Regex("(?i)\\bnsdl\\s*payments?\\b|nsdlpb") to "NSDL Payments Bank",
+        Regex("(?i)\\bamazon\\s*pay\\b|amzpay") to "Amazon Pay",
+        Regex("(?i)\\bpluxee\\b|\\bsodexo\\b") to "Pluxee",
+        Regex("(?i)\\blazypay\\b") to "LazyPay",
+        Regex("(?i)\\bsimpl\\b") to "Simpl"
     )
 
     // FIXED: Requires explicit context (a/c, acct, account, card, ending in). Dropped bare '-' fallback.
@@ -87,11 +130,11 @@ object FinancialParser {
     )
 
     private val SECONDARY_TEXT_BANK_PATTERN = Regex(
-        pattern = """(?:using|via|from(?:\s+your)?)\s+([a-zA-Z\s]{2,25}?)\s+(?:Bank|A/c|Account)\b""",
+        pattern = """(?:using|via|from(?:\s+your)?)\s+([a-zA-Z\s]{2,25}?)\s+(?:Bank|A/c|Account|Card)\b""",
         option = RegexOption.IGNORE_CASE
     )
 
-    private val TITLE_BANK_REGEX = Regex("(?i)^(?:[A-Z]{2}-)?(HDFC|SBI|ICICI|AXIS|KOTAK|PNB|FEDERAL|FEDBNK|CANARA|UNION|IDFC|INDUSIND|YES|SIBSMS)")
+    private val TITLE_BANK_REGEX = Regex("(?i)^(?:[A-Z]{2}-)?(HDFC|SBI|ICICI|AXIS|KOTAK|PNB|FEDERAL|FEDBNK|CANARA|UNION|IDFC|INDUSIND|YES|SIBSMS|BOB|BOI|IOB|IDBI|RBL|KVB|CUB|TMB|DBS|HSBC|AMEX|ONECARD|SLICE|AUBANK|EQUITAS|UJJIVAN|IPPB)")
 
     private val PAYEE_PATTERNS = listOf(
         Pattern.compile("(?i)(?:^|.*?[\\n:])\\s*([A-Za-z0-9\\s._\\-]{2,35}?)\\s+(?:paid|sent)\\s+you", Pattern.MULTILINE),
@@ -121,7 +164,7 @@ object FinancialParser {
         "MERCHANT", "UPIMERCHANT", "UPI-MERCHANT", "PAYEE", "PAYMENT", "TRANSFER",
         "COLLECT", "NODAL", "SIBL", "HDFC", "ICICI", "SBIN", "UTIB", "KKBK",
         "FDRL", "YESB", "PAYTM", "BILLDESK", "RAZORPAY", "CCAVENUE", "AIRP", "KVB", "KVBL",
-        "FEDBK", "FEDBNK", "FEDERAL"
+        "FEDBK", "FEDBNK", "FEDERAL", "BARB", "BKID", "CBIN", "IOBA", "IDIB"
     )
 
     private val PAYEE_PARENTHESES_REGEX = Regex("""\(([^)]+)\)""")
@@ -168,17 +211,34 @@ object FinancialParser {
         val refId = extractReferenceId(combinedText)
         val note = extractGPayNote(rawText = rawText, title = title)
 
-        val bankName = normalizeBankName(extractBankName(combinedText, title))
+        val rawBankName = extractBankName(combinedText, title)
+        val isCreditCard = CC_ACCOUNT_DETECT_PATTERN.matcher(combinedText).find()
+        val normalizedBank = normalizeBankName(rawBankName)
+        val bankName = when {
+            normalizedBank != null && isCreditCard && !normalizedBank.contains("Card", ignoreCase = true) &&
+                    normalizedBank !in setOf("OneCard", "Slice", "American Express", "LazyPay", "Simpl") ->
+                "$normalizedBank CC"
+            normalizedBank == null && isCreditCard -> "Credit Card"
+            else -> normalizedBank
+        }
         val accountNumber = normalizeAccountNumber(extractAccountNumber(combinedText))
 
-        // 3. CC and Refund Flagging (using precompiled patterns for O(1) allocation during bulk scans)
+        // 3. CC, Self-Transfer, and Refund Flagging
         val isCcPayment = CC_BILL_PATTERN.matcher(combinedText).find()
+        val isSelfTransfer = SELF_TRANSFER_PATTERN.matcher(combinedText).find()
         val isRefund = REFUND_FLAG_PATTERN.matcher(combinedText).find()
+        val isTransferFlag = isCcPayment || isSelfTransfer
+
+        val cleanedPayee = cleanPayee(payee) ?: when {
+            isCcPayment -> "Credit Card Bill"
+            isSelfTransfer -> "Self Transfer"
+            else -> null
+        }
 
         return ParsedTransaction(
             isFinancial = true,
             amount = amount,
-            payee = cleanPayee(payee),
+            payee = cleanedPayee,
             type = type,
             referenceId = refId,
             balance = balance,
@@ -187,7 +247,9 @@ object FinancialParser {
             accountNumber = accountNumber,
             rawText = rawText,
             currency = "INR",
-            excludeFromSpend = isCcPayment || isRefund,
+            accountType = if (isCreditCard) "CREDIT_CARD" else "BANK",
+            isTransfer = isTransferFlag,
+            excludeFromSpend = isCcPayment || isRefund || isSelfTransfer,
             confidence = if (type != null && amount != null) 1.0f else 0.5f
         )
     }
@@ -213,11 +275,6 @@ object FinancialParser {
         val lines = rawText.lines().map { it.trim() }.filter { it.isNotBlank() }
         if (lines.size >= 2) {
             val candidate = lines.getOrNull(1) ?: return null
-            // BUG FIX: many bank SMS are exactly two lines, with line 2 being the
-            // "Avl Bal Rs X" balance readout, not a genuine payment note. Since
-            // SYSTEM_NOISE_REGEX didn't recognize balance text, that line was
-            // getting saved and displayed as the transaction's note (e.g. an
-            // italic "Avl Bal Rs 15,000.00" under a plain SMS-debited entry).
             if (!isSystemNoise(candidate) && !looksLikeBalanceLine(candidate) && candidate.length in 2..80) {
                 return candidate.replace("\"", "").replace("“", "").replace("”", "").trim()
             }
@@ -314,12 +371,14 @@ object FinancialParser {
         val t = title.lowercase().trim()
         val isGenericApp = t in setOf(
             "google pay", "gpay", "phonepe", "paytm", "bhim", "alert",
-            "bank", "credit alert", "debit alert"
+            "bank", "credit alert", "debit alert", "amazon pay", "super.money",
+            "mobikwik", "slice", "navi", "samsung wallet", "fi money", "jupiter", "freecharge"
         )
         val isSmsHeader = SMS_HEADER_REGEX.matches(title) || BANK_HEADER_REGEX.matches(title) ||
                 title.uppercase() in setOf(
             "FEDBK", "FEDBNK", "HDFCBK", "SBIINB", "ICICIB",
-            "AXISBK", "KOTAKB", "CANBNK", "PNBSMS", "SIBL", "YESBNK", "SIBSMS" // <-- ADDED SIBSMS
+            "AXISBK", "KOTAKB", "CANBNK", "PNBSMS", "SIBL", "YESBNK", "SIBSMS",
+            "BOBTXN", "BOIIND", "IOBCHN", "INDBNK", "CBIN", "UCOBNK", "IDBIBK", "RBLBNK"
         )
         return isGenericApp || isSmsHeader
     }
@@ -356,12 +415,6 @@ object FinancialParser {
     }
 
     private fun extractBankName(text: String, title: String?): String? {
-        // The DLT-registered sender header is the authoritative signal for which bank
-        // actually owns this route. Some banks route SMS through a correspondent/
-        // gateway bank whose name appears in the BODY text (e.g. a message reading
-        // "Dear SBI User...-SBI" that actually arrives from a Federal Bank sender
-        // header), so body text alone can misidentify the bank. Header text can't be
-        // spoofed the way a template's boilerplate signature can — check it first.
         if (!title.isNullOrBlank()) {
             for ((pattern, canonical) in KNOWN_BANK_ALIASES) {
                 if (pattern.containsMatchIn(title)) return canonical
@@ -372,14 +425,16 @@ object FinancialParser {
             }
         }
 
-        // No recognizable bank header (e.g. a generic app sender like "Google Pay")
-        // — fall back to scanning the body text as before.
         val subtextMatch = SECONDARY_TEXT_BANK_PATTERN.find(text)
         if (subtextMatch != null) {
             val rawBank = subtextMatch.groupValues[1].trim()
             if (rawBank.isNotBlank() && rawBank.length > 2 && !rawBank.equals("UPI", ignoreCase = true)) {
                 return rawBank.uppercase() + " Bank"
             }
+        }
+
+        for ((pattern, canonical) in KNOWN_BANK_ALIASES) {
+            if (pattern.containsMatchIn(text)) return canonical
         }
 
         for (pattern in BANK_NAME_PATTERNS) {
@@ -401,7 +456,6 @@ object FinancialParser {
         val hasCredit = CREDIT_PATTERN.matcher(sanitized).find()
         val hasDebit = DEBIT_PATTERN.matcher(sanitized).find()
 
-        // FIXED: Dropped the earliest-match rule that forced "Dr. Sharma" into a DEBIT
         return when {
             hasCredit && !hasDebit -> TransactionType.CREDIT
             hasDebit && !hasCredit -> TransactionType.DEBIT
@@ -435,7 +489,6 @@ object FinancialParser {
         for (pattern in REF_ID_PATTERNS) {
             val matcher = pattern.matcher(text)
             if (matcher.find()) {
-                // Return matched group 1 (if exists) else the entire match
                 return if (matcher.groupCount() > 0) matcher.group(1)?.trim() else matcher.group()?.trim()
             }
         }

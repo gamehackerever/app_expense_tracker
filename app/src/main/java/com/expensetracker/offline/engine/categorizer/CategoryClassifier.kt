@@ -14,24 +14,25 @@ object CategoryClassifier {
         "Entertainment",
         "Health",
         "Investments",
+        "Transfer",
         "Uncategorized"
     )
 
     // Precompile Regex for O(1) matching and to enforce word boundaries (\b).
     // This prevents "tea" from matching "team" and "vi" from matching "movie".
     private val CATEGORY_REGEX_MAP: Map<String, Regex> = mapOf(
-        "Food & Dining" to createRegex("starbucks", "swiggy", "zomato", "mcdonalds?", "kfc", "burger", "cafe", "restaurant", "pizza", "subway", "dominos?", "tea", "coffee", "bistro", "bakery", "hotel"),
-        "Groceries" to createRegex("blinkit", "zepto", "instamart", "bigbasket", "dmart", "spencer", "supermarket", "grocery", "vegetables?", "fruits?", "mart", "nature basket", "reliance fresh"),
-        "Shopping" to createRegex("amazon", "flipkart", "myntra", "meesho", "ajio", "zara", "h&m", "retail", "clothing", "apparel", "electronics", "decathlon", "croma", "lifestyle"),
-        "Travel" to createRegex("uber", "ola", "rapido", "namma yatri", "metro", "irctc", "railway", "fuel", "petrol", "diesel", "hpcl", "bpcl", "iocl", "toll", "fastag", "parking", "flight", "redbus", "makemytrip"),
-        "Bills & Utilities" to createRegex("airtel", "jio", "vi", "vodafone", "electricity", "kseb", "bescom", "water", "gas", "broadband", "wifi", "billdesk", "recharge", "dth", "tneb", "postpaid", "prepaid"),
-        "Entertainment" to createRegex("netflix", "hotstar", "spotify", "prime video", "pvr", "inox", "cinepolis", "bookmyshow", "steam", "playstation", "youtube", "sony liv"),
-        "Health" to createRegex("apollo", "pharmeasy", "1mg", "pharmacy", "chemist", "hospital", "clinic", "dentist", "medplus", "diagnostic", "dr\\.?"),
-        "Investments" to createRegex("zerodha", "groww", "upstox", "mutual fund", "sip", "kuvera", "nse", "bse", "indmoney", "cleartax", "coin")
+        "Transfer" to createRegex("self transfer", "credit card bill", "cc bill", "internal transfer", "auto sweep", "own a/c"),
+        "Food & Dining" to createRegex("starbucks", "swiggy", "zomato", "mcdonalds?", "kfc", "burger", "cafe", "restaurant", "pizza", "subway", "dominos?", "tea", "coffee", "bistro", "bakery", "hotel", "shawarma", "biryani"),
+        "Groceries" to createRegex("blinkit", "zepto", "instamart", "bigbasket", "dmart", "spencer", "supermarket", "grocery", "vegetables?", "fruits?", "mart", "nature basket", "reliance fresh", "lulu hypermarket"),
+        "Shopping" to createRegex("amazon", "flipkart", "myntra", "meesho", "ajio", "zara", "h&m", "retail", "clothing", "apparel", "electronics", "decathlon", "croma", "lifestyle", "nykaa", "tatacliq"),
+        "Travel" to createRegex("uber", "ola", "rapido", "namma yatri", "metro", "irctc", "railway", "fuel", "petrol", "diesel", "hpcl", "bpcl", "iocl", "toll", "fastag", "parking", "flight", "redbus", "makemytrip", "ksrtc"),
+        "Bills & Utilities" to createRegex("airtel", "jio", "vi", "vodafone", "electricity", "kseb", "bescom", "water", "gas", "broadband", "wifi", "billdesk", "recharge", "dth", "tneb", "postpaid", "prepaid", "bsnl"),
+        "Entertainment" to createRegex("netflix", "hotstar", "spotify", "prime video", "pvr", "inox", "cinepolis", "bookmyshow", "steam", "playstation", "youtube", "sony liv", "jiocinema"),
+        "Health" to createRegex("apollo", "pharmeasy", "1mg", "pharmacy", "chemist", "hospital", "clinic", "dentist", "medplus", "diagnostic", "dr\\.?", "aster", "medibuddy"),
+        "Investments" to createRegex("zerodha", "groww", "upstox", "mutual fund", "sip", "kuvera", "nse", "bse", "indmoney", "cleartax", "coin", "smallcase", "nps", "ppf")
     )
 
     private fun createRegex(vararg keywords: String): Regex {
-        // Joins words into a capturing group (word1|word2) wrapped in boundaries
         val pattern = keywords.joinToString(separator = "|")
         return Regex("(?i)\\b($pattern)\\b")
     }
@@ -39,15 +40,12 @@ object CategoryClassifier {
     fun classifySync(payee: String, rawContent: String): String {
         val cleanPayee = payee.trim()
 
-        // 1. High Priority: Check if the Merchant/Payee name matches a category directly
         for ((category, regex) in CATEGORY_REGEX_MAP) {
             if (regex.containsMatchIn(cleanPayee)) {
                 return category
             }
         }
 
-        // 2. Low Priority: Fallback to scanning the raw SMS content
-        // (Only done if the Payee name was ambiguous)
         for ((category, regex) in CATEGORY_REGEX_MAP) {
             if (regex.containsMatchIn(rawContent)) {
                 return category
