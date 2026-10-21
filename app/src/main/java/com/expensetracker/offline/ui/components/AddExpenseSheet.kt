@@ -231,7 +231,7 @@ fun AddExpenseSheet(
                     .padding(top = 8.dp, bottom = 28.dp)
                     .verticalScroll(rememberScrollState())
                     .animateContentSize(),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(13.dp)
             ) {
                 SheetHeader(title = "Add transaction", subtitle = "Record an expense, income, or self-transfer")
 
@@ -367,7 +367,7 @@ fun AddExpenseSheet(
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            "For pass-through expenses or reimbursable payments",
+                                            "Pass-through or reimbursable expenses",
                                             fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )

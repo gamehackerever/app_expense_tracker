@@ -249,7 +249,7 @@ fun EditTransactionSheet(
                     .padding(top = 8.dp, bottom = 28.dp)
                     .verticalScroll(rememberScrollState())
                     .animateContentSize(),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(13.dp)
             ) {
                 SheetHeader(
                     title = "Edit transaction",
@@ -523,7 +523,7 @@ fun EditTransactionSheet(
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            "For pass-through expenses or reimbursable payments",
+                                            "Pass-through or reimbursable expenses",
                                             fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
