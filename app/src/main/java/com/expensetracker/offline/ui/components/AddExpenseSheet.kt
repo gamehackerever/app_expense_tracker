@@ -9,11 +9,15 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.*
@@ -21,10 +25,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.dao.AccountInfo
@@ -32,6 +38,7 @@ import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
+import com.expensetracker.offline.engine.ml.SmartExpenseEngine
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.util.NecessityManager
 import kotlinx.coroutines.Dispatchers
@@ -100,30 +107,47 @@ fun AddExpenseSheet(
         itemizedSplitShares.any { (person, paise) -> !person.equals("You", ignoreCase = true) && paise > 0L }
     }
 
-    // Smart auto-categorization as the user types a payee (if they haven't manually picked a category yet)
-    LaunchedEffect(payee, isTransferMode, userManuallyPickedCategory) {
+    val calculatedAmount = remember(amountStr) { evaluateBasicMath(amountStr) }
+
+    // Smart contextual payee & amount predictions conditioned on amount, hour-of-day, day-of-week & recency
+    val smartPredictions = remember(payee, calculatedAmount, transactionDateMillis, transactionType, isTransferMode, transactionsHistory) {
+        if (isTransferMode || transactionsHistory.isEmpty()) {
+            emptyList()
+        } else {
+            SmartExpenseEngine.predictContextualPayees(
+                transactions = transactionsHistory,
+                query = payee,
+                nowMillis = transactionDateMillis,
+                isDebit = transactionType == TransactionType.DEBIT,
+                limit = 5,
+                amountPaise = calculatedAmount
+            ).filterNot { pred ->
+                pred.payee.equals(payee.trim(), ignoreCase = true) && amountStr.isNotBlank()
+            }
+        }
+    }
+
+    // Hybrid Jaro-Winkler + Subword Naive Bayes + Gaussian Log-Amount & Temporal auto-categorization
+    LaunchedEffect(payee, calculatedAmount, transactionDateMillis, isTransferMode, userManuallyPickedCategory) {
         if (isTransferMode || userManuallyPickedCategory) return@LaunchedEffect
         val clean = payee.trim()
-        if (clean.length < 2) return@LaunchedEffect
-        delay(120)
+        if (clean.length < 2 && (calculatedAmount == null || calculatedAmount <= 0L)) return@LaunchedEffect
+        delay(100)
         val inferred = withContext(Dispatchers.Default) {
-            val fromHistory = transactionsHistory.asSequence()
-                .take(400)
-                .firstOrNull {
-                    it.payee.equals(clean, ignoreCase = true) &&
-                            !it.category.equals("Uncategorized", ignoreCase = true) &&
-                            !it.category.equals("Transfer", ignoreCase = true)
-                }?.category
-            fromHistory ?: CategoryClassifier.classifySync(clean, clean)
-                .takeUnless { it.equals("Uncategorized", ignoreCase = true) || it.equals("Transfer", ignoreCase = true) }
+            SmartExpenseEngine.predictCategoryContextual(
+                payee = clean,
+                amountPaise = calculatedAmount,
+                timestampMillis = transactionDateMillis,
+                history = transactionsHistory
+            ).takeUnless {
+                it.equals("Uncategorized", ignoreCase = true) || it.equals("Transfer", ignoreCase = true)
+            }
         }
         if (inferred != null) {
             selectedCategory = inferred
             lastNonTransferCategory = inferred
         }
     }
-
-    val calculatedAmount = remember(amountStr) { evaluateBasicMath(amountStr) }
     val hasUnsavedChanges by remember {
         derivedStateOf {
             amountStr.isNotBlank() || payee.isNotBlank() || itemsSummary.isNotBlank() ||
@@ -294,6 +318,92 @@ fun AddExpenseSheet(
                     leadingIcon = Icons.Default.Storefront,
                     singleLine = true
                 )
+
+                AnimatedVisibility(
+                    visible = !isTransferMode && smartPredictions.isNotEmpty(),
+                    enter = fadeIn(tween(180)) + expandVertically(tween(180)),
+                    exit = fadeOut(tween(140)) + shrinkVertically(tween(140))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        smartPredictions.forEach { pred ->
+                            val typicalRupees = pred.typicalAmountPaise / 100L
+                            val chipLabel = if (typicalRupees > 0L) {
+                                "${pred.payee} · ₹$typicalRupees"
+                            } else {
+                                pred.payee
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(AppRadius.pill),
+                                color = MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                ),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(AppRadius.pill))
+                                    .clickable {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        payee = pred.payee
+                                        if (amountStr.isBlank() && pred.typicalAmountPaise > 0L) {
+                                            amountStr = if (pred.typicalAmountPaise % 100L == 0L) {
+                                                (pred.typicalAmountPaise / 100L).toString()
+                                            } else {
+                                                String.format(Locale.US, "%.2f", pred.typicalAmountPaise / 100.0)
+                                            }
+                                        }
+                                        if (!userManuallyPickedCategory &&
+                                            pred.category.isNotBlank() &&
+                                            !pred.category.equals("Uncategorized", ignoreCase = true)
+                                        ) {
+                                            selectedCategory = pred.category
+                                            lastNonTransferCategory = pred.category
+                                        }
+                                        if (selectedBankName == null && pred.bankName != null &&
+                                            linkedAccounts.any { it.bankName == pred.bankName && it.accountNumber == pred.accountNumber }
+                                        ) {
+                                            selectedBankName = pred.bankName
+                                            selectedAccountNumber = pred.accountNumber
+                                        }
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Text(
+                                        text = chipLabel,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (pred.reasonLabel.isNotBlank() && !pred.reasonLabel.equals(pred.category, ignoreCase = true)) {
+                                        Text(
+                                            text = "· ${pred.reasonLabel}",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 PaymentMethodSelector(
                     linkedAccounts = linkedAccounts,

@@ -60,6 +60,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
         dismissedCategoryWarningLevels.value = levels
         dismissedCategoryWarnings.value = levels.keys
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.syncCategoryRulesFromHistory() }
+        }
     }
 
     fun setCategoryBudget(category: String, amountInPaise: Long) {
@@ -370,6 +373,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 excludeFromSpend = excludeFromSpend || category.equals("Transfer", ignoreCase = true)
             )
             val newId = repository.insertTransaction(entity)
+            if (newId > 0L && !excludeFromSpend) {
+                repository.learnCategoryRule(payee, category)
+            }
             if (newId > 0L && splitParticipants.isNotEmpty() && type == TransactionType.DEBIT) {
                 val debtsToSave = splitParticipants
                     .filter { p ->
@@ -604,7 +610,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val type = item.type ?: parsed?.type
 
                 if (amt > 0 && type != null) {
-                    val category = repository.classifyCategory(payee, item.rawContent)
+                    val category = repository.classifyCategory(payee, item.rawContent, amt, item.timestamp)
                     val bank = item.bankName ?: parsed?.bankName
                     val account = item.accountNumber ?: parsed?.accountNumber
                     val balance = item.balance ?: parsed?.balance

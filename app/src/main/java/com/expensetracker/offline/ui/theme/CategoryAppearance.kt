@@ -5,12 +5,16 @@ import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Fastfood
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.LocalHospital
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.ShoppingBag
@@ -21,42 +25,58 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 /**
- * Categories are matched by whole words, so "Auto/Cab", "Cab rides" and "Taxi" all resolve to Transport
- * without false hits like "cab" inside "cabbage". Anything unrecognised keeps a stable hashed colour and
- * the generic icon, so custom categories still look distinct from each other.
+ * Categories and bill names are matched by whole words so "Auto/Cab", "Cab rides", "Spotify",
+ * "Google Photos", "VI Recharge", "Gym", and "Creatine" all resolve to crisp, distinct icons
+ * and vibrant semantic colors across both Light and Dark themes.
  */
 private enum class CategoryKind(val color: Color?, val icon: ImageVector, val keywords: Set<String>) {
+    FITNESS(
+        Color(0xFF22C55E), Icons.Default.FitnessCenter, // Energetic Green
+        setOf("gym", "fitness", "workout", "creatine", "protein", "whey", "sports", "sport", "turf", "badminton", "swimming", "yoga", "cult")
+    ),
+    AUDIO_STREAMING(
+        Color(0xFF1DB954), Icons.Default.Headphones, // Spotify Green
+        setOf("spotify", "music", "podcast", "audible", "gaana", "wynk", "saavn", "jiosaavn")
+    ),
+    CLOUD_DIGITAL(
+        Color(0xFF38BDF8), Icons.Default.Cloud, // Sky Blue
+        setOf("photos", "icloud", "cloud", "drive", "storage", "chatgpt", "openai", "claude", "github", "notion", "canva")
+    ),
+    TELECOM(
+        Color(0xFF06B6D4), Icons.Default.PhoneAndroid, // Cyan
+        setOf("vi", "jio", "airtel", "bsnl", "vodafone", "recharge", "prepaid", "postpaid", "sim", "mobile")
+    ),
     FOOD(
         Color(0xFFF59E0B), Icons.Default.Fastfood, // Vibrant Amber
         setOf("food", "dining", "restaurant", "restaurants", "cafe", "coffee", "snack", "snacks", "meal", "meals",
-            "lunch", "dinner", "breakfast", "zomato", "swiggy")
+            "lunch", "dinner", "breakfast", "zomato", "swiggy", "broast", "shawarma", "biryani", "mandhi", "canteen", "mess", "bakery", "tea", "chai")
     ),
     GROCERIES(
         Color(0xFF10B981), Icons.Default.ShoppingCart, // Emerald
-        setOf("groceries", "grocery", "vegetables", "fruits", "supermarket", "mart", "kirana", "milk")
+        setOf("groceries", "grocery", "vegetables", "fruits", "supermarket", "mart", "kirana", "milk", "milma", "blinkit", "zepto", "instamart", "bigbasket", "dmart")
     ),
     SHOPPING(
         Color(0xFF8B5CF6), Icons.Default.ShoppingBag, // Violet
-        setOf("shopping", "clothes", "clothing", "fashion", "electronics", "amazon", "flipkart")
+        setOf("shopping", "clothes", "clothing", "fashion", "electronics", "amazon", "flipkart", "myntra", "ajio", "zudio", "meesho")
     ),
     FUEL(
         Color(0xFFF97316), Icons.Default.LocalGasStation, // Orange
-        setOf("fuel", "petrol", "diesel", "gas")
+        setOf("fuel", "petrol", "diesel", "gas", "hpcl", "bpcl", "iocl")
     ),
     TRANSPORT(
         Color(0xFF3B82F6), Icons.Default.DirectionsCar, // Bright Blue
         setOf("travel", "transport", "transportation", "cab", "cabs", "taxi", "auto", "uber", "ola", "rapido",
-            "metro", "bus", "train", "commute", "ride", "rides")
+            "metro", "bus", "train", "commute", "ride", "rides", "ksrtc", "irctc", "flight")
     ),
     ENTERTAINMENT(
         Color(0xFFEC4899), Icons.Default.Movie, // Pink
-        setOf("entertainment", "movie", "movies", "music", "games", "gaming", "netflix", "subscription",
-            "subscriptions", "ott")
+        setOf("entertainment", "movie", "movies", "games", "gaming", "netflix", "subscription",
+            "subscriptions", "ott", "youtube", "hotstar", "prime", "pvr", "inox", "bookmyshow")
     ),
     BILLS(
         Color(0xFF06B6D4), Icons.Default.ReceiptLong, // Cyan
-        setOf("bills", "bill", "utilities", "utility", "recharge", "electricity", "internet", "wifi", "broadband",
-            "emi", "insurance", "loan")
+        setOf("bills", "bill", "utilities", "utility", "electricity", "internet", "wifi", "broadband",
+            "emi", "insurance", "loan", "kseb", "bescom", "water", "dth")
     ),
     TRANSFER(
         Color(0xFF64748B), Icons.AutoMirrored.Filled.CompareArrows, // Slate
@@ -68,15 +88,15 @@ private enum class CategoryKind(val color: Color?, val icon: ImageVector, val ke
     ),
     HEALTH(
         Color(0xFFEF4444), Icons.Default.LocalHospital, // Crisp Red
-        setOf("health", "healthcare", "medical", "medicine", "medicines", "pharmacy", "hospital", "doctor")
+        setOf("health", "healthcare", "medical", "medicine", "medicines", "pharmacy", "hospital", "doctor", "clinic", "dental", "apollo")
     ),
     HOME(
         Color(0xFF6366F1), Icons.Default.Home, // Indigo
-        setOf("rent", "home", "housing", "household", "maintenance", "furniture")
+        setOf("rent", "home", "housing", "household", "maintenance", "furniture", "hostel", "pg")
     ),
     EDUCATION(
         Color(0xFF84CC16), Icons.Default.School, // Lime
-        setOf("education", "school", "tuition", "course", "courses", "books", "study")
+        setOf("education", "school", "tuition", "course", "courses", "books", "study", "college", "exam")
     ),
     INVESTMENTS(
         Color(0xFF14B8A6), Icons.AutoMirrored.Filled.TrendingUp, // Teal

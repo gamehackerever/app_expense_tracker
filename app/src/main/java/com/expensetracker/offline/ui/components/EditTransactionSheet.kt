@@ -132,6 +132,20 @@ fun EditTransactionSheet(
 
     val calculatedAmount = remember(amountStr) { evaluateBasicMath(amountStr) }
 
+    var userManuallyPickedCategoryInEdit by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(payee) {
+        if (userManuallyPickedCategoryInEdit) return@LaunchedEffect
+        if (!selectedCategory.equals("Uncategorized", ignoreCase = true)) return@LaunchedEffect
+        val clean = payee.trim()
+        if (clean.length < 2 || clean.equals(transaction.payee.trim(), ignoreCase = true)) return@LaunchedEffect
+        val inferred = CategoryClassifier.classifySync(clean, transaction.rawContent)
+            .takeUnless { it.equals("Uncategorized", ignoreCase = true) || it.equals("Transfer", ignoreCase = true) }
+        if (inferred != null) {
+            selectedCategory = inferred
+            lastNonTransferCategory = inferred
+        }
+    }
+
     val isPayeeRenamed = payee.trim().isNotBlank() && payee.trim() != transaction.payee.trim()
     val isCategoryChanged = selectedCategory != transaction.category
     val shouldApplyToAllPast = applyToAllPast && (isPayeeRenamed || isCategoryChanged)
@@ -491,6 +505,7 @@ fun EditTransactionSheet(
                             selected = selectedCategory,
                             onSelect = {
                                 selectedCategory = it
+                                userManuallyPickedCategoryInEdit = true
                                 if (it.equals("Transfer", ignoreCase = true)) {
                                     excludeFromSpend = true
                                 } else {

@@ -246,13 +246,14 @@ fun SheetSegmentedControl(
     ) {
         Box(
             Modifier
-                .fillMaxWidth(1f / options.size)
+                .fillMaxWidth(1f / options.size.coerceAtLeast(1))
                 .fillMaxHeight()
                 .graphicsLayer { translationX = segmentWidthPx * animatedIndex }
                 .shadow(1.dp, pill)
-                .background(colors.surface, pill)
+                .background(colors.surfaceBright, pill)
         )
 
+        val labelFontSize = if (options.size >= 5) 12.sp else 13.sp
         Row(modifier = Modifier.fillMaxSize()) {
             options.forEachIndexed { index, label ->
                 val isSelected = index == selectedIndex
@@ -270,15 +271,17 @@ fun SheetSegmentedControl(
                                 haptic.tap()
                             }
                             onSelect(index)
-                        },
+                        }
+                        .padding(horizontal = 2.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = label,
-                        fontSize = 13.sp,
+                        fontSize = labelFontSize,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         color = textColor,
                         maxLines = 1,
+                        softWrap = false,
                         overflow = TextOverflow.Ellipsis
                     )
                 }

@@ -69,7 +69,12 @@ import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.dao.AccountInfo
 import com.expensetracker.offline.data.local.entity.ReviewItemEntity
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
+import com.expensetracker.offline.engine.ml.SmartExpenseEngine
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.filled.AutoAwesome
 import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.ui.components.AppDialog
 import com.expensetracker.offline.ui.components.PaymentMethodSelector
@@ -107,6 +112,7 @@ fun ReviewQueueScreen(
 ) {
     val items by viewModel.pendingReviewItems.collectAsState()
     val linkedAccounts by viewModel.linkedAccounts.collectAsState()
+    val transactionsHistory by viewModel.allTransactions.collectAsState()
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
@@ -271,6 +277,7 @@ fun ReviewQueueScreen(
                         modifier = Modifier.animateItem(),
                         item = item,
                         linkedAccounts = linkedAccounts,
+                        transactionsHistory = transactionsHistory,
                         isSelectionMode = isSelectionMode,
                         isSelected = selectedIds.contains(item.id),
                         onToggleSelect = {
@@ -394,6 +401,7 @@ fun ReviewCard(
     modifier: Modifier = Modifier,
     item: ReviewItemEntity,
     linkedAccounts: List<AccountInfo> = emptyList(),
+    transactionsHistory: List<TransactionEntity> = emptyList(),
     isSelectionMode: Boolean = false,
     isSelected: Boolean = false,
     onResolve: (amount: Long, payee: String, type: TransactionType, category: String, bankName: String?, accountNumber: String?) -> Unit,
@@ -430,11 +438,19 @@ fun ReviewCard(
 
     val focusManager = LocalFocusManager.current
 
-    LaunchedEffect(item.rawContent, item.sender) {
+    LaunchedEffect(item.rawContent, item.sender, transactionsHistory) {
         withContext(Dispatchers.Default) {
             val parsed = FinancialParser.parse(item.rawContent, item.sender, item.source)
             val catToClassify = item.extractedPartialPayee?.takeIf { it.isNotBlank() } ?: parsed.payee ?: "Unknown"
-            val cat = CategoryClassifier.classifySync(catToClassify, item.rawContent)
+            val amtPaise = item.extractedPartialAmount ?: parsed.amount
+            val cat = SmartExpenseEngine.predictCategoryContextual(
+                payee = catToClassify,
+                amountPaise = amtPaise,
+                timestampMillis = item.timestamp,
+                history = transactionsHistory,
+                rawContent = item.rawContent
+            ).takeUnless { it == "Uncategorized" }
+                ?: CategoryClassifier.classifySync(catToClassify, item.rawContent)
 
             withContext(Dispatchers.Main) {
                 if (amountText.isBlank() && parsed.amount != null) {
@@ -450,6 +466,25 @@ fun ReviewCard(
                 if (!userSetType && parsed.type != null) transactionType = parsed.type
                 if (!userSetCategory) categoryText = cat
             }
+        }
+    }
+
+    LaunchedEffect(payeeText, amountText, userSetCategory, transactionsHistory) {
+        if (userSetCategory) return@LaunchedEffect
+        val clean = payeeText.trim()
+        val amtPaise = (amountText.toDoubleOrNull()?.times(100))?.toLong()
+        if (clean.length < 2 && (amtPaise == null || amtPaise <= 0L)) return@LaunchedEffect
+        val inferred = withContext(Dispatchers.Default) {
+            SmartExpenseEngine.predictCategoryContextual(
+                payee = if (clean.equals("Silent Deduction", ignoreCase = true)) "" else clean,
+                amountPaise = amtPaise,
+                timestampMillis = item.timestamp,
+                history = transactionsHistory,
+                rawContent = item.rawContent
+            ).takeUnless { it.equals("Uncategorized", ignoreCase = true) }
+        }
+        if (inferred != null) {
+            categoryText = inferred
         }
     }
 
@@ -786,6 +821,68 @@ fun ReviewCard(
                                                     onDone = { focusManager.clearFocus() }
                                                 )
                                             )
+
+                                            val reviewAmtPaise = (amountText.toDoubleOrNull()?.times(100))?.toLong()
+                                            val reviewQuery = if (payeeText.equals("Silent Deduction", ignoreCase = true)) "" else payeeText
+                                            val reviewSuggestions = remember(reviewQuery, reviewAmtPaise, item.timestamp, transactionType, transactionsHistory) {
+                                                SmartExpenseEngine.predictContextualPayees(
+                                                    transactions = transactionsHistory,
+                                                    query = reviewQuery,
+                                                    nowMillis = item.timestamp,
+                                                    isDebit = transactionType == TransactionType.DEBIT,
+                                                    limit = 4,
+                                                    amountPaise = reviewAmtPaise
+                                                ).filterNot { it.payee.equals(payeeText.trim(), ignoreCase = true) }
+                                            }
+                                            if (reviewSuggestions.isNotEmpty()) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .horizontalScroll(rememberScrollState()),
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    reviewSuggestions.forEach { pred ->
+                                                        Surface(
+                                                            shape = RoundedCornerShape(AppRadius.pill),
+                                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f),
+                                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(AppRadius.pill))
+                                                                .clickable {
+                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                    payeeText = pred.payee
+                                                                    if (amountText.isBlank() && pred.typicalAmountPaise > 0L) {
+                                                                        amountText = String.format(AMOUNT_LOCALE, "%.2f", pred.typicalAmountPaise / 100.0)
+                                                                    }
+                                                                    if (!userSetCategory && pred.category.isNotBlank() && !pred.category.equals("Uncategorized", ignoreCase = true)) {
+                                                                        categoryText = pred.category
+                                                                    }
+                                                                }
+                                                        ) {
+                                                            Row(
+                                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    Icons.Default.AutoAwesome,
+                                                                    contentDescription = null,
+                                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                    modifier = Modifier.size(12.dp)
+                                                                )
+                                                                Text(
+                                                                    text = if (pred.typicalAmountPaise > 0L) "${pred.payee} · ₹${pred.typicalAmountPaise / 100}" else pred.payee,
+                                                                    fontSize = 12.sp,
+                                                                    fontWeight = FontWeight.SemiBold,
+                                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                                    maxLines = 1
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
 
                                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                                 Text("Category", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
