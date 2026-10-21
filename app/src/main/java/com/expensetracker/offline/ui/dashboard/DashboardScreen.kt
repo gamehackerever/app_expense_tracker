@@ -586,7 +586,16 @@ fun DashboardScreen(
     var activeCreditTransactionToLinkId by rememberSaveable { mutableStateOf<Long?>(null) }
     val activeCreditTransactionToLink = remember(activeCreditTransactionToLinkId, transactionsWithDebts) { transactionsWithDebts.find { it.transaction.id == activeCreditTransactionToLinkId }?.transaction }
 
-    val isAnimationTriggered = !isAppLocked
+    var isDashboardReadyAfterLock by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(isAppLocked) {
+        if (isAppLocked) {
+            isDashboardReadyAfterLock = false
+        } else if (!isDashboardReadyAfterLock) {
+            delay(140)
+            isDashboardReadyAfterLock = true
+        }
+    }
+    val isAnimationTriggered = !isAppLocked && isDashboardReadyAfterLock
 
     val shownSpent = periodSpent
     val shownOwed = moneyOwedToYou
@@ -1524,6 +1533,7 @@ fun DashboardScreen(
         )
     }
 
+    CompositionLocalProvider(com.expensetracker.offline.ui.insights.LocalAnimationReady provides isAnimationTriggered) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = {
@@ -1855,7 +1865,8 @@ fun DashboardScreen(
                                         progress = if (isAnimationTriggered) onboardingTargetProgress else 0f,
                                         color = MaterialTheme.colorScheme.primary,
                                         trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                        height = 6.dp
+                                        height = 6.dp,
+                                        sessionKey = "dashboard_onboarding_bar"
                                     )
 
                                     Spacer(modifier = Modifier.height(20.dp))
@@ -2061,7 +2072,7 @@ fun DashboardScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            MoneyHero(amount = shownSpent, fractionDigits = 2, size = 44.sp)
+                            MoneyHero(amount = shownSpent, fractionDigits = 2, size = 44.sp, sessionKey = "dashboard_hero_spend")
 
                             if (monthlyBudget > 0 && isMonthlyView) {
                                 val (_, cycleEnd) = remember(startDayOfMonth) { BillingCycleHelper.getCycleRange(startDayOfMonth) }
@@ -2075,7 +2086,8 @@ fun DashboardScreen(
                                     progress = if (isAnimationTriggered) budgetProgress else 0f,
                                     color = barColor,
                                     trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    height = 6.dp
+                                    height = 6.dp,
+                                    sessionKey = "dashboard_budget_bar"
                                 )
 
                                 Spacer(modifier = Modifier.height(16.dp))
@@ -2360,10 +2372,10 @@ fun DashboardScreen(
                                 label = if (showOwedToYouPrimary) "Owed to you" else "You owe",
                                 onClick = { haptic.tap(); showSettleDebtDialog = true }
                             ) {
-                                val animatedAmt by animateFloatAsState(
-                                    targetValue = primaryAmt.toFloat(),
-                                    animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
-                                    label = "owedStatAmount"
+                                val animatedAmt by com.expensetracker.offline.ui.insights.rememberAnimatedValue(
+                                    target = primaryAmt.toFloat(),
+                                    key = primaryAmt,
+                                    sessionKey = "dashboard_owed_stat"
                                 )
                                 Row(verticalAlignment = Alignment.Bottom) {
                                     Text("₹", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = primaryColor, modifier = Modifier.padding(bottom = 2.dp))
@@ -2631,6 +2643,7 @@ fun DashboardScreen(
                 }
             }
         }
+    }
     }
 }
 

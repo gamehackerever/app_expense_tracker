@@ -1912,16 +1912,14 @@ fun DashboardProgressBar(
     color: Color,
     trackColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
     height: androidx.compose.ui.unit.Dp = 4.dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    sessionKey: String? = null
 ) {
     val target = progress.coerceIn(0f, 1f)
-    val animState = animateFloatAsState(
-        targetValue = target,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMediumLow
-        ),
-        label = "dashboardProgressBar"
+    val animState = com.expensetracker.offline.ui.insights.rememberAnimatedValue(
+        target = target,
+        key = target,
+        sessionKey = sessionKey
     )
 
     Spacer(

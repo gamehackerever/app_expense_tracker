@@ -189,25 +189,28 @@ fun computeSafeToSpend(
             upcomingNextMonth.add(UpcomingBill(item.name, item.amount, dueMillis))
         }
 
+        val amountPaidForThisItem = validTxns
+            .filter { NecessityManager.matches(item, it.transaction.payee, it.transaction.category) }
+            .sumOf { (it.transaction.amount - it.debts.sumOf { d -> d.amountOwed.toLong() }).coerceAtLeast(0L) }
+        val manuallyPaid = item.paidCycleKey == currentCycleKey
+
         val effectiveAmount = when {
             item.frequency == NecessityFrequency.MONTHLY -> item.amount
             item.isProrated -> NecessityManager.getMonthlyReserveAmount(item)
+            manuallyPaid || amountPaidForThisItem >= item.amount -> item.amount
             isBillDueInCycle(item, cycleStart, cycleEnd, rawTxns) -> item.amount
             else -> 0L
         }
 
-        if (effectiveAmount > 0) {
+        if (effectiveAmount > 0L) {
             reservedTotal += effectiveAmount
-
-            val amountPaidForThisItem = validTxns
-                .filter { NecessityManager.matches(item, it.transaction.payee, it.transaction.category) }
-                .sumOf { (it.transaction.amount - it.debts.sumOf { d -> d.amountOwed.toLong() }).coerceAtLeast(0L) }
-
-            val manuallyPaid = item.paidCycleKey == currentCycleKey
             val cappedPaid = if (manuallyPaid) effectiveAmount else minOf(amountPaidForThisItem, effectiveAmount)
-
             totalPaid += cappedPaid
             statuses.add(NecessityStatus(item, effectiveAmount, cappedPaid, cappedPaid >= effectiveAmount))
+        } else {
+            // Non-prorated lump-sum bill whose next due date is in a future cycle (e.g. next year):
+            // include in statuses as up-to-date for this cycle so the UI doesn't show it as unpaid.
+            statuses.add(NecessityStatus(item, 0L, amountPaidForThisItem, isFullyPaid = true))
         }
     }
 
