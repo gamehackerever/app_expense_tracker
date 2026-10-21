@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Category
@@ -683,7 +684,7 @@ fun SettingsScreen(
                 modifier = Modifier.trackSection("Theme", sectionPositions)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    SettingsIcon(Icons.Default.Bolt, MaterialTheme.colorScheme.onSurfaceVariant)
+                    SettingsIcon(Icons.Default.Palette, MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
@@ -797,14 +798,24 @@ fun SettingsScreen(
                     )
                 }
 
+                var showManageCategoriesSheet by remember { mutableStateOf(false) }
+                var settingsCategoryToDelete by remember { mutableStateOf<String?>(null) }
+                var settingsCustomCategories by remember {
+                    mutableStateOf(prefs.getStringSet("key_custom_categories", emptySet()) ?: emptySet())
+                }
+                var initialCatForSettingsBudget by remember { mutableStateOf<String?>(null) }
+                var returnToSettingsCatManage by remember { mutableStateOf<String?>(null) }
+                var initialCatForSettingsManage by remember { mutableStateOf<String?>(null) }
+
+                val allAvailableCategories = remember(transactions, settingsCustomCategories) {
+                    (com.expensetracker.offline.engine.categorizer.CategoryClassifier.PREDEFINED_CATEGORIES +
+                            settingsCustomCategories +
+                            transactions.asSequence().take(500).map { it.category }.toList())
+                        .filter { it.isNotBlank() }
+                        .distinct()
+                }
+
                 if (showManageCategoryBudgetsDialog) {
-                    val allAvailableCategories = remember(transactions) {
-                        (com.expensetracker.offline.engine.categorizer.CategoryClassifier.PREDEFINED_CATEGORIES +
-                                settingsRepo.customCategories +
-                                transactions.asSequence().take(500).map { it.category }.toList())
-                            .filter { it.isNotBlank() }
-                            .distinct()
-                    }
                     com.expensetracker.offline.ui.dashboard.ManageCategoryBudgetsSheet(
                         availableCategories = allAvailableCategories,
                         currentBudgets = categoryBudgets,
@@ -814,11 +825,135 @@ fun SettingsScreen(
                         onRemoveBudget = { cat ->
                             viewModel.removeCategoryBudget(cat)
                         },
-                        onDismiss = { showManageCategoryBudgetsDialog = false },
+                        onDismiss = {
+                            showManageCategoryBudgetsDialog = false
+                            initialCatForSettingsBudget = null
+                            val ret = returnToSettingsCatManage
+                            if (ret != null) {
+                                returnToSettingsCatManage = null
+                                initialCatForSettingsManage = ret
+                                showManageCategoriesSheet = true
+                            }
+                        },
+                        initialCategory = initialCatForSettingsBudget,
                         transactions = allTransactionsWithDebts,
                         pendingDeleteIds = pendingDeleteIds.keys,
                         monthlyBudgetPaise = vmMonthlyBudget * 100L,
                         startDayOfMonth = startDayOfMonth
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(AppRadius.small))
+                        .quietClickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            initialCatForSettingsManage = null
+                            showManageCategoriesSheet = true
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        SettingsIcon(Icons.Default.Category, MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                "Manage Categories",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                if (settingsCustomCategories.isEmpty()) "Add, rename, or merge expense categories"
+                                else "${settingsCustomCategories.size} custom · Rename, merge, or add categories",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                if (showManageCategoriesSheet) {
+                    com.expensetracker.offline.ui.dashboard.ManageCategoriesDialog(
+                        customCategories = settingsCustomCategories,
+                        onDismiss = {
+                            showManageCategoriesSheet = false
+                            initialCatForSettingsManage = null
+                        },
+                        allCategories = allAvailableCategories,
+                        transactions = allTransactionsWithDebts,
+                        categoryBudgets = categoryBudgets,
+                        startDayOfMonth = startDayOfMonth,
+                        pendingDeleteIds = pendingDeleteIds.keys,
+                        initialCategory = initialCatForSettingsManage,
+                        onAddCategory = { newCat ->
+                            val trimmed = newCat.trim()
+                            if (allAvailableCategories.any { it.equals(trimmed, ignoreCase = true) }) {
+                                showSnack("Category \"$trimmed\" already exists")
+                            } else {
+                                val updated = settingsCustomCategories + trimmed
+                                settingsCustomCategories = updated
+                                prefs.edit().putStringSet("key_custom_categories", updated).apply()
+                                showSnack("Category \"$trimmed\" created")
+                            }
+                        },
+                        onRenameCategory = { oldName, newName ->
+                            val trimmedNew = newName.trim()
+                            if (trimmedNew.isNotEmpty() && !oldName.equals(trimmedNew, ignoreCase = true)) {
+                                val updated = (settingsCustomCategories.filterNot { it.equals(oldName, ignoreCase = true) } + trimmedNew).toSet()
+                                settingsCustomCategories = updated
+                                prefs.edit().putStringSet("key_custom_categories", updated).apply()
+                                viewModel.renameCategory(oldName, trimmedNew)
+                                showSnack("Renamed \"$oldName\" to \"$trimmedNew\"")
+                            }
+                        },
+                        onMergeCategory = { fromCategory, intoCategory ->
+                            if (!fromCategory.equals(intoCategory, ignoreCase = true)) {
+                                viewModel.reassignCategory(fromCategory, intoCategory)
+                                showSnack("Moved transactions from \"$fromCategory\" to \"$intoCategory\"")
+                            }
+                        },
+                        onOpenCategoryBudget = { catName ->
+                            returnToSettingsCatManage = catName
+                            showManageCategoriesSheet = false
+                            initialCatForSettingsBudget = catName
+                            showManageCategoryBudgetsDialog = true
+                        },
+                        onDeleteCategory = { catToDelete ->
+                            settingsCategoryToDelete = catToDelete
+                        }
+                    )
+                }
+
+                if (settingsCategoryToDelete != null) {
+                    val targetCat = settingsCategoryToDelete!!
+                    val count = transactions.count { it.category.equals(targetCat, ignoreCase = true) }
+                    com.expensetracker.offline.ui.dashboard.DeleteCategoryDialog(
+                        categoryToDelete = targetCat,
+                        transactionCount = count,
+                        availableCategories = allAvailableCategories,
+                        onDismiss = { settingsCategoryToDelete = null },
+                        onConfirm = { reassignTarget ->
+                            val updated = settingsCustomCategories.filterNot { it.equals(targetCat, ignoreCase = true) }.toSet()
+                            settingsCustomCategories = updated
+                            prefs.edit().putStringSet("key_custom_categories", updated).apply()
+                            viewModel.onCategoryDeleted(deletedCategory = targetCat, reassignTo = reassignTarget)
+                            showSnack("Category \"$targetCat\" deleted")
+                            settingsCategoryToDelete = null
+                        }
                     )
                 }
 
