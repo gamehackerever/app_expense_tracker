@@ -284,8 +284,13 @@ internal fun NecessityCard(
                     ) {
                         Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
+                        val paidLabel = when {
+                            manuallyPaid -> "Paid · Undo"
+                            effectiveAmount == 0L && amountPaid == 0L -> "Up to date"
+                            else -> "Paid · detected"
+                        }
                         Text(
-                            if (autoPaid) "Paid · detected" else "Paid · Undo",
+                            paidLabel,
                             fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1
                         )
                     }
@@ -337,7 +342,7 @@ internal fun subtitleFor(item: NecessityItem): String {
     if (item.frequency == NecessityFrequency.MONTHLY) return "Monthly"
     val strategy = if (item.isProrated) "Sinking fund" else "Lump sum"
     val freq = if (item.frequency == NecessityFrequency.EVERY_N_DAYS && (item.validityDays ?: 0) > 0)
-        "Every ${item.validityDays} days"
+        "Every ${item.validityDays}d"
     else item.frequency.label
     return "$freq · $strategy"
 }

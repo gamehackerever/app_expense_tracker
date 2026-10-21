@@ -3,7 +3,16 @@
 package com.expensetracker.offline.ui.necessities
 
 import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -66,6 +75,18 @@ fun ManageNecessitiesScreen(
 
     val listState = rememberLazyListState()
     val isFabExpanded by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
+    var isFabScrolledAway by remember { mutableStateOf(false) }
+    val fabScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y < -8f) isFabScrolledAway = true
+                else if (available.y > 8f) isFabScrolledAway = false
+                return Offset.Zero
+            }
+        }
+    }
+    val isFabVisible by remember { derivedStateOf { !isFabScrolledAway || isFabExpanded || !listState.canScrollForward } }
+    var itemPendingDelete by remember { mutableStateOf<NecessityItem?>(null) }
 
     val total = remember(localItems, pendingDeleteIds) {
         localItems
@@ -190,8 +211,13 @@ fun ManageNecessitiesScreen(
             }
         },
         floatingActionButton = {
-            if (localItems.isNotEmpty())
-                ExtendedFloatingActionButton(
+            if (localItems.isNotEmpty()) {
+                AnimatedVisibility(
+                    visible = isFabVisible,
+                    enter = fadeIn() + scaleIn(initialScale = 0.85f),
+                    exit = fadeOut() + scaleOut(targetScale = 0.85f)
+                ) {
+                    ExtendedFloatingActionButton(
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         itemToEdit = null
@@ -206,10 +232,12 @@ fun ManageNecessitiesScreen(
                     icon = {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                     },
-                    text = {
-                        Text("Add Fixed Cost", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                    }
-                )
+                        text = {
+                            Text("Add Fixed Cost", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        }
+                    )
+                }
+            }
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
@@ -217,6 +245,7 @@ fun ManageNecessitiesScreen(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .nestedScroll(fabScrollConnection)
                 .padding(paddingValues)
                 .padding(horizontal = 16.dp),
             contentPadding = PaddingValues(top = 12.dp, bottom = 96.dp),
@@ -241,7 +270,7 @@ fun ManageNecessitiesScreen(
                             )
                         }
                         Spacer(modifier = Modifier.height(12.dp))
-                        MoneyHero(amount = total, fractionDigits = 0, size = 40.sp)
+                        MoneyHero(amount = total, fractionDigits = 0, size = 40.sp, sessionKey = "necessities_hero_total")
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             "Kept out of Safe to Spend, so rent and subscription money never gets spent by accident.",
@@ -251,10 +280,10 @@ fun ManageNecessitiesScreen(
                         )
                         if (sortedItems.isNotEmpty() && total > 0L) {
                             val paidFraction = (paidCount.toFloat() / sortedItems.size.toFloat()).coerceIn(0f, 1f)
-                            val animatedPaidFraction by animateFloatAsState(
-                                targetValue = paidFraction,
-                                animationSpec = tween(600),
-                                label = "paidBillsProgress"
+                            val animatedPaidFraction by com.expensetracker.offline.ui.insights.rememberAnimatedValue(
+                                target = paidFraction,
+                                key = paidFraction,
+                                sessionKey = "necessities_paid_bar"
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Box(
@@ -361,7 +390,7 @@ fun ManageNecessitiesScreen(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            "$paidCount of ${sortedItems.size} paid this month",
+                            "${sortedItems.size} ${if (sortedItems.size == 1) "bill" else "bills"} tracked",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -397,21 +426,43 @@ fun ManageNecessitiesScreen(
                         onTogglePaid = { togglePaid(item, manuallyPaid) },
                         onLink = { itemToLink = item },
                         onDelete = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            val startTime = System.currentTimeMillis()
-                            pendingDeleteIds = pendingDeleteIds + (item.id to startTime)
-                            scope.launch {
-                                delay(5000)
-                                if (pendingDeleteIds[item.id] == startTime) {
-                                    localItems = localItems.filter { it.id != item.id }
-                                    pendingDeleteIds = pendingDeleteIds - item.id
-                                }
-                            }
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            itemPendingDelete = item
                         },
                         modifier = Modifier.animateItem()
                     )
                 }
             }
+        }
+    }
+
+    val pendingDeleteBill = itemPendingDelete
+    if (pendingDeleteBill != null) {
+        com.expensetracker.offline.ui.components.AppDialog(
+            title = "Remove fixed cost?",
+            onDismiss = { itemPendingDelete = null },
+            confirmText = "Remove",
+            destructive = true,
+            onConfirm = {
+                val toRemove = pendingDeleteBill
+                itemPendingDelete = null
+                val startTime = System.currentTimeMillis()
+                pendingDeleteIds = pendingDeleteIds + (toRemove.id to startTime)
+                scope.launch {
+                    delay(5000)
+                    if (pendingDeleteIds[toRemove.id] == startTime) {
+                        localItems = localItems.filter { it.id != toRemove.id }
+                        pendingDeleteIds = pendingDeleteIds - toRemove.id
+                    }
+                }
+            }
+        ) {
+            Text(
+                "Remove \"${pendingDeleteBill.name}\" from Fixed Costs? Your past transactions won't be affected.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 20.sp
+            )
         }
     }
 
