@@ -1,11 +1,15 @@
 package com.expensetracker.offline.ui.debug
 
 import android.content.Context
+import com.expensetracker.offline.data.local.dao.TransactionDao
+import com.expensetracker.offline.data.local.dao.TransactionWithDebts
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
+import com.expensetracker.offline.engine.ml.SmartExpenseEngine
 import com.expensetracker.offline.engine.parser.FinancialParser
+import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
 import com.expensetracker.offline.engine.split.ReceiptScanner
 import com.expensetracker.offline.ui.components.evaluateBasicMath
 import com.expensetracker.offline.util.BillingCycleHelper
@@ -95,6 +99,14 @@ object AutomatedTestSuite {
             val cat = CategoryClassifier.classifySync("Zerodha Broking", "UPI mandate Zerodha Mutual Fund")
             require(cat.equals("Investments", true) || cat.isNotBlank()) { "Unexpected blank category" }
             "Classified 'Zerodha Broking' -> $cat"
+        }
+
+        check("CategoryClassifier", "Regional Merchants (Broast & Creatine)") {
+            val foodCat = CategoryClassifier.classifySync("Al-Baik Broast", "Paid to Broast")
+            val healthCat = CategoryClassifier.classifySync("Creatine Monohydrate", "Paid for Creatine")
+            require(foodCat.equals("Food & Dining", true)) { "Expected Food & Dining for Broast, got $foodCat" }
+            require(healthCat.equals("Health", true)) { "Expected Health for Creatine, got $healthCat" }
+            "Classified 'Broast' -> $foodCat, 'Creatine' -> $healthCat"
         }
 
         // ── 3. NecessityManager & Bill Reminders Tests ─────────────────────
@@ -237,6 +249,118 @@ object AutomatedTestSuite {
                 require(kotlin.math.abs(currStart - prevEnd) <= 1000L) { "Gap between previous cycle end and current start for day $startDay" }
             }
             "Verified cycle continuity for reset days 1, 5, 15, and 28"
+        }
+
+        // ── 6. On-Device ML & SmartExpenseEngine Tests ─────────────────────
+        check("SmartExpenseEngine", "Contextual Time-of-Day & Typical Amount Predictor") {
+            val now = System.currentTimeMillis()
+            val dayMs = 86_400_000L
+            val history = listOf(
+                TransactionEntity(
+                    id = 1, amount = 9800L, payee = "Tatva", timestamp = now - dayMs,
+                    type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null,
+                    rawContent = "Paid to Tatva", category = "Tatva"
+                ),
+                TransactionEntity(
+                    id = 2, amount = 9800L, payee = "Tatva", timestamp = now - 2 * dayMs,
+                    type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null,
+                    rawContent = "Paid to Tatva", category = "Tatva"
+                ),
+                TransactionEntity(
+                    id = 3, amount = 37000L, payee = "MA Mart", timestamp = now - 3 * dayMs + 6 * 3600_000L,
+                    type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null,
+                    rawContent = "Paid to MA Mart", category = "Groceries"
+                )
+            )
+            val preds = SmartExpenseEngine.predictContextualPayees(history, query = "", nowMillis = now, isDebit = true)
+            require(preds.isNotEmpty() && preds.first().payee == "Tatva") {
+                "Expected 'Tatva' ranked #1 at matching hour-of-day, got ${preds.firstOrNull()?.payee}"
+            }
+            require(preds.first().typicalAmountPaise == 9800L) {
+                "Expected typical amount 9800 paise, got ${preds.first().typicalAmountPaise}"
+            }
+            "Predicted '${preds.first().payee}' (₹${preds.first().typicalAmountPaise / 100}) as #1 contextual match"
+        }
+
+        check("SmartExpenseEngine", "Fuzzy Jaro-Winkler & Log-Amount Bayesian Categorizer") {
+            val now = System.currentTimeMillis()
+            val history = listOf(
+                TransactionEntity(
+                    id = 1, amount = 38000L, payee = "MA Mart Supermarket", timestamp = now - 86_400_000L,
+                    type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null,
+                    rawContent = "MA Mart", category = "Groceries"
+                )
+            )
+            val cat = SmartExpenseEngine.predictCategoryContextual("MA Mart Supermrkt", 35000L, now, history)
+            require(cat == "Groceries") { "Expected 'Groceries' via Jaro-Winkler fuzzy match, got $cat" }
+            "Resolved typo 'MA Mart Supermrkt' -> $cat"
+        }
+
+        check("SmartExpenseEngine", "Winsorized EWMA Outlier-Dampened Spend Forecast") {
+            val now = System.currentTimeMillis()
+            val dayMs = 86_400_000L
+            val cycleStart = now - 10 * dayMs
+            val cycleEnd = cycleStart + 30 * dayMs
+            // 9 days of ₹100/day + 1 one-off ₹2,500 spike = ₹3,400 in 10 days.
+            // Naive linear projection would be ₹3,400 * 3 = ₹10,200.
+            // Winsorized EWMA dampens the one-off ₹2,500 spike so projected spend stays realistic (~₹5,400).
+            val txns = (0 until 9).map { d ->
+                TransactionWithDebts(
+                    transaction = TransactionEntity(
+                        id = (d + 1).toLong(), amount = 100_00L, payee = "Tatva",
+                        timestamp = cycleStart + d * dayMs + 3600_000L,
+                        type = TransactionType.DEBIT, source = TransactionSource.SMS,
+                        referenceId = null, rawContent = "Tatva", category = "Food & Dining"
+                    ),
+                    debts = emptyList()
+                )
+            } + TransactionWithDebts(
+                transaction = TransactionEntity(
+                    id = 99L, amount = 2500_00L, payee = "Annual Gear",
+                    timestamp = cycleStart + 9 * dayMs + 3600_000L,
+                    type = TransactionType.DEBIT, source = TransactionSource.SMS,
+                    referenceId = null, rawContent = "Gear", category = "Shopping"
+                ),
+                debts = emptyList()
+            )
+            val forecast = SmartExpenseEngine.forecastCycleSpendPaise(
+                cycleTransactions = txns,
+                allTransactions = txns,
+                cycleStartMillis = cycleStart,
+                cycleEndMillis = cycleEnd,
+                elapsedDays = 10,
+                cycleLengthDays = 30,
+                myShareFn = { it.transaction.amount }
+            )
+            require(forecast in 3500_00L..7800_00L) {
+                "Expected outlier-dampened forecast between ₹3,500 and ₹7,800, got ₹${forecast / 100}"
+            }
+            "Dampened ₹2,500 one-off spike: forecast ₹${forecast / 100} vs ₹10,200 naive linear"
+        }
+
+        check("RecurringPaymentDetector", "First-Week Brand & 28-Day Telecom Detection") {
+            val now = System.currentTimeMillis()
+            val debits = listOf(
+                TransactionDao.DebitPoint(
+                    id = 1L, payee = "VI Recharge", amount = 39800L,
+                    timestamp = now - 3 * 86_400_000L, category = "Bills & Utilities"
+                ),
+                TransactionDao.DebitPoint(
+                    id = 2L, payee = "Spotify", amount = 6800L,
+                    timestamp = now - 5 * 86_400_000L, category = "Subscription"
+                )
+            )
+            val detected = RecurringPaymentDetector.detect(debits, now)
+            require(detected.size == 2) { "Expected 2 recurring bills detected in first week, got ${detected.size}" }
+            "Detected ${detected.joinToString { "${it.payee} (${it.cadence.label})" }} from single week"
+        }
+
+        check("SmartExpenseEngine", "Live Telemetry & Leave-One-Out Benchmark") {
+            val report = SmartExpenseEngine.evaluateModelPerformance(emptyList())
+            require(report.modelRows.size == 5 && report.overallScorePct >= 75) {
+                "Expected 5 evaluated models with health >= 75%, got ${report.overallScorePct}%"
+            }
+            "Evaluated 5 models (${report.overallScorePct}% health) in ${report.totalEvalMicros}µs"
         }
 
         return results
