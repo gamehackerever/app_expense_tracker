@@ -41,10 +41,14 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -71,6 +75,7 @@ import com.expensetracker.offline.data.local.dao.PayeeInsight
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.engine.ml.SmartExpenseEngine
 import com.expensetracker.offline.ui.components.DashboardTransactionCard
 import com.expensetracker.offline.ui.components.TransactionGroup
 import com.expensetracker.offline.ui.components.TransactionRowDivider
@@ -592,14 +597,14 @@ internal fun DailyCalendarHeatmapCard(
                                 val isSel = (selectedDayIndex == dayIdx)
                                 val isHighSpend = spent > 0L && intensity > 0.62f
 
-                                // 4-tier contrast-safe scale: avoids muddy 40-55% gray backgrounds where
-                                // dark text in Light Mode loses legibility.
+                                val isDark = MaterialTheme.colorScheme.surface.red < 0.2f
+                                // 4-tier contrast-safe scale tuned separately for Dark and Light themes:
                                 val cellBg = when {
                                     isSel -> MaterialTheme.colorScheme.onSurface
-                                    spent <= 0L -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isToday) 0.07f else 0.035f)
-                                    isHighSpend -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f)
-                                    intensity > 0.30f -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
-                                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f)
+                                    spent <= 0L -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isToday) 0.08f else if (isDark) 0.03f else 0.035f)
+                                    isHighSpend -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDark) 0.90f else 0.86f)
+                                    intensity > 0.30f -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDark) 0.32f else 0.18f)
+                                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDark) 0.15f else 0.09f)
                                 }
 
                                 val textColor = when {
@@ -661,6 +666,149 @@ internal fun DailyCalendarHeatmapCard(
                                 Spacer(modifier = Modifier.weight(1f).height(38.dp))
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SmartInsightsCard(
+    insights: List<SmartExpenseEngine.SmartInsight>,
+    onTransactionClick: (Long) -> Unit = {}
+) {
+    if (insights.isEmpty()) return
+    val haptic = LocalHapticFeedback.current
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AppRadius.large),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+    ) {
+        Column(
+            modifier = Modifier.padding(AppSpacing.cardPadding),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                        "Learned patterns",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(AppRadius.pill),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                ) {
+                    Text(
+                        "On-device ML",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            insights.forEachIndexed { index, item ->
+                if (index > 0) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                    )
+                }
+
+                val accentColor = when {
+                    item.isWarning -> AppColors.warning
+                    item.kind == SmartExpenseEngine.InsightKind.MICRO_SPEND -> Color(0xFFF59E0B)
+                    item.kind == SmartExpenseEngine.InsightKind.TIME_PATTERN -> Color(0xFF3B82F6)
+                    item.category != null && hasCategoryIcon(item.category) -> getCategoryColor(item.category)
+                    else -> InsightsColors.positive
+                }
+                val icon = when {
+                    item.kind == SmartExpenseEngine.InsightKind.MICRO_SPEND -> Icons.Default.ReceiptLong
+                    item.kind == SmartExpenseEngine.InsightKind.TIME_PATTERN -> Icons.Default.Schedule
+                    item.kind == SmartExpenseEngine.InsightKind.ANOMALY -> Icons.Default.TrendingUp
+                    item.category != null && hasCategoryIcon(item.category) -> getCategoryIcon(item.category)
+                    item.kind == SmartExpenseEngine.InsightKind.HABIT -> Icons.Default.Autorenew
+                    else -> Icons.Default.AutoAwesome
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(AppRadius.medium))
+                        .then(
+                            if (item.highlightTransactionId != null) {
+                                Modifier.quietClickable {
+                                    haptic.tap()
+                                    onTransactionClick(item.highlightTransactionId)
+                                }
+                            } else Modifier
+                        )
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(accentColor.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = accentColor,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = item.title,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            InsightsBadge(
+                                text = item.badgeText,
+                                color = if (item.isWarning) AppColors.warning else accentColor
+                            )
+                        }
+                        Text(
+                            text = item.detail,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 16.5.sp
+                        )
                     }
                 }
             }

@@ -38,6 +38,7 @@ import com.expensetracker.offline.data.local.dao.AccountInfo
 import com.expensetracker.offline.data.local.dao.CategoryInsight
 import com.expensetracker.offline.data.local.dao.PayeeInsight
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
+import com.expensetracker.offline.engine.ml.SmartExpenseEngine
 import com.expensetracker.offline.ui.components.AppDialog
 import com.expensetracker.offline.ui.components.EditTransactionSheet
 import com.expensetracker.offline.ui.theme.AppRadius
@@ -353,6 +354,37 @@ fun InsightsScreen(
     val dailyAverage: Double = if (elapsedDays > 0) grandTotalDebit.toDouble() / elapsedDays else 0.0
     val deltaPct: Double? = if (stats.prevSpent > 0L) ((grandTotalDebit - stats.prevSpent).toDouble() / stats.prevSpent.toDouble()) * 100.0 else null
 
+    // Winsorized EWMA + Day-of-Week Seasonality Forecaster (dampens one-off large spikes)
+    val smartProjectedPaise: Long = remember(filteredTransactions, allTransactions, cycleStartMillis, cycleEndMillis, elapsedDays, cycleLengthDays, grandTotalDebit) {
+        if (!hasSpending) 0L
+        else {
+            val rawForecast = SmartExpenseEngine.forecastCycleSpendPaise(
+                cycleTransactions = filteredTransactions,
+                allTransactions = allTransactions,
+                cycleStartMillis = cycleStartMillis,
+                cycleEndMillis = cycleEndMillis,
+                elapsedDays = elapsedDays,
+                cycleLengthDays = cycleLengthDays,
+                myShareFn = { item -> if (isSpendDebit(item.transaction)) myShareOf(item) else 0L }
+            )
+            // Ensure net refunds are respected in the baseline
+            val grossSum = filteredTransactions.sumOf { if (isSpendDebit(it.transaction)) myShareOf(it) else 0L }
+            val refundOffset = (grossSum - grandTotalDebit).coerceAtLeast(0L)
+            (rawForecast - refundOffset).coerceAtLeast(grandTotalDebit)
+        }
+    }
+
+    // MAD Anomaly & Behavioral Habit Discovery Engine
+    val smartInsights = remember(filteredTransactions, cycleStartMillis, elapsedDays) {
+        SmartExpenseEngine.discoverSmartInsights(
+            cycleTransactions = filteredTransactions,
+            cycleStartMillis = cycleStartMillis,
+            elapsedDays = elapsedDays,
+            myShareFn = { item -> if (isSpendDebit(item.transaction)) myShareOf(item) else 0L },
+            formatRupeesFn = { paise -> formatRupees(paise) }
+        )
+    }
+
     var selectedCategoryForBreakdown by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedMerchantForBreakdown by rememberSaveable { mutableStateOf<String?>(null) }
     var returnToCategoryBreakdown by rememberSaveable { mutableStateOf<String?>(null) }
@@ -625,7 +657,7 @@ fun InsightsScreen(
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     if (showProjected) {
-                                        val projPaise = (dailyAverage * cycleLengthDays).toLong()
+                                        val projPaise = smartProjectedPaise
                                         val overBudget = hasActiveBudgetHere && projPaise > monthlyBudgetPaise
                                         val projCaption = when {
                                             overBudget -> "+${formatRupees(projPaise - monthlyBudgetPaise)} over cap"
@@ -635,7 +667,7 @@ fun InsightsScreen(
                                         HeroFact(
                                             modifier = Modifier.weight(1f),
                                             label = "Projected",
-                                            value = formatRupees(dailyAverage * cycleLengthDays),
+                                            value = formatRupees(projPaise),
                                             amountPaise = projPaise,
                                             caption = projCaption,
                                             valueColor = if (overBudget) InsightsColors.negative else MaterialTheme.colorScheme.onSurface
@@ -745,6 +777,20 @@ fun InsightsScreen(
                             discretionarySpendPaise = (grandTotalDebit - cycleInvestmentsPaise).coerceAtLeast(0L),
                             investmentsPaise = cycleInvestmentsPaise,
                             isAnimating = startBarAnimations
+                        )
+                    }
+                }
+            }
+
+            // ── On-Device ML Learned Patterns (Habits, Time-of-Day Rhythm, MAD Anomalies) ──
+            if (smartInsights.isNotEmpty()) {
+                item(key = "smart_patterns") {
+                    EntranceItem("smart_patterns", 3, seenSections, Modifier.animateItem(fadeInSpec = null)) {
+                        SmartInsightsCard(
+                            insights = smartInsights,
+                            onTransactionClick = { txnId ->
+                                activeTransactionForEditId = txnId
+                            }
                         )
                     }
                 }

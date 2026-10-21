@@ -67,6 +67,7 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.TableView
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
@@ -636,8 +637,8 @@ fun SettingsScreen(
                     val isSelected = highlightedSection == key
                     Surface(
                         shape = RoundedCornerShape(AppRadius.pill),
-                        color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceVariant,
-                        border = if (isSelected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                        color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
+                        border = if (isSelected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(AppRadius.pill))
@@ -649,8 +650,8 @@ fun SettingsScreen(
                             textAlign = TextAlign.Center,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                            color = if (isSelected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
                         )
                     }
@@ -770,7 +771,7 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        SettingsIcon(Icons.Default.Category, MaterialTheme.colorScheme.onSurfaceVariant)
+                        SettingsIcon(Icons.Default.Tune, MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
@@ -959,38 +960,6 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SettingsIcon(Icons.Default.AccountBalanceWallet, MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            "UPI Settlement",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            "Used when sending split repayment requests",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                SettingsTextField(
-                    value = myUpiInput,
-                    onValueChange = { myUpiInput = it.filter { c -> !c.isWhitespace() }.take(100) },
-                    label = "Your UPI ID (to receive payments)",
-                    placeholder = "e.g., name@okaxis",
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Email,
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-                    modifier = Modifier.onFocusLost { commitMyUpi() }
-                )
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1024,13 +993,14 @@ fun SettingsScreen(
                     }
                     Surface(
                         shape = RoundedCornerShape(AppRadius.pill),
-                        color = MaterialTheme.colorScheme.surfaceVariant
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                     ) {
                         Text(
                             text = "Day $startDayOfMonth",
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         )
                     }
@@ -1075,6 +1045,38 @@ fun SettingsScreen(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SettingsIcon(Icons.Default.AccountBalanceWallet, MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            "UPI Settlement",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            "Used when sending split repayment requests",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                SettingsTextField(
+                    value = myUpiInput,
+                    onValueChange = { myUpiInput = it.filter { c -> !c.isWhitespace() }.take(100) },
+                    label = "Your UPI ID (to receive payments)",
+                    placeholder = "e.g., name@okaxis",
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Email,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                    modifier = Modifier.onFocusLost { commitMyUpi() }
+                )
             }
 
             // ─────────────────────────────────────────────────────────────────
@@ -2032,7 +2034,7 @@ fun SettingsScreen(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                "Run automated test suite & simulate offline captures",
+                                "Live AI/ML telemetry, automated test suite & capture simulator",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

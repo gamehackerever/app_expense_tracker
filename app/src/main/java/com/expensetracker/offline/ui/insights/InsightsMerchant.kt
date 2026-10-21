@@ -191,7 +191,7 @@ internal fun MerchantRow(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    "${insight.transactionCount} ${if (insight.transactionCount == 1) "visit" else "visits"} · avg ${formatRupees(avgPerVisit)}",
+                    "${insight.transactionCount} ${if (insight.transactionCount == 1) "txn" else "txns"} · avg ${formatRupees(avgPerVisit)}",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -1943,7 +1943,7 @@ fun DashboardScreen(
                                 .fillMaxHeight()
                                 .graphicsLayer { translationX = rangeSegmentWidthPx * animatedRangeIdx }
                                 .shadow(1.dp, pillShape)
-                                .background(MaterialTheme.colorScheme.surface, pillShape)
+                                .background(MaterialTheme.colorScheme.surfaceBright, pillShape)
                         )
                         Row(modifier = Modifier.fillMaxSize()) {
                             timeRanges.forEach { range ->
@@ -1990,7 +1990,7 @@ fun DashboardScreen(
                     val isOverBudget = monthlyBudgetPaise > 0L && isMonthlyView && periodSpent > monthlyBudgetPaise
 
 
-                    val usedPct = if (monthlyBudgetPaise > 0L) ((periodSpent.toDouble() / monthlyBudgetPaise.toDouble()) * 100).toInt() else 0
+                    val usedPct = if (monthlyBudgetPaise > 0L) ((periodSpent.toDouble() / monthlyBudgetPaise.toDouble()) * 100.0).roundToInt() else 0
                     val barColor = when {
                         isOverBudget -> AppColors.negative
                         budgetProgress >= 0.85f -> AppColors.warning

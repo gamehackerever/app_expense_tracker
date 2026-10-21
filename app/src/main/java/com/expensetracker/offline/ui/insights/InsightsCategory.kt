@@ -479,7 +479,7 @@ internal fun FixedCostsRow(
                     Text(
                         when {
                             trackedCount == 0 -> "Track rent, bills & sinking funds"
-                            reservedMonthlyPaise > 0L -> "$trackedCount tracked · ${formatRupees(reservedMonthlyPaise)}/mo reserved"
+                            reservedMonthlyPaise > 0L -> "$trackedCount tracked · ${formatRupees(reservedMonthlyPaise)}/mo"
                             else -> "$trackedCount tracked · Reserved from balance"
                         },
                         fontSize = 12.sp,

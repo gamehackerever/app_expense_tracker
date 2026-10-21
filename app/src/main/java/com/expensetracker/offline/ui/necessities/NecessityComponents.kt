@@ -136,7 +136,13 @@ internal fun NecessityCard(
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                NecessityIcon(if (cat != null) getCategoryIcon(cat) else Icons.Default.Savings)
+                val iconKey = item.name + " " + (cat ?: "")
+                val iconAccent = getCategoryColor(iconKey)
+                NecessityIcon(
+                    icon = getCategoryIcon(iconKey),
+                    tint = iconAccent,
+                    containerColor = iconAccent.copy(alpha = 0.12f)
+                )
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -156,31 +162,13 @@ internal fun NecessityCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(10.dp))
                 Text(
                     amountLabel(item),
-                    fontSize = 15.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = scheme.onSurface
                 )
-                Spacer(Modifier.width(8.dp))
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = scheme.onSurface.copy(alpha = 0.04f),
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .quietClickable(onClick = onDelete)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Default.DeleteOutline,
-                            contentDescription = "Delete ${item.name}",
-                            tint = scheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
             }
 
             if (vault != null) {
@@ -279,19 +267,23 @@ internal fun NecessityCard(
                             disabledContainerColor = AppColors.positive.copy(alpha = 0.10f),
                             disabledContentColor = AppColors.positive
                         ),
-                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                         modifier = Modifier.weight(1f).height(40.dp)
                     ) {
-                        Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
+                        Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
                         val paidLabel = when {
                             manuallyPaid -> "Paid · Undo"
                             effectiveAmount == 0L && amountPaid == 0L -> "Up to date"
-                            else -> "Paid · detected"
+                            else -> "Paid · Auto"
                         }
                         Text(
                             paidLabel,
-                            fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 } else {
@@ -306,12 +298,19 @@ internal fun NecessityCard(
                             contentColor = scheme.onSurface
                         ),
                         elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                         modifier = Modifier.weight(1f).height(40.dp)
                     ) {
-                        Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Mark as paid", fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                        Icon(Icons.Default.Check, null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            "Mark as paid",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 
@@ -323,15 +322,38 @@ internal fun NecessityCard(
                     shape = RoundedCornerShape(AppRadius.small),
                     border = BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.6f)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = scheme.onSurface),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                     modifier = Modifier.weight(1f).height(40.dp)
                 ) {
-                    Icon(Icons.Default.Link, null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
+                    Icon(Icons.Default.Link, null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(5.dp))
                     Text(
                         if (item.aliases.isEmpty()) "Link payee" else "${item.aliases.size} linked",
-                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
                     )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(AppRadius.small),
+                    color = scheme.onSurface.copy(alpha = 0.05f),
+                    border = BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.4f)),
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(AppRadius.small))
+                        .quietClickable(onClick = onDelete)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            contentDescription = "Delete ${item.name}",
+                            tint = scheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }
@@ -605,8 +627,13 @@ internal fun NecessityFormSheet(
                     val cycles = NecessityFrequency.entries
                     SheetSegmentedControl(
                         options = cycles.map {
-                            if (it == NecessityFrequency.EVERY_N_DAYS) "Days"
-                            else it.label.lowercase().replaceFirstChar { c -> c.uppercase() }
+                            when (it) {
+                                NecessityFrequency.MONTHLY -> "Monthly"
+                                NecessityFrequency.EVERY_N_DAYS -> "Days"
+                                NecessityFrequency.QUARTERLY -> "Quarterly"
+                                NecessityFrequency.HALF_YEARLY -> "6-Month"
+                                NecessityFrequency.YEARLY -> "Yearly"
+                            }
                         },
                         selectedIndex = cycles.indexOf(frequency),
                         onSelect = { frequency = cycles[it] }

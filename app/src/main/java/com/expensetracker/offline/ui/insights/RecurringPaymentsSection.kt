@@ -30,6 +30,7 @@ import com.expensetracker.offline.engine.recurring.RecurringPayment
 import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
+import com.expensetracker.offline.ui.theme.getCategoryColor
 import com.expensetracker.offline.ui.theme.getCategoryIcon
 import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
@@ -86,11 +87,6 @@ private fun dueColor(payment: RecurringPayment, now: Long, lapsed: Boolean): Col
  *
  * On the page it is one compact card: monthly cost, what is due soon, and the next few payments.
  * Tapping it opens a bottom sheet (same pattern as the category breakdown) with the full list.
- *
- * @param payments null while still loading (renders nothing, avoids a flash of the empty message),
- *        empty when nothing was detected (renders a short explanation), otherwise the detected list.
- * @param necessities the user's current Fixed Costs, used to mark payments already tracked there.
- * @param onAddToFixedCosts called with a prefilled item when the user taps "+ Fixed costs".
  */
 @Composable
 fun RecurringPaymentsSection(
@@ -144,7 +140,7 @@ private fun RecurringEmptyState() {
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    "Subscriptions and regular bills appear here automatically after about 3 charges on a schedule.",
+                    "Subscriptions and regular bills appear here automatically as you use the app.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -209,7 +205,7 @@ private fun RecurringPaymentsContent(
 
             // Monthly cost, and what it adds up to over a year
             Row(verticalAlignment = Alignment.Bottom) {
-                MoneyHero(amount = monthlyTotal, fractionDigits = 0, size = 38.sp)
+                MoneyHero(amount = monthlyTotal, fractionDigits = 0, size = 38.sp, sessionKey = "insights_recurring_hero")
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     "/ month",
@@ -256,7 +252,10 @@ private fun RecurringPaymentsContent(
                 Spacer(modifier = Modifier.height(10.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     active.take(UPCOMING_PREVIEW_COUNT).forEach { payment ->
-                        RecurringCompactRow(payment, now, dateFormat)
+                        val isTracked = necessities.any {
+                            NecessityManager.matches(it, payment.payee, payment.category)
+                        }
+                        RecurringCompactRow(payment, now, dateFormat, isTracked)
                     }
                 }
             }
@@ -280,12 +279,12 @@ private fun RecurringPaymentsContent(
                     footerText,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface // Changed from primary
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowForward,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface, // Changed from primary
+                    tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -307,19 +306,25 @@ private fun RecurringPaymentsContent(
 }
 
 @Composable
-private fun RecurringCompactRow(payment: RecurringPayment, now: Long, dateFormat: SimpleDateFormat) {
+private fun RecurringCompactRow(
+    payment: RecurringPayment,
+    now: Long,
+    dateFormat: SimpleDateFormat,
+    isTracked: Boolean = false
+) {
     val scheme = MaterialTheme.colorScheme
-    val categoryIcon = getCategoryIcon(payment.category)
+    val iconKey = payment.payee + " " + payment.category
+    val categoryIcon = getCategoryIcon(iconKey)
+    val categoryColor = getCategoryColor(iconKey)
 
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Surface(
-            shape = RoundedCornerShape(10.dp), // (or 12.dp in the card)
-            // FIX: Neutral background instead of categoryColor.copy(alpha = 0.12f)
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-            modifier = Modifier.size(36.dp) // (or 44.dp in the card)
+            shape = RoundedCornerShape(10.dp),
+            color = categoryColor.copy(alpha = 0.12f),
+            modifier = Modifier.size(38.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(categoryIcon, contentDescription = null, tint = scheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                Icon(categoryIcon, contentDescription = null, tint = categoryColor, modifier = Modifier.size(18.dp))
             }
         }
         Spacer(modifier = Modifier.width(12.dp))
@@ -332,11 +337,14 @@ private fun RecurringCompactRow(payment: RecurringPayment, now: Long, dateFormat
                 overflow = TextOverflow.Ellipsis,
                 color = scheme.onSurface
             )
+            val baseDue = dueLabel(payment, now, lapsed = false, df = dateFormat)
             Text(
-                dueLabel(payment, now, lapsed = false, df = dateFormat),
+                if (isTracked) "$baseDue · Tracked" else baseDue,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
-                color = dueColor(payment, now, lapsed = false)
+                color = dueColor(payment, now, lapsed = false),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
         Spacer(modifier = Modifier.width(8.dp))
@@ -412,7 +420,7 @@ private fun RecurringPaymentsSheet(
                         ).forEach { (isLapsedTab, label) ->
                             val isSelected = showLapsed == isLapsedTab
                             val segmentColor by animateColorAsState(
-                                targetValue = if (isSelected) MaterialTheme.colorScheme.surface
+                                targetValue = if (isSelected) MaterialTheme.colorScheme.surfaceBright
                                 else MaterialTheme.colorScheme.surface.copy(alpha = 0f),
                                 animationSpec = tween(200),
                                 label = "segmentColor"
@@ -435,7 +443,6 @@ private fun RecurringPaymentsSheet(
                                         label,
                                         fontSize = 12.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        // FIX: Pure neutral text instead of primary
                                         color = if (isSelected) MaterialTheme.colorScheme.onSurface
                                         else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -475,7 +482,6 @@ private fun RecurringPaymentsSheet(
                                 NecessityManager.matches(it, payment.payee, payment.category)
                             },
                             onAddToFixedCosts = { item ->
-                                // This navigates to Fixed Costs, so close the sheet first
                                 onDismiss()
                                 onAddToFixedCosts(item)
                             }
@@ -498,7 +504,9 @@ private fun RecurringPaymentCard(
 ) {
     val scheme = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
-    val categoryIcon = getCategoryIcon(payment.category)
+    val iconKey = payment.payee + " " + payment.category
+    val categoryIcon = getCategoryIcon(iconKey)
+    val categoryColor = getCategoryColor(iconKey)
     val tentative = !lapsed && payment.confidence < TENTATIVE_BELOW
 
     Surface(
@@ -514,11 +522,11 @@ private fun RecurringPaymentCard(
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+                    color = categoryColor.copy(alpha = 0.12f),
                     modifier = Modifier.size(44.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(categoryIcon, contentDescription = null, tint = scheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
+                        Icon(categoryIcon, contentDescription = null, tint = categoryColor, modifier = Modifier.size(22.dp))
                     }
                 }
                 Spacer(modifier = Modifier.width(14.dp))
@@ -540,7 +548,6 @@ private fun RecurringPaymentCard(
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Column(horizontalAlignment = Alignment.End) {
-                    // "~" = amount varies from bill to bill (e.g. electricity); this is the typical charge
                     Text(
                         (if (payment.isFixedAmount) "" else "~") + rupees(payment.amount),
                         fontWeight = FontWeight.Bold,
@@ -573,33 +580,32 @@ private fun RecurringPaymentCard(
                 if (!lapsed) {
                     if (tracked) {
                         Surface(
-                            color = RecurringColors.positive.copy(alpha = 0.10f),
-                            shape = RoundedCornerShape(AppRadius.pill)
+                            shape = RoundedCornerShape(AppRadius.pill),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                             ) {
                                 Icon(
                                     Icons.Default.Check,
                                     contentDescription = null,
-                                    tint = RecurringColors.positive,
-                                    modifier = Modifier.size(12.dp)
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(13.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     "In fixed costs",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = RecurringColors.positive
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
                     } else {
                         Surface(
                             shape = RoundedCornerShape(AppRadius.pill),
-                            // FIX: Grounded neutral background
-                            color = scheme.onSurface.copy(alpha = 0.06f),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(AppRadius.pill))
                                 .quietClickable {
@@ -611,8 +617,8 @@ private fun RecurringPaymentCard(
                                 "+ Fixed costs",
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = scheme.onSurface, // FIX: Pure neutral text
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                             )
                         }
                     }
@@ -624,10 +630,6 @@ private fun RecurringPaymentCard(
 
 // ─────────────────────────────── Shared bits ───────────────────────────────
 
-/** Click handler with no ripple; presses fade the element slightly instead. */
-// Uses internal Modifier.quietClickable() from InsightsComponents.kt
-
-// Same look as the Dashboard's StatusBadge
 @Composable
 private fun RecurringBadge(text: String, color: Color) {
     Surface(color = color.copy(alpha = 0.10f), shape = RoundedCornerShape(AppRadius.pill)) {
@@ -642,13 +644,13 @@ private fun RecurringBadge(text: String, color: Color) {
 }
 
 /**
- * Builds the prefilled Fixed Cost via NecessityManager.itemFrom, so it gets a fresh id,
- * a cleaned payee name, and a due date for non-monthly bills, like items created elsewhere.
- * Cadence is mapped to NecessityFrequency by enum name; anything without a match
- * (e.g. weekly) becomes a monthly bill at its monthly-equivalent cost.
+ * Builds the prefilled Fixed Cost via NecessityManager.itemFrom, mapping 28-day recharges
+ * to EVERY_N_DAYS (28d) and calendar cadences to their matching NecessityFrequency.
  */
 private fun buildFixedCostDraft(payment: RecurringPayment): NecessityItem {
-    val matched = NecessityFrequency.values().firstOrNull { it.name == payment.cadence.name }
+    val is28Day = payment.cadence == Cadence.RECHARGE_28D
+    val matched = if (is28Day) NecessityFrequency.EVERY_N_DAYS
+    else NecessityFrequency.values().firstOrNull { it.name == payment.cadence.name }
     val frequency = matched ?: NecessityFrequency.MONTHLY
     val amount = if (matched != null) payment.amount else payment.monthlyCost
 
@@ -659,7 +661,8 @@ private fun buildFixedCostDraft(payment: RecurringPayment): NecessityItem {
             category = payment.category.takeIf { !it.equals("Uncategorized", ignoreCase = true) },
             frequency = frequency,
             lastTimestamp = payment.lastSeen,
-            txnCount = 0
+            txnCount = 0,
+            validityDays = if (is28Day) 28 else null
         )
     )
 }

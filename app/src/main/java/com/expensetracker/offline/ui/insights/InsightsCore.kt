@@ -268,6 +268,7 @@ internal fun SectionHeader(
             Surface(
                 shape = RoundedCornerShape(AppRadius.pill),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
                 modifier = Modifier
                     .clip(RoundedCornerShape(AppRadius.pill))
                     .quietClickable(onClick = onActionClick)
