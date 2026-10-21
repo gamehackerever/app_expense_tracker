@@ -142,25 +142,58 @@ internal fun isIncomeCredit(txn: TransactionEntity): Boolean =
  * or 4.dp active/track gap.
  */
 /**
- * Smooth delta interpolator for financial figures:
- * - Renders immediately at [target] on initial mount (avoiding repetitive 0 -> N slot-machine spin
- *   every time the screen opens or a LazyColumn item scrolls back into view).
- * - Smoothly interpolates from the previous displayed value to the new [target] only when the
- *   underlying value/key changes while visible (e.g. switching billing cycles or account filters).
+ * Tracks which entrance animations (hero counters, progress bars, chart bars) have already played
+ * during the current app process session so each animation plays ONCE after the user actually
+ * reaches the screen (after App Lock is unlocked), and never replays on LazyColumn scroll or
+ * back-navigation.
  */
-@Composable
-internal fun rememberAnimatedValue(target: Float, key: Any? = target): State<Float> {
-    val anim = remember { Animatable(target) }
-    var initialized by remember { mutableStateOf(false) }
+object AnimationSessionTracker {
+    private val playedKeys = java.util.Collections.synchronizedSet(HashSet<String>())
 
-    LaunchedEffect(target, key) {
-        if (!initialized) {
-            initialized = true
-            anim.snapTo(target)
+    fun hasPlayed(key: String): Boolean = key in playedKeys
+
+    fun markPlayed(key: String) {
+        playedKeys.add(key)
+    }
+}
+
+val LocalAnimationReady = compositionLocalOf { true }
+
+@Composable
+internal fun rememberAnimatedValue(
+    target: Float,
+    key: Any? = target,
+    sessionKey: String? = null
+): State<Float> {
+    val isReady = LocalAnimationReady.current
+    val resolvedKey = sessionKey ?: remember { "anim_${java.util.UUID.randomUUID()}" }
+    val alreadyPlayed = remember(resolvedKey) {
+        AnimationSessionTracker.hasPlayed(resolvedKey)
+    }
+    val anim = remember(resolvedKey) { Animatable(if (alreadyPlayed) target else 0f) }
+    var hasAnimatedOnce by remember(resolvedKey) { mutableStateOf(alreadyPlayed) }
+
+    LaunchedEffect(isReady, target, key) {
+        if (!isReady) {
+            if (!hasAnimatedOnce) anim.snapTo(0f)
+            return@LaunchedEffect
+        }
+        if (!hasAnimatedOnce) {
+            if ( kotlin.math.abs(target) > 0.0001f ) {
+                hasAnimatedOnce = true
+                AnimationSessionTracker.markPlayed(resolvedKey)
+                anim.snapTo(0f)
+                anim.animateTo(
+                    targetValue = target,
+                    animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing)
+                )
+            } else {
+                anim.snapTo(0f)
+            }
         } else if (kotlin.math.abs(anim.value - target) > 0.005f) {
             anim.animateTo(
                 targetValue = target,
-                animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing)
+                animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing)
             )
         } else {
             anim.snapTo(target)
@@ -175,17 +208,11 @@ internal fun InsightsProgressBar(
     color: Color,
     modifier: Modifier = Modifier,
     trackColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
-    height: androidx.compose.ui.unit.Dp = 4.dp
+    height: androidx.compose.ui.unit.Dp = 4.dp,
+    sessionKey: String? = null
 ) {
     val target = progress.coerceIn(0f, 1f)
-    val animVal by animateFloatAsState(
-        targetValue = target,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMediumLow
-        ),
-        label = "insightsProgressBar"
-    )
+    val animVal by rememberAnimatedValue(target, key = target, sessionKey = sessionKey)
     val clamped = animVal.coerceIn(0f, 1f)
     Box(
         modifier = modifier
@@ -314,8 +341,14 @@ internal fun EmptyInsightState(text: String) {
  * currency symbol and decimals set smaller and softer so the whole number reads first.
  */
 @Composable
-internal fun MoneyHero(amount: Double, fractionDigits: Int, size: TextUnit, modifier: Modifier = Modifier) {
-    val animVal by rememberAnimatedValue(amount.toFloat(), key = amount)
+internal fun MoneyHero(
+    amount: Double,
+    fractionDigits: Int,
+    size: TextUnit,
+    modifier: Modifier = Modifier,
+    sessionKey: String = "money_hero_$fractionDigits"
+) {
+    val animVal by rememberAnimatedValue(amount.toFloat(), key = amount, sessionKey = sessionKey)
     val currentAmount = animVal.toDouble()
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val text = String.format(Locale.getDefault(), "%,.${fractionDigits}f", currentAmount)
@@ -342,8 +375,14 @@ internal fun MoneyHero(amount: Double, fractionDigits: Int, size: TextUnit, modi
 }
 
 @Composable
-internal fun MoneyHero(amount: Long, fractionDigits: Int, size: TextUnit, modifier: Modifier = Modifier) {
-    MoneyHero(amount = amount / 100.0, fractionDigits = fractionDigits, size = size, modifier = modifier)
+internal fun MoneyHero(
+    amount: Long,
+    fractionDigits: Int,
+    size: TextUnit,
+    modifier: Modifier = Modifier,
+    sessionKey: String = "money_hero_long_$fractionDigits"
+) {
+    MoneyHero(amount = amount / 100.0, fractionDigits = fractionDigits, size = size, modifier = modifier, sessionKey = sessionKey)
 }
 
 @Composable
@@ -356,22 +395,49 @@ internal fun HeroFact(
     amountPaise: Long? = null
 ) {
     val target = (amountPaise ?: 0L).toFloat()
-    val animVal by rememberAnimatedValue(target, key = amountPaise)
+    val animVal by rememberAnimatedValue(target, key = amountPaise, sessionKey = "insights_herofact_$label")
     val displayValue = if (amountPaise != null) formatRupees(animVal.toDouble()) else value
+    var valueFontSize by remember(displayValue) { mutableFloatStateOf(18f) }
+    var captionFontSize by remember(caption) { mutableFloatStateOf(11.5f) }
 
     Column(modifier = modifier) {
-        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             displayValue,
-            fontSize = 18.sp,
+            fontSize = valueFontSize.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = (-0.3).sp,
             color = valueColor,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            onTextLayout = { res ->
+                if (res.hasVisualOverflow && valueFontSize > 13.5f) {
+                    valueFontSize = (valueFontSize - 1f).coerceAtLeast(13.5f)
+                }
+            }
         )
-        Text(caption, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            caption,
+            fontSize = captionFontSize.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            onTextLayout = { res ->
+                if (res.hasVisualOverflow && captionFontSize > 9.5f) {
+                    captionFontSize = (captionFontSize - 0.5f).coerceAtLeast(9.5f)
+                }
+            }
+        )
     }
 }
 
@@ -427,7 +493,7 @@ internal fun InsightsStatTile(
     onClick: (() -> Unit)? = null
 ) {
     val target = (amountPaise ?: 0L).toFloat()
-    val animVal by rememberAnimatedValue(target, key = amountPaise)
+    val animVal by rememberAnimatedValue(target, key = amountPaise, sessionKey = "insights_tile_$label")
     val displayValue = if (amountPaise != null) formatRupees(animVal.toDouble()) else value
 
     Surface(

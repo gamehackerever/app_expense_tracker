@@ -311,9 +311,13 @@ fun InsightsScreen(
             }
         }
 
-        bounds.mapIndexed { i, (rel, cStart, _) ->
+        bounds.mapIndexed { i, (rel, cStart, cEnd) ->
+            // Use the cycle midpoint so a cycle like "28 Sept – 27 Oct" (where 24 days are in Oct)
+            // is labeled "Oct" rather than "Sept".
+            val midMillis = cStart + (cEnd - cStart) / 2L
             CycleTrendPoint(
-                label = monthFmt.format(java.util.Date(cStart)),
+                label = monthFmt.format(java.util.Date(midMillis)),
+                rangeLabel = formatCycleRange(cStart, cEnd),
                 spentPaise = spentByIdx[i],
                 incomePaise = incomeByIdx[i],
                 isSelected = rel == 0
@@ -356,7 +360,16 @@ fun InsightsScreen(
 
     val cycleProgress = (elapsedDays.toFloat() / cycleLengthDays).coerceIn(0f, 1f)
 
-    val startBarAnimations = !isAppLocked
+    var isInsightsReady by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(isAppLocked) {
+        if (isAppLocked) {
+            isInsightsReady = false
+        } else if (!isInsightsReady) {
+            delay(120)
+            isInsightsReady = true
+        }
+    }
+    val startBarAnimations = !isAppLocked && isInsightsReady
     val seenSections = remember { mutableSetOf<String>() }
 
     val listState = rememberLazyListState()
@@ -365,6 +378,7 @@ fun InsightsScreen(
     }
     val headerDividerAlpha by animateFloatAsState(if (isScrolled) 1f else 0f, tween(180), label = "insightsHeaderDivider")
 
+    CompositionLocalProvider(LocalAnimationReady provides startBarAnimations) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -398,9 +412,11 @@ fun InsightsScreen(
     ) { padding ->
         LazyColumn(
             state = listState,
+            contentPadding = PaddingValues(bottom = 48.dp),
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .navigationBarsPadding()
                 .padding(horizontal = AppSpacing.screenPadding),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.sectionGap)
         ) {
@@ -546,7 +562,7 @@ fun InsightsScreen(
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            MoneyHero(amount = grandTotalDebit / 100.0, fractionDigits = 2, size = 44.sp)
+                            MoneyHero(amount = grandTotalDebit / 100.0, fractionDigits = 2, size = 44.sp, sessionKey = "insights_hero_spend")
 
                             Spacer(modifier = Modifier.height(4.dp))
                             val budgetContextSuffix = if (hasSpending && monthlyBudget > 0L && selectedAccountFilter == null) {
@@ -566,7 +582,8 @@ fun InsightsScreen(
                             Spacer(modifier = Modifier.height(18.dp))
                             InsightsProgressBar(
                                 progress = if (startBarAnimations) cycleProgress else 0f,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                sessionKey = "insights_cycle_progress_bar"
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(
@@ -611,8 +628,8 @@ fun InsightsScreen(
                                         val projPaise = (dailyAverage * cycleLengthDays).toLong()
                                         val overBudget = hasActiveBudgetHere && projPaise > monthlyBudgetPaise
                                         val projCaption = when {
-                                            overBudget -> "${formatRupees(projPaise - monthlyBudgetPaise)} over budget"
-                                            hasActiveBudgetHere -> "${formatRupees(monthlyBudgetPaise - projPaise)} under budget"
+                                            overBudget -> "+${formatRupees(projPaise - monthlyBudgetPaise)} over cap"
+                                            hasActiveBudgetHere -> "${formatRupees(monthlyBudgetPaise - projPaise)} under cap"
                                             else -> "by cycle end"
                                         }
                                         HeroFact(
@@ -632,7 +649,7 @@ fun InsightsScreen(
                                                 modifier = Modifier.weight(1f),
                                                 label = "Safe daily pace",
                                                 value = "${formatRupees(safePerDayPaise)}/day",
-                                                caption = "${formatRupees(remainingPaise)} left for ${daysLeft}d",
+                                                caption = "${formatRupees(remainingPaise)} left · ${daysLeft}d",
                                                 valueColor = if (grandTotalDebit.toDouble() / monthlyBudgetPaise.toDouble() >= 0.90) MaterialTheme.colorScheme.onSurface else InsightsColors.positive
                                             )
                                         } else {
@@ -847,8 +864,16 @@ fun InsightsScreen(
                                 onNavigateToNecessities()
                             }
                         )
+                        val totalMonthlyReservePaise = remember(necessities) {
+                            necessities.sumOf { item ->
+                                if (item.frequency == com.expensetracker.offline.util.NecessityFrequency.MONTHLY || item.isProrated)
+                                    NecessityManager.getMonthlyReserveAmount(item)
+                                else 0L
+                            }
+                        }
                         FixedCostsRow(
                             trackedCount = necessities.size,
+                            reservedMonthlyPaise = totalMonthlyReservePaise,
                             onClick = {
                                 haptic.tap()
                                 onNavigateToNecessities()
@@ -858,8 +883,9 @@ fun InsightsScreen(
                 }
             }
 
-            item(key = "bottomSpacer") { Spacer(modifier = Modifier.height(24.dp)) }
+            item(key = "bottomSpacer") { Spacer(modifier = Modifier.height(8.dp)) }
         }
+    }
     }
 
     val catName = selectedCategoryForBreakdown

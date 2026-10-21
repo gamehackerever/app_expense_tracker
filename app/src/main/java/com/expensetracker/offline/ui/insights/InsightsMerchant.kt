@@ -152,11 +152,10 @@ internal fun MerchantRow(
     val share = if (grandTotal > 0L) (insight.totalSpent.toDouble() / grandTotal.toDouble()) else 0.0
     val avgPerVisit = if (insight.transactionCount > 0) insight.totalSpent.toDouble() / insight.transactionCount else 0.0
 
-    val entered = rememberEntered(250)
-    val animatedProgress by animateFloatAsState(
-        targetValue = if (isAnimating && entered) share.toFloat().coerceIn(0f, 1f) else 0f,
-        animationSpec = tween(durationMillis = 800, delayMillis = 100, easing = FastOutSlowInEasing),
-        label = "merchantBarGrowth"
+    val animatedProgress by rememberAnimatedValue(
+        target = if (isAnimating) share.toFloat().coerceIn(0f, 1f) else 0f,
+        key = insight.totalSpent to grandTotal,
+        sessionKey = "insights_merchant_${insight.payee}"
     )
 
     Column(

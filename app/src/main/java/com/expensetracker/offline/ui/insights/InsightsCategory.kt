@@ -96,7 +96,7 @@ internal fun CategoryGlyphBox(
     }
     Surface(
         shape = RoundedCornerShape(cornerRadius),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+        color = categoryColor.copy(alpha = 0.12f),
         modifier = Modifier.size(size)
     ) {
         Box(contentAlignment = Alignment.Center) {
@@ -104,7 +104,7 @@ internal fun CategoryGlyphBox(
                 Icon(
                     getCategoryIcon(category),
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = categoryColor,
                     modifier = Modifier.size(iconSize)
                 )
             } else {
@@ -112,7 +112,7 @@ internal fun CategoryGlyphBox(
                     text = initial,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = categoryColor
                 )
             }
         }
@@ -134,15 +134,10 @@ internal fun CategoryBreakdownCard(
 ) {
     var showAll by rememberSaveable { mutableStateOf(false) }
 
-    val entered = rememberEntered(250)
-    val reveal by animateFloatAsState(
-        targetValue = if (isAnimating && entered) 1f else 0f,
-        animationSpec = tween(
-            durationMillis = 800,
-            delayMillis = 100,
-            easing = FastOutSlowInEasing
-        ),
-        label = "categoryDistributionReveal"
+    val reveal by rememberAnimatedValue(
+        target = if (isAnimating) 1f else 0f,
+        key = grandTotal,
+        sessionKey = "insights_category_stacked_bar"
     )
 
     val positiveCategories = remember(categories) { categories.filter { it.totalSpent > 0L } }
@@ -287,11 +282,10 @@ internal fun CategoryRow(
     val percentage = share * 100.0
     val avgPerTxn = if (insight.transactionCount > 0) insight.totalSpent.toDouble() / insight.transactionCount else 0.0
 
-    val entered = rememberEntered(250)
-    val animatedProgress by animateFloatAsState(
-        targetValue = if (isAnimating && entered) share.toFloat().coerceIn(0f, 1f) else 0f,
-        animationSpec = tween(durationMillis = 800, delayMillis = 100, easing = FastOutSlowInEasing),
-        label = "categoryShareGrowth"
+    val animatedProgress by rememberAnimatedValue(
+        target = if (isAnimating) share.toFloat().coerceIn(0f, 1f) else 0f,
+        key = insight.totalSpent to grandTotal,
+        sessionKey = "insights_cat_row_${insight.category}"
     )
 
     Column(
@@ -377,11 +371,10 @@ internal fun CategoryRowWithBudget(
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
-    val entered = rememberEntered(250)
-    val animatedProgress by animateFloatAsState(
-        targetValue = if (isAnimating && entered) pct.coerceIn(0f, 1f) else 0f,
-        animationSpec = tween(durationMillis = 800, delayMillis = 100, easing = FastOutSlowInEasing),
-        label = "categoryBudgetGrowth"
+    val animatedProgress by rememberAnimatedValue(
+        target = if (isAnimating) pct.coerceIn(0f, 1f) else 0f,
+        key = insight.totalSpent to budgetPaise,
+        sessionKey = "insights_cat_budget_${insight.category}"
     )
 
     Column(
@@ -438,7 +431,11 @@ internal fun CategoryRowWithBudget(
 }
 
 @Composable
-internal fun FixedCostsRow(trackedCount: Int, onClick: () -> Unit) {
+internal fun FixedCostsRow(
+    trackedCount: Int,
+    reservedMonthlyPaise: Long = 0L,
+    onClick: () -> Unit
+) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -480,10 +477,15 @@ internal fun FixedCostsRow(trackedCount: Int, onClick: () -> Unit) {
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        if (trackedCount == 0) "Track rent, bills & sinking funds"
-                        else "$trackedCount tracked · Kept out of Safe to Spend",
+                        when {
+                            trackedCount == 0 -> "Track rent, bills & sinking funds"
+                            reservedMonthlyPaise > 0L -> "$trackedCount tracked · ${formatRupees(reservedMonthlyPaise)}/mo reserved"
+                            else -> "$trackedCount tracked · Reserved from balance"
+                        },
                         fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

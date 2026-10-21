@@ -190,6 +190,7 @@ internal fun formatCycleRange(startMillis: Long, endMillis: Long): String {
 
 internal data class CycleTrendPoint(
     val label: String,
+    val rangeLabel: String = "",
     val spentPaise: Long,
     val incomePaise: Long,
     val isSelected: Boolean
@@ -252,7 +253,7 @@ internal fun CashFlowSummaryCard(
                     label = "Income",
                     value = formatRupees(totalIncomePaise),
                     amountPaise = totalIncomePaise,
-                    caption = "credits received",
+                    caption = "total inflow",
                     valueColor = InsightsColors.positive
                 )
                 HeroFact(
@@ -260,7 +261,7 @@ internal fun CashFlowSummaryCard(
                     label = "Discretionary",
                     value = formatRupees(discretionarySpendPaise),
                     amountPaise = discretionarySpendPaise,
-                    caption = "excl. investments",
+                    caption = "living expenses",
                     valueColor = MaterialTheme.colorScheme.onSurface
                 )
                 if (investmentsPaise > 0L) {
@@ -288,7 +289,8 @@ internal fun CashFlowSummaryCard(
                 progress = if (isAnimating) expenseRatio else 0f,
                 color = if (totalIncomePaise > 0L && discretionarySpendPaise > totalIncomePaise) InsightsColors.negative else MaterialTheme.colorScheme.onSurface,
                 trackColor = InsightsColors.positive.copy(alpha = 0.18f),
-                height = 6.dp
+                height = 6.dp,
+                sessionKey = "insights_cashflow_bar"
             )
         }
     }
@@ -327,27 +329,44 @@ internal fun MultiCycleTrendCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "${selectedPoint.label} cycle",
-                        fontSize = 13.sp,
+                        if (selectedPoint.rangeLabel.isNotBlank())
+                            "${selectedPoint.label} cycle · ${selectedPoint.rangeLabel}"
+                        else "${selectedPoint.label} cycle",
+                        fontSize = 12.5.sp,
                         fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        "Spent ${formatRupees(selectedPoint.spentPaise)}" +
-                                (if (selectedPoint.incomePaise > 0L) " · In ${formatRupees(selectedPoint.incomePaise)}" else ""),
+                        if (selectedPoint.spentPaise == 0L && selectedPoint.incomePaise == 0L)
+                            "No activity recorded"
+                        else
+                            "Spent ${formatRupees(selectedPoint.spentPaise)}" +
+                                    (if (selectedPoint.incomePaise > 0L) " · In ${formatRupees(selectedPoint.incomePaise)}" else ""),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                Text(
-                    "6-cycle trend",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(AppRadius.pill),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+                ) {
+                    Text(
+                        "6-cycle trend",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
             }
 
             Row(
@@ -359,14 +378,18 @@ internal fun MultiCycleTrendCard(
             ) {
                 points.forEachIndexed { idx, pt ->
                     val isSel = idx == selectedIdx
-                    val targetSpendRatio = (pt.spentPaise.toFloat() / maxVal.toFloat()).coerceIn(0.04f, 1f)
-                    val animSpend by animateFloatAsState(
-                        targetValue = if (isAnimating && entered) targetSpendRatio else 0.04f,
-                        animationSpec = tween(durationMillis = 700, delayMillis = idx * 50, easing = FastOutSlowInEasing),
-                        label = "trendBar_$idx"
+                    val hasData = pt.spentPaise > 0L
+                    val targetSpendRatio = if (hasData) {
+                        (pt.spentPaise.toFloat() / maxVal.toFloat()).coerceIn(0.08f, 1f)
+                    } else 0.03f
+                    val animSpend by rememberAnimatedValue(
+                        target = if (isAnimating && entered) targetSpendRatio else 0.03f,
+                        key = pt.spentPaise,
+                        sessionKey = "insights_trend_bar_$idx"
                     )
                     val isOverBudget = monthlyBudgetPaise > 0L && pt.spentPaise > monthlyBudgetPaise
                     val barColor = when {
+                        !hasData -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isSel) 0.22f else 0.09f)
                         isOverBudget && isSel -> InsightsColors.negative
                         isSel -> MaterialTheme.colorScheme.onSurface
                         else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
@@ -485,18 +508,17 @@ internal fun DailyCalendarHeatmapCard(
                     val dayAmt = dailySpendMap[selIdx] ?: 0L
                     Surface(
                         shape = RoundedCornerShape(AppRadius.pill),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "${selDate.format(fullDateFmt)}: ${formatRupees(dayAmt)}",
-                                fontSize = 12.sp,
+                                "${selDate.format(fullDateFmt)} · ${formatRupees(dayAmt)}",
+                                fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
@@ -504,18 +526,17 @@ internal fun DailyCalendarHeatmapCard(
                     val todayAmt = dailySpendMap[todayDayIndex] ?: 0L
                     Surface(
                         shape = RoundedCornerShape(AppRadius.pill),
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "Today (${todayDate.format(monthFmt)}): ${formatRupees(todayAmt)}",
-                                fontSize = 12.sp,
+                                "Today (${todayDate.format(monthFmt)}) · ${formatRupees(todayAmt)}",
+                                fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
@@ -567,24 +588,23 @@ internal fun DailyCalendarHeatmapCard(
 
                                 val isToday = (dayIdx == todayDayIndex)
                                 val spent = dailySpendMap[dayIdx] ?: 0L
-                                val intensity = if (spent <= 0L) 0f else (spent.toFloat() / maxDaySpend.toFloat()).coerceIn(0.18f, 1f)
+                                val intensity = if (spent <= 0L) 0f else (spent.toFloat() / maxDaySpend.toFloat()).coerceIn(0.05f, 1f)
                                 val isSel = (selectedDayIndex == dayIdx)
+                                val isHighSpend = spent > 0L && intensity > 0.62f
 
+                                // 4-tier contrast-safe scale: avoids muddy 40-55% gray backgrounds where
+                                // dark text in Light Mode loses legibility.
                                 val cellBg = when {
-                                    isSel -> MaterialTheme.colorScheme.primaryContainer
-                                    spent <= 0L -> {
-                                        if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
-                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                                    }
-                                    else -> {
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f + 0.65f * intensity)
-                                    }
+                                    isSel -> MaterialTheme.colorScheme.onSurface
+                                    spent <= 0L -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isToday) 0.07f else 0.035f)
+                                    isHighSpend -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f)
+                                    intensity > 0.30f -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
+                                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f)
                                 }
 
                                 val textColor = when {
-                                    isSel -> MaterialTheme.colorScheme.onPrimaryContainer
-                                    intensity > 0.55f -> MaterialTheme.colorScheme.onPrimary
-                                    isToday -> MaterialTheme.colorScheme.primary
+                                    isSel || isHighSpend -> MaterialTheme.colorScheme.surface
+                                    spent <= 0L && !isToday -> MaterialTheme.colorScheme.onSurfaceVariant
                                     else -> MaterialTheme.colorScheme.onSurface
                                 }
 
@@ -632,7 +652,7 @@ internal fun DailyCalendarHeatmapCard(
                                                     .padding(top = 1.dp)
                                                     .size(3.dp)
                                                     .clip(CircleShape)
-                                                    .background(if (intensity > 0.55f) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary)
+                                                    .background(if (isSel || isHighSpend) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface)
                                             )
                                         }
                                     }
