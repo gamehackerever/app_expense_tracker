@@ -207,12 +207,22 @@ object NecessityManager {
         validityDays = s.validityDays
     )
 
-    fun suggestBills(query: String, txns: List<TransactionEntity>, limit: Int = 3): List<BillSuggestion> {
+    fun suggestBills(query: String, txns: List<TransactionEntity>, limit: Int = 4): List<BillSuggestion> {
         val q = query.trim()
-        if (q.length < 2) return emptyList()
         return txns.asSequence()
-            .filter { it.type == TransactionType.DEBIT && it.payee.contains(q, ignoreCase = true) }
-            .groupBy { it.payee }
+            .filter {
+                it.type == TransactionType.DEBIT &&
+                        !it.excludeFromSpend &&
+                        it.payee.isNotBlank() &&
+                        !it.payee.equals("Unknown", ignoreCase = true) &&
+                        (q.isEmpty() || it.payee.contains(q, ignoreCase = true))
+            }
+            .groupBy { it.payee.trim() }
+            .filter { (payee, list) ->
+                if (q.isNotEmpty()) true
+                else list.size >= 2 || list.first().category.lowercase() in RECURRING_BILL_CATEGORIES ||
+                        Regex("(?i)\\b(recharge|vi|jio|airtel|bsnl|spotify|netflix|youtube|google|gym|rent|wifi|broadband|electricity)\\b").containsMatchIn(payee)
+            }
             .map { (payee, list) ->
                 val sorted = list.sortedByDescending { it.timestamp }
                 val gap = sorted.zipWithNext { a, b -> (a.timestamp - b.timestamp) / 86_400_000L }
@@ -225,7 +235,11 @@ object NecessityManager {
                     validityDays = days
                 )
             }
-            .sortedByDescending { it.txnCount }
+            .sortedWith(
+                compareByDescending<BillSuggestion> { it.category?.lowercase() in RECURRING_BILL_CATEGORIES }
+                    .thenByDescending { it.txnCount }
+                    .thenByDescending { it.lastTimestamp }
+            )
             .take(limit)
     }
 

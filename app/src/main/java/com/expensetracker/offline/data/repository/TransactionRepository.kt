@@ -12,6 +12,7 @@ import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.engine.categorizer.NaiveBayesCategorizer
+import com.expensetracker.offline.engine.ml.SmartExpenseEngine
 import com.expensetracker.offline.engine.recurring.RecurringPayment
 import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
 import com.expensetracker.offline.ui.components.deleteReceiptFile
@@ -317,7 +318,11 @@ class TransactionRepository(
         val pattern = payee.trim().lowercase()
             .replace("%", "\\%")
             .replace("_", "\\_")
-        if (pattern.length >= 2 && category != "Uncategorized") {
+        if (pattern.length >= 2 &&
+            !category.equals("Uncategorized", ignoreCase = true) &&
+            !category.equals("Transfer", ignoreCase = true) &&
+            category != "Split Settlement"
+        ) {
             val existing = categoryRuleDao.getExactRule(pattern)
             val count = (existing?.usageCount ?: 0) + 1
             categoryRuleDao.upsertRule(
@@ -333,12 +338,77 @@ class TransactionRepository(
         }
     }
 
-    suspend fun classifyCategory(payee: String, rawContent: String): String =
-        CategoryClassifier.classify(
+    /**
+     * Backfills `category_rules` from any historical categorized transactions in the database
+     * (e.g. from manual entries or CSV imports) so the Naive Bayes and rule engines have 100%
+     * of the user's taught categories.
+     */
+    suspend fun syncCategoryRulesFromHistory() {
+        val recent = transactionDao.getRecentTransactions(500)
+        if (recent.isEmpty()) return
+        val existingRules = categoryRuleDao.getAllRules().associateBy { it.merchantPattern.lowercase() }
+        val grouped = recent
+            .filter {
+                it.payee.trim().length >= 2 &&
+                        !it.payee.equals("Unknown", ignoreCase = true) &&
+                        !it.payee.equals("Silent Deduction", ignoreCase = true) &&
+                        it.category.isNotBlank() &&
+                        !it.category.equals("Uncategorized", ignoreCase = true) &&
+                        !it.category.equals("Transfer", ignoreCase = true) &&
+                        it.category != "Split Settlement"
+            }
+            .groupBy {
+                it.payee.trim().lowercase()
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+            }
+
+        var anyUpserted = false
+        for ((pattern, list) in grouped) {
+            if (pattern.length < 2) continue
+            val dominantCat = list.groupingBy { it.category.trim() }.eachCount().maxByOrNull { it.value }?.key ?: continue
+            val existing = existingRules[pattern]
+            if (existing == null || existing.usageCount < list.size) {
+                categoryRuleDao.upsertRule(
+                    CategoryRuleEntity(
+                        merchantPattern = pattern,
+                        category = existing?.category ?: dominantCat,
+                        usageCount = maxOf(existing?.usageCount ?: 0, list.size),
+                        lastUpdated = list.maxOf { it.timestamp }
+                    )
+                )
+                anyUpserted = true
+            }
+        }
+        if (anyUpserted) {
+            NaiveBayesCategorizer.invalidate()
+            CategoryClassifier.clearCache()
+        }
+    }
+
+    suspend fun classifyCategory(
+        payee: String,
+        rawContent: String,
+        amountPaise: Long? = null,
+        timestampMillis: Long = System.currentTimeMillis()
+    ): String {
+        val primary = CategoryClassifier.classify(
             payee = payee,
             rawContent = rawContent,
             ruleDao = categoryRuleDao
         )
+        if (primary != "Uncategorized") return primary
+        val recent = transactionDao.getRecentTransactions(300)
+        val rules = categoryRuleDao.getAllRules()
+        return SmartExpenseEngine.predictCategoryContextual(
+            payee = payee,
+            amountPaise = amountPaise,
+            timestampMillis = timestampMillis,
+            history = recent,
+            learnedRules = rules,
+            rawContent = rawContent
+        )
+    }
 
     fun recurringPaymentsFlow(): Flow<List<RecurringPayment>> =
         transactionDao.getDebitsSinceFlow(System.currentTimeMillis() - RecurringPaymentDetector.LOOKBACK_MS)
@@ -630,7 +700,7 @@ class TransactionRepository(
                 else -> fallbackPayee
             }
             val aliasedPayee = settingsRepo?.getMerchantAlias(resolvedPayee) ?: resolvedPayee
-            val category = if (isAutoTransfer) "Transfer" else CategoryClassifier.classify(aliasedPayee, parsed.rawText, categoryRuleDao)
+            val category = if (isAutoTransfer) "Transfer" else classifyCategory(aliasedPayee, parsed.rawText, amount, timestamp)
 
             val id = transactionDao.insertTransaction(
                 TransactionEntity(

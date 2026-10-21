@@ -19,17 +19,48 @@ object CategoryClassifier {
     )
 
     // Precompile Regex for O(1) matching and to enforce word boundaries (\b).
-    // This prevents "tea" from matching "team" and "vi" from matching "movie".
+    // Expanded with regional Indian & campus/local merchant keywords (broast, shawaya, mandhi, mess, coolbar, etc.)
     private val CATEGORY_REGEX_MAP: Map<String, Regex> = mapOf(
         "Transfer" to createRegex("self transfer", "credit card bill", "cc bill", "internal transfer", "auto sweep", "own a/c"),
-        "Food & Dining" to createRegex("starbucks", "swiggy", "zomato", "mcdonalds?", "kfc", "burger", "cafe", "restaurant", "pizza", "subway", "dominos?", "tea", "coffee", "bistro", "bakery", "hotel", "shawarma", "biryani"),
-        "Groceries" to createRegex("blinkit", "zepto", "instamart", "bigbasket", "dmart", "spencer", "supermarket", "grocery", "vegetables?", "fruits?", "mart", "nature basket", "reliance fresh", "lulu hypermarket"),
-        "Shopping" to createRegex("amazon", "flipkart", "myntra", "meesho", "ajio", "zara", "h&m", "retail", "clothing", "apparel", "electronics", "decathlon", "croma", "lifestyle", "nykaa", "tatacliq"),
-        "Travel" to createRegex("uber", "ola", "rapido", "namma yatri", "metro", "irctc", "railway", "fuel", "petrol", "diesel", "hpcl", "bpcl", "iocl", "toll", "fastag", "parking", "flight", "redbus", "makemytrip", "ksrtc"),
-        "Bills & Utilities" to createRegex("airtel", "jio", "vi", "vodafone", "electricity", "kseb", "bescom", "water", "gas", "broadband", "wifi", "billdesk", "recharge", "dth", "tneb", "postpaid", "prepaid", "bsnl"),
-        "Entertainment" to createRegex("netflix", "hotstar", "spotify", "prime video", "pvr", "inox", "cinepolis", "bookmyshow", "steam", "playstation", "youtube", "sony liv", "jiocinema"),
-        "Health" to createRegex("apollo", "pharmeasy", "1mg", "pharmacy", "chemist", "hospital", "clinic", "dentist", "medplus", "diagnostic", "dr\\.?", "aster", "medibuddy"),
-        "Investments" to createRegex("zerodha", "groww", "upstox", "mutual fund", "sip", "kuvera", "nse", "bse", "indmoney", "cleartax", "coin", "smallcase", "nps", "ppf")
+        "Food & Dining" to createRegex(
+            "starbucks", "swiggy", "zomato", "mcdonalds?", "kfc", "burger", "cafe", "restaurant",
+            "pizza", "subway", "dominos?", "tea", "coffee", "bistro", "bakery", "hotel", "shawarma",
+            "biryani", "broast", "shawaya", "mandhi", "alfaham", "canteen", "mess", "coolbar",
+            "bakes", "juice", "chai", "diner", "tiffin", "eatery", "kitchen", "grill"
+        ),
+        "Groceries" to createRegex(
+            "blinkit", "zepto", "instamart", "bigbasket", "dmart", "spencer", "supermarket",
+            "grocery", "vegetables?", "fruits?", "mart", "nature basket", "reliance fresh",
+            "lulu hypermarket", "hypermarket", "stores?", "provisions?", "minimart", "dairy", "milk", "milma"
+        ),
+        "Shopping" to createRegex(
+            "amazon", "flipkart", "myntra", "meesho", "ajio", "zara", "h&m", "retail", "clothing",
+            "apparel", "electronics", "decathlon", "croma", "lifestyle", "nykaa", "tatacliq",
+            "trends", "zudio", "max fashion", "footwear", "stationery", "books?", "xerox"
+        ),
+        "Travel" to createRegex(
+            "uber", "ola", "rapido", "namma yatri", "metro", "irctc", "railway", "fuel", "petrol",
+            "diesel", "hpcl", "bpcl", "iocl", "toll", "fastag", "parking", "flight", "redbus",
+            "makemytrip", "ksrtc", "bus", "auto", "cab", "taxi", "indigo", "air india"
+        ),
+        "Bills & Utilities" to createRegex(
+            "airtel", "jio", "vi", "vodafone", "electricity", "kseb", "bescom", "water", "gas",
+            "broadband", "wifi", "billdesk", "recharge", "dth", "tneb", "postpaid", "prepaid", "bsnl"
+        ),
+        "Entertainment" to createRegex(
+            "netflix", "hotstar", "spotify", "prime video", "pvr", "inox", "cinepolis",
+            "bookmyshow", "steam", "playstation", "youtube", "sony liv", "jiocinema", "apple",
+            "google play", "google photos", "turf", "gaming"
+        ),
+        "Health" to createRegex(
+            "apollo", "pharmeasy", "1mg", "pharmacy", "chemist", "hospital", "clinic", "dentist",
+            "medplus", "diagnostic", "dr\\.?", "aster", "medibuddy", "medicals?", "gym", "fitness",
+            "creatine", "protein", "whey", "workout"
+        ),
+        "Investments" to createRegex(
+            "zerodha", "groww", "upstox", "mutual fund", "sip", "kuvera", "nse", "bse",
+            "indmoney", "cleartax", "coin", "smallcase", "nps", "ppf"
+        )
     )
 
     private fun createRegex(vararg keywords: String): Regex {
@@ -59,6 +90,7 @@ object CategoryClassifier {
 
     fun clearCache() {
         categoryCache.clear()
+        NaiveBayesCategorizer.invalidate()
     }
 
     suspend fun classify(
@@ -71,7 +103,7 @@ object CategoryClassifier {
         if (cleanPayee.isNotBlank()) {
             categoryCache[cleanPayee]?.let { return it }
 
-            // 1. Exact learned rule
+            // 1. Exact or substring learned rule
             val learned = ruleDao.findMatchingCategory(cleanPayee)
             if (!learned.isNullOrBlank()) {
                 categoryCache[cleanPayee] = learned
@@ -86,14 +118,14 @@ object CategoryClassifier {
                 }
             }
 
-            // 3. Generalize from what the user has taught us
+            // 3. Subword 3-gram + word token Naive Bayes generalization from taught rules
             NaiveBayesCategorizer.predict(cleanPayee, ruleDao)?.let {
                 categoryCache[cleanPayee] = it.category
                 return it.category
             }
         }
 
-        // 4. Last resort: scan the raw SMS text
+        // 4. Last resort: scan the raw SMS/notification text
         for ((category, regex) in CATEGORY_REGEX_MAP) {
             if (regex.containsMatchIn(rawContent)) return category
         }

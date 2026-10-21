@@ -12,6 +12,7 @@ import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.data.repository.TransactionRepository
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
+import com.expensetracker.offline.engine.ml.SmartExpenseEngine
 import com.expensetracker.offline.engine.interceptor.CaptureDispatcher
 import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.util.SenderFilter
@@ -261,7 +262,17 @@ class SmsHistoryScanner(
                             else -> fallbackPayee
                         }
                         val aliasedPayee = settingsRepo.getMerchantAlias(resolvedPayee) ?: resolvedPayee
-                        val category = if (isAutoTransfer) "Transfer" else CategoryClassifier.classify(aliasedPayee, body, categoryRuleDao)
+                        val category = if (isAutoTransfer) "Transfer" else {
+                            val primary = CategoryClassifier.classify(aliasedPayee, body, categoryRuleDao)
+                            if (primary != "Uncategorized") primary
+                            else SmartExpenseEngine.predictCategoryContextual(
+                                payee = aliasedPayee,
+                                amountPaise = amount,
+                                timestampMillis = date,
+                                history = batchTxns,
+                                rawContent = body
+                            )
+                        }
 
                         batchTxns.add(
                             TransactionEntity(

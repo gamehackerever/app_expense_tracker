@@ -1,18 +1,19 @@
 package com.expensetracker.offline.engine.recurring
 
 import com.expensetracker.offline.data.local.dao.TransactionDao.DebitPoint
+import java.util.Calendar
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
  * How often a payment repeats.
  *
- * @param perMonth how many charges per month this cadence works out to (for "monthly cost")
- * @param requiresFixedAmount short cadences are only trusted when the amount is stable,
- *        otherwise things like a weekly Uber habit would look like a subscription
+ * Upgraded to detect 28-day telecom recharges, bi-weekly cycles, 2-charge monthly subscriptions,
+ * and first-week known subscription/recharge merchants.
  */
 enum class Cadence(
     val label: String,
@@ -22,17 +23,19 @@ enum class Cadence(
     val perMonth: Double,
     val requiresFixedAmount: Boolean
 ) {
-    WEEKLY("Weekly", 7, 2, 4, 52.0 / 12.0, true),
-    MONTHLY("Monthly", 30, 4, 3, 1.0, false),
-    BIMONTHLY("Every 2 months", 61, 7, 3, 0.5, false),
-    QUARTERLY("Quarterly", 91, 10, 3, 1.0 / 3.0, false),
+    WEEKLY("Weekly", 7, 2, 3, 52.0 / 12.0, true),
+    BIWEEKLY("Every 2 weeks", 14, 3, 2, 26.0 / 12.0, true),
+    RECHARGE_28D("Every 28 days", 28, 3, 2, 30.4375 / 28.0, false),
+    MONTHLY("Monthly", 30, 5, 2, 1.0, false),
+    BIMONTHLY("Every 2 months", 61, 7, 2, 0.5, false),
+    QUARTERLY("Quarterly", 91, 10, 2, 1.0 / 3.0, false),
     YEARLY("Yearly", 365, 20, 2, 1.0 / 12.0, true)
 }
 
 data class RecurringPayment(
     val payee: String,
     val category: String,
-    val amount: Long,            // typical (median) charge in paise
+    val amount: Long,            // typical (latest for fixed, median for variable) charge in paise
     val isFixedAmount: Boolean,  // false = varies, e.g. a utility bill
     val cadence: Cadence,
     val occurrences: Int,
@@ -49,12 +52,20 @@ object RecurringPaymentDetector {
 
     private const val DAY_MS = 86_400_000L
     private const val DEDUPE_WINDOW_MS = 36L * 3_600_000L   // SMS + notification for the same charge
-    private const val MIN_MATCH_RATIO = 0.75                // share of gaps that must fit the cadence
-    private const val MAX_VARIABLE_CV = 0.6                 // amount spread allowed for non-fixed series
+    private const val MIN_MATCH_RATIO = 0.70                // share of gaps that must fit the cadence
+    private const val MAX_VARIABLE_CV = 0.60                // amount spread allowed for non-fixed series
     private const val ONE_RUPEE_PAISE = 100.0               // Rs 1 tolerance in paise
 
     /** Fetch this much history from the DB; yearly payments need > 12 months. */
     const val LOOKBACK_MS = 460L * DAY_MS
+
+    // Known subscription / telecom / utility brands that can be recognized even in the first week of use
+    private val KNOWN_SUBSCRIPTION_REGEX = Regex(
+        "(?i)\\b(spotify|netflix|youtube|prime video|hotstar|jiocinema|sony liv|apple|icloud|" +
+                "google play|google one|google photos|chatgpt|openai|claude|canva|notion|github|" +
+                "vi\\s*recharge|vodafone|jio\\s*recharge|airtel|bsnl|kseb|bescom|broadband|wifi|gym|cult\\s*fit)\\b"
+    )
+    private val RECHARGE_28D_REGEX = Regex("(?i)\\b(vi\\s*recharge|vodafone|jio|airtel|bsnl|prepaid|recharge)\\b")
 
     fun detect(debits: List<DebitPoint>, now: Long = System.currentTimeMillis()): List<RecurringPayment> {
         val byPayee = debits
@@ -65,18 +76,48 @@ object RecurringPaymentDetector {
         val results = mutableListOf<RecurringPayment>()
 
         for ((_, group) in byPayee) {
-            if (group.size < 2) continue
+            if (group.size >= 2) {
+                // 1. Fixed-amount series: same payee AND (nearly) same amount.
+                val fixedHits = clusterByAmount(group).mapNotNull { evaluate(it, fixed = true, now = now) }
+                if (fixedHits.isNotEmpty()) {
+                    results += fixedHits
+                    continue
+                }
 
-            // 1. Fixed-amount series: same payee AND (nearly) same amount.
-            //    Handles one payee with several subscriptions (e.g. two different Google plans).
-            val fixedHits = clusterByAmount(group).mapNotNull { evaluate(it, fixed = true, now = now) }
-            if (fixedHits.isNotEmpty()) {
-                results += fixedHits
-                continue
+                // 2. Variable-amount series: utility-style bills.
+                val variableHit = evaluate(group, fixed = false, now = now)
+                if (variableHit != null) {
+                    results += variableHit
+                    continue
+                }
             }
 
-            // 2. Variable-amount series: utility-style bills. Only monthly or slower.
-            evaluate(group, fixed = false, now = now)?.let { results += it }
+            // 3. First-week intelligence: single-occurrence known subscription / telecom recharge
+            val latest = group.maxByOrNull { it.timestamp } ?: continue
+            if (KNOWN_SUBSCRIPTION_REGEX.containsMatchIn(latest.payee)) {
+                val isRecharge = RECHARGE_28D_REGEX.containsMatchIn(latest.payee)
+                val cadence = if (isRecharge) Cadence.RECHARGE_28D else Cadence.MONTHLY
+                val nextExpected = computeNextExpected(latest.timestamp, cadence, cadence.days.toDouble())
+                val graceDays = max(cadence.toleranceDays.toDouble(), cadence.days / 2.0)
+                val isActive = now <= nextExpected + (graceDays * DAY_MS).toLong()
+                if (isActive) {
+                    results += RecurringPayment(
+                        payee = latest.payee,
+                        category = latest.category,
+                        amount = latest.amount,
+                        isFixedAmount = true,
+                        cadence = cadence,
+                        occurrences = group.size,
+                        firstSeen = group.minOf { it.timestamp },
+                        lastSeen = latest.timestamp,
+                        nextExpected = nextExpected,
+                        isActive = true,
+                        monthlyCost = (latest.amount * cadence.perMonth).toLong(),
+                        confidence = 0.65,
+                        transactionIds = group.map { it.id }
+                    )
+                }
+            }
         }
 
         return results.sortedWith(
@@ -95,7 +136,10 @@ object RecurringPaymentDetector {
         if (series.size < 2) return null
 
         val amounts = series.map { it.amount.toDouble() }
-        if (!fixed && coefficientOfVariation(amounts) > MAX_VARIABLE_CV) return null
+        val cv = coefficientOfVariation(amounts)
+        if (!fixed && cv > MAX_VARIABLE_CV) return null
+        // For 2-occurrence non-fixed series, require tighter amount consistency (CV <= 0.25)
+        if (series.size == 2 && !fixed && cv > 0.25) return null
 
         val gaps = series.zipWithNext { a, b -> (b.timestamp - a.timestamp).toDouble() / DAY_MS }
 
@@ -106,19 +150,20 @@ object RecurringPaymentDetector {
             .maxByOrNull { it.second }
             ?: return null
 
-        // Step between payments: median of the gaps that fit the cadence (handles 28-day cycles etc.)
         val fittingGaps = gaps.filter { abs(it - cadence.days) <= cadence.toleranceDays }
         val stepDays = if (fittingGaps.isNotEmpty()) median(fittingGaps) else cadence.days.toDouble()
 
         val last = series.last()
-        val nextExpected = last.timestamp + (stepDays * DAY_MS).toLong()
+        val nextExpected = computeNextExpected(last.timestamp, cadence, stepDays)
         val graceDays = max(cadence.toleranceDays.toDouble(), stepDays / 2.0)
         val isActive = now <= nextExpected + (graceDays * DAY_MS).toLong()
 
-        val typicalAmount = median(amounts).toLong()
+        // For fixed-amount subscriptions/recharges (or 2-point series), use the latest charge amount
+        // so e.g. [₹399, ₹398] displays the current ₹398 plan price instead of averaging to ₹398.50 (₹399).
+        val typicalAmount = if (fixed || series.size <= 2) last.amount else median(amounts).toLong()
         val confidence = ratio *
                 (if (fixed) 1.0 else 0.85) *
-                min(1.0, series.size / (cadence.minOccurrences + 2.0))
+                min(1.0, series.size / (cadence.minOccurrences + 1.5))
 
         return RecurringPayment(
             payee = last.payee,
@@ -138,9 +183,35 @@ object RecurringPaymentDetector {
     }
 
     /**
-     * Fraction of gaps that look like this cadence. A gap of ~2x the period counts half,
-     * so one missed or unparsed payment doesn't break a real subscription.
+     * Uses real calendar month/year addition for calendar cadences (so a monthly bill paid on 17 Oct
+     * is expected on 17 Nov rather than 16 Nov due to 31 days in October), while using exact day steps
+     * for N-day cadences like 28-day prepaid telecom recharges.
      */
+    private fun computeNextExpected(lastTimestamp: Long, cadence: Cadence, stepDays: Double): Long {
+        val cal = Calendar.getInstance().apply { timeInMillis = lastTimestamp }
+        return when (cadence) {
+            Cadence.MONTHLY -> {
+                cal.add(Calendar.MONTH, 1)
+                cal.timeInMillis
+            }
+            Cadence.BIMONTHLY -> {
+                cal.add(Calendar.MONTH, 2)
+                cal.timeInMillis
+            }
+            Cadence.QUARTERLY -> {
+                cal.add(Calendar.MONTH, 3)
+                cal.timeInMillis
+            }
+            Cadence.YEARLY -> {
+                cal.add(Calendar.YEAR, 1)
+                cal.timeInMillis
+            }
+            Cadence.RECHARGE_28D -> lastTimestamp + 28L * DAY_MS
+            Cadence.BIWEEKLY -> lastTimestamp + 14L * DAY_MS
+            Cadence.WEEKLY -> lastTimestamp + 7L * DAY_MS
+        }
+    }
+
     private fun matchRatio(gaps: List<Double>, c: Cadence): Double {
         var score = 0.0
         for (g in gaps) {
@@ -153,9 +224,6 @@ object RecurringPaymentDetector {
         return score / gaps.size
     }
 
-    /**
-     * Groups payments whose amounts are within max(Rs 1 [100 paise], 3%) of the cluster's smallest amount.
-     */
     private fun clusterByAmount(points: List<DebitPoint>): List<List<DebitPoint>> {
         val clusters = mutableListOf<MutableList<DebitPoint>>()
         for (p in points.sortedBy { it.amount }) {
@@ -172,7 +240,6 @@ object RecurringPaymentDetector {
         return clusters
     }
 
-    /** Drops near-simultaneous duplicates (same charge seen via SMS and notification). */
     private fun dedupe(sorted: List<DebitPoint>): List<DebitPoint> {
         val kept = mutableListOf<DebitPoint>()
         for (p in sorted) {
