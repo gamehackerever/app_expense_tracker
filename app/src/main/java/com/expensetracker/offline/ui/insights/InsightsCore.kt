@@ -222,12 +222,18 @@ internal fun SectionHeader(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.weight(1f, fill = false),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
                 title,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
             )
             if (trailing != null && actionLabel != null) {
                 Spacer(modifier = Modifier.width(8.dp))
@@ -235,7 +241,10 @@ internal fun SectionHeader(
                     "· $trailing",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -451,6 +460,8 @@ internal fun InsightsBadge(text: String, color: Color) {
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             color = color,
+            maxLines = 1,
+            softWrap = false,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
         )
     }

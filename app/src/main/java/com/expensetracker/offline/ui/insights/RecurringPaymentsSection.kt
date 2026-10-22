@@ -56,8 +56,16 @@ private object RecurringColors {
 private fun rupees(value: Long): String =
     "₹" + String.format(Locale.getDefault(), "%,.0f", value / 100.0)
 
+private fun startOfDayMillis(t: Long): Long = java.util.Calendar.getInstance().apply {
+    timeInMillis = t
+    set(java.util.Calendar.HOUR_OF_DAY, 0)
+    set(java.util.Calendar.MINUTE, 0)
+    set(java.util.Calendar.SECOND, 0)
+    set(java.util.Calendar.MILLISECOND, 0)
+}.timeInMillis
+
 private fun daysUntil(payment: RecurringPayment, now: Long): Int =
-    ceil((payment.nextExpected - now).toDouble() / RECURRING_DAY_MS).toInt()
+    Math.round((startOfDayMillis(payment.nextExpected) - startOfDayMillis(now)) / RECURRING_DAY_MS.toDouble()).toInt()
 
 private fun dueLabel(payment: RecurringPayment, now: Long, lapsed: Boolean, df: SimpleDateFormat): String {
     if (lapsed) return "Last paid ${df.format(Date(payment.lastSeen))}"
@@ -167,7 +175,7 @@ private fun RecurringPaymentsContent(
     val lapsed = remember(payments) { payments.filterNot { it.isActive }.sortedByDescending { it.lastSeen } }
     val monthlyTotal = remember(payments) { RecurringPaymentDetector.monthlyTotal(payments) }
     val dueThisWeek = remember(active, now) {
-        active.filter { it.nextExpected <= now + 7 * RECURRING_DAY_MS }.sumOf { it.amount }
+        active.filter { daysUntil(it, now) in 0..7 }.sumOf { it.amount }
     }
     val overdueCount = remember(active, now) { active.count { daysUntil(it, now) < 0 } }
     val dueSoonCount = remember(active, now) { active.count { daysUntil(it, now) in 0..7 } }

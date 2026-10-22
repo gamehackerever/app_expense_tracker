@@ -310,10 +310,9 @@ internal fun MultiCycleTrendCard(
     if (points.isEmpty()) return
     var selectedIdx by remember(points) { mutableIntStateOf(points.indexOfLast { it.isSelected }.coerceAtLeast(0)) }
     val selectedPoint = points.getOrNull(selectedIdx) ?: points.last()
-    val maxVal = remember(points, monthlyBudgetPaise) {
+    val maxVal = remember(points) {
         maxOf(
-            points.maxOfOrNull { maxOf(it.spentPaise, it.incomePaise) } ?: 1L,
-            monthlyBudgetPaise,
+            points.maxOfOrNull { it.spentPaise } ?: 1L,
             100L
         )
     }
@@ -392,10 +391,8 @@ internal fun MultiCycleTrendCard(
                         key = pt.spentPaise,
                         sessionKey = "insights_trend_bar_$idx"
                     )
-                    val isOverBudget = monthlyBudgetPaise > 0L && pt.spentPaise > monthlyBudgetPaise
                     val barColor = when {
                         !hasData -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isSel) 0.22f else 0.09f)
-                        isOverBudget && isSel -> InsightsColors.negative
                         isSel -> MaterialTheme.colorScheme.onSurface
                         else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
                     }
@@ -490,22 +487,28 @@ internal fun DailyCalendarHeatmapCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f, fill = false)) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         "Daily spending rhythm",
-                        fontSize = 15.sp,
+                        fontSize = 14.5.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         "${cycleStartDate.format(cycleLabelFmt)} – ${cycleEndDate.format(cycleLabelFmt)}",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
 
                 val selIdx = selectedDayIndex
                 if (selIdx != null) {
@@ -513,17 +516,27 @@ internal fun DailyCalendarHeatmapCard(
                     val dayAmt = dailySpendMap[selIdx] ?: 0L
                     Surface(
                         shape = RoundedCornerShape(AppRadius.pill),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                        color = AppColors.info.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, AppColors.info.copy(alpha = 0.45f))
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(AppColors.info)
+                            )
                             Text(
                                 "${selDate.format(fullDateFmt)} · ${formatRupees(dayAmt)}",
-                                fontSize = 11.5.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -534,22 +547,26 @@ internal fun DailyCalendarHeatmapCard(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 "Today (${todayDate.format(monthFmt)}) · ${formatRupees(todayAmt)}",
-                                fontSize = 11.5.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
                 } else {
                     Text(
                         "Tap date to inspect",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
@@ -589,7 +606,6 @@ internal fun DailyCalendarHeatmapCard(
                             if (gridIdx in startDayOfWeekOffset until totalCells) {
                                 val cellDate = cycleStartDate.plusDays(dayIdx.toLong())
                                 val dayNum = cellDate.dayOfMonth
-                                val isFirstOfMonth = (dayNum == 1 || dayIdx == 0)
 
                                 val isToday = (dayIdx == todayDayIndex)
                                 val spent = dailySpendMap[dayIdx] ?: 0L
@@ -598,19 +614,19 @@ internal fun DailyCalendarHeatmapCard(
                                 val isHighSpend = spent > 0L && intensity > 0.62f
 
                                 val isDark = MaterialTheme.colorScheme.surface.red < 0.2f
-                                // 4-tier contrast-safe scale tuned separately for Dark and Light themes:
+                                // 4-tier contrast-safe spend intensity scale (preserved even when selected so
+                                // selecting a low-spend day never looks like the highest-spend day of the cycle):
                                 val cellBg = when {
-                                    isSel -> MaterialTheme.colorScheme.onSurface
                                     spent <= 0L -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isToday) 0.08f else if (isDark) 0.03f else 0.035f)
                                     isHighSpend -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDark) 0.90f else 0.86f)
-                                    intensity > 0.30f -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDark) 0.32f else 0.18f)
-                                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDark) 0.15f else 0.09f)
+                                    intensity > 0.30f -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDark) 0.34f else 0.20f)
+                                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDark) 0.16f else 0.09f)
                                 }
 
                                 val textColor = when {
-                                    isSel || isHighSpend -> MaterialTheme.colorScheme.surface
-                                    spent <= 0L && !isToday -> MaterialTheme.colorScheme.onSurfaceVariant
-                                    else -> MaterialTheme.colorScheme.onSurface
+                                    isHighSpend -> MaterialTheme.colorScheme.surface
+                                    isSel || isToday || spent > 0L -> MaterialTheme.colorScheme.onSurface
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
                                 }
 
                                 Box(
@@ -621,8 +637,12 @@ internal fun DailyCalendarHeatmapCard(
                                         .background(cellBg)
                                         .then(
                                             when {
-                                                isSel -> Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
-                                                isToday -> Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                                                isSel -> Modifier.border(2.dp, AppColors.info, RoundedCornerShape(8.dp))
+                                                isToday -> Modifier.border(
+                                                    1.25.dp,
+                                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                                                    RoundedCornerShape(8.dp)
+                                                )
                                                 else -> Modifier
                                             }
                                         )
@@ -636,28 +656,27 @@ internal fun DailyCalendarHeatmapCard(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.Center
                                     ) {
-                                        if (isFirstOfMonth && !isToday) {
-                                            Text(
-                                                text = cellDate.format(DateTimeFormatter.ofPattern("MMM", Locale.getDefault())).uppercase(),
-                                                fontSize = 7.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = textColor.copy(alpha = 0.7f),
-                                                lineHeight = 9.sp
-                                            )
-                                        }
                                         Text(
                                             text = "$dayNum",
                                             fontSize = 12.sp,
                                             fontWeight = if (isToday || isSel || spent > 0L) FontWeight.Bold else FontWeight.Medium,
-                                            color = textColor
+                                            color = textColor,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                         if (isToday) {
                                             Box(
                                                 modifier = Modifier
                                                     .padding(top = 1.dp)
-                                                    .size(3.dp)
+                                                    .size(3.5.dp)
                                                     .clip(CircleShape)
-                                                    .background(if (isSel || isHighSpend) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface)
+                                                    .background(
+                                                        when {
+                                                            isSel && !isHighSpend -> AppColors.info
+                                                            isHighSpend -> MaterialTheme.colorScheme.surface
+                                                            else -> MaterialTheme.colorScheme.onSurface
+                                                        }
+                                                    )
                                             )
                                         }
                                     }
@@ -666,6 +685,83 @@ internal fun DailyCalendarHeatmapCard(
                                 Spacer(modifier = Modifier.weight(1f).height(38.dp))
                             }
                         }
+                    }
+                }
+            }
+
+            // Compact Intensity & Selection Legend
+            val isDarkLegend = MaterialTheme.colorScheme.surface.red < 0.2f
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text(
+                        "Less",
+                        fontSize = 10.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    listOf(
+                        if (isDarkLegend) 0.04f else 0.04f,
+                        if (isDarkLegend) 0.16f else 0.09f,
+                        if (isDarkLegend) 0.34f else 0.20f,
+                        if (isDarkLegend) 0.90f else 0.86f
+                    ).forEach { alpha ->
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
+                        )
+                    }
+                    Text(
+                        "More",
+                        fontSize = 10.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (todayDayIndex != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .border(1.25.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f), RoundedCornerShape(3.dp))
+                            )
+                            Text(
+                                "Today",
+                                fontSize = 10.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .border(1.75.dp, AppColors.info, RoundedCornerShape(3.dp))
+                        )
+                        Text(
+                            "Selected",
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -795,6 +891,8 @@ internal fun SmartInsightsCard(
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
