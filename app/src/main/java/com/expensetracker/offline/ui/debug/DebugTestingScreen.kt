@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Refresh
@@ -279,7 +280,7 @@ fun DebugTestingScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                "Parser, ML forecaster, bills & split math",
+                                "Parser, ML, bills & split math",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -334,7 +335,7 @@ fun DebugTestingScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.CheckCircle,
+                                            imageVector = if (res.passed) Icons.Default.CheckCircle else Icons.Default.Cancel,
                                             contentDescription = null,
                                             tint = if (res.passed) AppColors.positive else MaterialTheme.colorScheme.error,
                                             modifier = Modifier.size(16.dp)

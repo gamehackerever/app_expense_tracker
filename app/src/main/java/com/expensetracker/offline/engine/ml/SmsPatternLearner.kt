@@ -198,9 +198,16 @@ object SmsPatternLearner {
         return clean.ifBlank { ANY_SENDER }
     }
 
-    fun extractSkeleton(rawContent: String): String {
+    fun extractSkeleton(rawContent: String, knownPayee: String? = null): String {
         if (rawContent.isBlank()) return ""
         var s = rawContent.trim().lowercase(Locale.ROOT)
+        if (!knownPayee.isNullOrBlank() && knownPayee.trim().length >= 2) {
+            val pLower = knownPayee.trim().lowercase(Locale.ROOT)
+            val idx = s.indexOf(pLower)
+            if (idx >= 0) {
+                s = s.substring(0, idx) + " <payee> " + s.substring(idx + pLower.length)
+            }
+        }
         s = URL_REGEX.matcher(s).replaceAll("<url>")
         s = VPA_REGEX.matcher(s).replaceAll("<vpa>")
         s = AMOUNT_PRE_REGEX.matcher(s).replaceAll("<amt>")
@@ -271,9 +278,14 @@ object SmsPatternLearner {
         }
 
         val anchors = if (cleanPayee != null) extractPayeeAnchors(rawContent, cleanPayee) else null
+        val effectiveSkeleton = if (anchors != null && cleanPayee != null) {
+            extractSkeleton(rawContent, cleanPayee).ifBlank { skeleton }
+        } else {
+            skeleton
+        }
 
-        val key = compositeKey(senderKey, skeleton)
-        val record = templates.getOrPut(key) { TemplateRecord(senderKey = senderKey, skeleton = skeleton) }
+        val key = compositeKey(senderKey, effectiveSkeleton)
+        val record = templates.getOrPut(key) { TemplateRecord(senderKey = senderKey, skeleton = effectiveSkeleton) }
         synchronized(record) {
             record.approvedCount = (record.approvedCount + 1).coerceAtMost(1000)
             if (record.rejectedCount > 0 && record.approvedCount >= record.rejectedCount) {
@@ -291,8 +303,8 @@ object SmsPatternLearner {
             record.lastUpdated = System.currentTimeMillis()
         }
 
-        val wildcardKey = compositeKey(ANY_SENDER, skeleton)
-        val wildcardRecord = templates.getOrPut(wildcardKey) { TemplateRecord(senderKey = ANY_SENDER, skeleton = skeleton) }
+        val wildcardKey = compositeKey(ANY_SENDER, effectiveSkeleton)
+        val wildcardRecord = templates.getOrPut(wildcardKey) { TemplateRecord(senderKey = ANY_SENDER, skeleton = effectiveSkeleton) }
         synchronized(wildcardRecord) {
             wildcardRecord.approvedCount = (wildcardRecord.approvedCount + 1).coerceAtMost(1000)
             if (wildcardRecord.rejectedCount > 0 && wildcardRecord.approvedCount >= wildcardRecord.rejectedCount) {
@@ -360,7 +372,32 @@ object SmsPatternLearner {
         val senderProfile = if (senderKey != ANY_SENDER) senders[senderKey] else null
         val vpaMatch = lookupVpa(rawContent)
 
-        val activeTemplate = exactMatch ?: wildcardMatch
+        var activeTemplate = exactMatch ?: wildcardMatch
+        var preExtractedPayee: String? = null
+
+        if (activeTemplate == null) {
+            val candidates = templates.values.filter {
+                (it.senderKey == senderKey || it.senderKey == ANY_SENDER) &&
+                    it.approvedCount > it.rejectedCount &&
+                    !it.prefixAnchor.isNullOrBlank()
+            }.sortedByDescending { if (it.senderKey == senderKey) 1 else 0 }
+
+            for (cand in candidates) {
+                val extracted = extractPayeeUsingAnchors(
+                    rawContent = rawContent,
+                    prefixAnchor = cand.prefixAnchor,
+                    suffixAnchor = cand.suffixAnchor
+                )
+                if (!extracted.isNullOrBlank()) {
+                    val maskedSkeleton = extractSkeleton(rawContent, extracted)
+                    if (maskedSkeleton == cand.skeleton) {
+                        activeTemplate = cand
+                        preExtractedPayee = extracted
+                        break
+                    }
+                }
+            }
+        }
 
         if (activeTemplate != null) {
             val approved = activeTemplate.approvedCount
@@ -376,6 +413,7 @@ object SmsPatternLearner {
 
             if (approved > 0 && approved >= rejected) {
                 val dynamicPayee = vpaMatch?.payee?.takeIf { it.isNotBlank() && !CategoryClassifier.isGenericPayee(it) }
+                    ?: preExtractedPayee?.takeIf { !CategoryClassifier.isGenericPayee(it) }
                     ?: extractPayeeUsingAnchors(
                         rawContent = rawContent,
                         prefixAnchor = activeTemplate.prefixAnchor,
@@ -385,8 +423,10 @@ object SmsPatternLearner {
                 val learnedType = activeTemplate.learnedType?.let {
                     runCatching { TransactionType.valueOf(it) }.getOrNull()
                 }
-                // Only infer category from an exact VPA match — never from a general bank SMS template!
                 val bestCategory = vpaMatch?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }
+                    ?: dynamicPayee?.let { p ->
+                        CategoryClassifier.classifySync(p, rawContent).takeIf { !it.equals("Uncategorized", ignoreCase = true) }
+                    }
 
                 return TemplateEvaluation(
                     isBlockedNonTransaction = false,
@@ -439,7 +479,8 @@ object SmsPatternLearner {
         if (idx <= 0) return null
 
         val before = cleanText.substring(0, idx).trimEnd()
-        val after = cleanText.substring(idx + payee.length).trimStart()
+        val after = cleanText.substring(idx + payee.length)
+            .trimStart { !it.isLetterOrDigit() }
 
         val rawPrefixWords = before.split(" ").filter { it.isNotBlank() }.takeLast(2)
         val cleanPrefixWords = if (rawPrefixWords.any { w -> w.any { it.isDigit() } }) {
@@ -450,9 +491,11 @@ object SmsPatternLearner {
         if (cleanPrefixWords.isEmpty()) return null
         val prefixAnchor = cleanPrefixWords.joinToString(" ").lowercase(Locale.ROOT)
 
-        val suffixAnchor = after.split(Regex("\\s+")).firstOrNull()?.takeIf {
-            it.isNotBlank() && !it.any { ch -> ch.isDigit() }
-        }?.lowercase(Locale.ROOT)
+        val suffixAnchor = after.split(Regex("\\s+"))
+            .firstOrNull()
+            ?.trim { !it.isLetterOrDigit() }
+            ?.takeIf { it.isNotBlank() && !it.any { ch -> ch.isDigit() } }
+            ?.lowercase(Locale.ROOT)
         return prefixAnchor to suffixAnchor
     }
 
@@ -500,6 +543,19 @@ object SmsPatternLearner {
         val approvedTemplates = templates.values.count { it.senderKey != ANY_SENDER && it.approvedCount > 0 }
         val blockedTemplates = templates.values.count { it.senderKey != ANY_SENDER && it.rejectedCount > it.approvedCount }
         return Triple(uniqueTemplates, approvedTemplates, blockedTemplates)
+    }
+
+    fun removePatternsForSender(sender: String) {
+        val senderKey = normalizeSenderKey(sender)
+        val removedSkels = templates.values
+            .filter { it.senderKey == senderKey }
+            .map { it.skeleton }
+            .toSet()
+        templates.keys.removeAll { key ->
+            key.startsWith("$senderKey||") ||
+                (key.startsWith("$ANY_SENDER||") && key.substringAfter("$ANY_SENDER||") in removedSkels)
+        }
+        senders.remove(senderKey)
     }
 
     fun clearAllLearnedPatterns() {

@@ -130,28 +130,35 @@ object AutomatedTestSuite {
         // ── 3. Active Review Pattern Learner Tests ─────────────────────────
         check("SmsPatternLearner", "Active Learning on Review Approve & Discard") {
             val spamSender = "AX-TESTPR"
-            val spamSample1 = "Alert: Your reward points worth Rs 500 are expiring on 12-10-26. Redeem now."
-            val spamSample2 = "Alert: Your reward points worth Rs 850 are expiring on 25-10-26. Redeem now."
-            SmsPatternLearner.learnDiscardedReview(spamSender, spamSample1)
-            val parsedSpam = FinancialParser.parse(spamSample2, spamSender)
-            require(!parsedSpam.isFinancial) { "Discarded SMS template must be blocked on future variations" }
-
             val bankSender = "VM-COOPBK"
-            val validSample1 = "A/c XX4411 debited by Rs 340.00 on 10-10-26 towards MKT: NILGIRIS DAIRY. Bal Rs 12400.00"
-            val validSample2 = "A/c XX4411 debited by Rs 520.00 on 15-10-26 towards MKT: MILMA BOOTH. Bal Rs 11880.00"
-            SmsPatternLearner.learnApprovedReview(
-                sender = bankSender,
-                rawContent = validSample1,
-                resolvedPayee = "Nilgiris Dairy",
-                resolvedCategory = "Groceries",
-                resolvedType = TransactionType.DEBIT,
-                resolvedBankName = "Co-op Bank"
-            )
-            val eval2 = SmsPatternLearner.evaluate(bankSender, validSample2)
-            require(eval2.isConfirmedTransaction && eval2.inferredCategory == "Groceries") {
-                "Expected approved template to confirm transaction and infer Groceries"
+            SmsPatternLearner.removePatternsForSender(spamSender)
+            SmsPatternLearner.removePatternsForSender(bankSender)
+            try {
+                val spamSample1 = "Alert: Your reward points worth Rs 500 are expiring on 12-10-26. Redeem now."
+                val spamSample2 = "Alert: Your reward points worth Rs 850 are expiring on 25-10-26. Redeem now."
+                SmsPatternLearner.learnDiscardedReview(spamSender, spamSample1)
+                val parsedSpam = FinancialParser.parse(spamSample2, spamSender)
+                require(!parsedSpam.isFinancial) { "Discarded SMS template must be blocked on future variations" }
+
+                val validSample1 = "A/c XX4411 debited by Rs 340.00 on 10-10-26 towards MKT: NILGIRIS DAIRY. Bal Rs 12400.00"
+                val validSample2 = "A/c XX4411 debited by Rs 520.00 on 15-10-26 towards MKT: MILMA BOOTH. Bal Rs 11880.00"
+                SmsPatternLearner.learnApprovedReview(
+                    sender = bankSender,
+                    rawContent = validSample1,
+                    resolvedPayee = "Nilgiris Dairy",
+                    resolvedCategory = "Groceries",
+                    resolvedType = TransactionType.DEBIT,
+                    resolvedBankName = "Co-op Bank"
+                )
+                val eval2 = SmsPatternLearner.evaluate(bankSender, validSample2)
+                require(eval2.isConfirmedTransaction && eval2.inferredCategory == "Groceries") {
+                    "Expected approved template to confirm transaction and infer Groceries"
+                }
+                "Blocked discarded template & learned dynamic anchor (${eval2.inferredPayee} -> ${eval2.inferredCategory})"
+            } finally {
+                SmsPatternLearner.removePatternsForSender(spamSender)
+                SmsPatternLearner.removePatternsForSender(bankSender)
             }
-            "Blocked discarded template & learned dynamic anchor + category from approval"
         }
 
         // ── 4. NecessityManager & Bill Reminders Tests ─────────────────────
