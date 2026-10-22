@@ -18,6 +18,18 @@ Need help with Android 13+ *"Restricted settings"* (for live UPI notifications) 
 
 ---
 
+## Screenshots
+
+| Onboarding & Setup | Main Dashboard | System Health Settings |
+|:---:|:---:|:---:|
+| <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1_onboarding.jpg" width="240" alt="Onboarding Setup"/> | <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2_dashboard.jpg" width="240" alt="Dashboard Screen"/> | <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3_settings.jpg" width="240" alt="System Health Settings"/> |
+
+| Category Breakdown | Cycle Analytics & Forecast | Spending Rhythm Calendar |
+|:---:|:---:|:---:|
+| <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4_category_insights.jpg" width="240" alt="Category Insights"/> | <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/5_cycle_analytics.jpg" width="240" alt="Cycle Analytics"/> | <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/6_spending_rhythm.jpg" width="240" alt="Spending Rhythm Calendar"/> |
+
+---
+
 ## Key Features in v1.2.0
 
 * **Hands-Free Auto-Capture**:
