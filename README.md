@@ -27,7 +27,7 @@ Need help with Android 13+ *"Restricted settings"* (for live UPI notifications) 
 * **On-Device Financial Intelligence (`SmartExpenseEngine` & `SmsPatternLearner`)**:
   * **Contextual Payee & Amount Predictor**: Suggests likely merchants and typical amounts based on time of day, day of week, and recency decay.
   * **Active Review Queue Learner**: Learns structural SMS/notification templates and UPI VPA handles whenever you approve or discard an item in **Needs Review**.
-  * **Hybrid Categorizer**: Combines Jaro-Winkler fuzzy matching, subword 3-gram Naive Bayes, and log-amount priors across **18 Indian categories** (`Food & Dining`, `Groceries`, `Fuel & Fastag`, `Travel`, `Recharge & Telecom`, `Bills & Utilities`, `Rent & Housing`, `EMI & Loans`, `Investments`, etc.) and regional merchants.
+  * **Hybrid Categorizer**: Combines Jaro-Winkler fuzzy matching, subword 3-gram Naive Bayes, and log-amount priors across **17 spending categories** (`Food & Dining`, `Groceries`, `Fuel & Fastag`, `Travel`, `Recharge & Telecom`, `Bills & Utilities`, `Rent & Housing`, `EMI & Loans`, `Investments`, etc.) and regional merchants.
   * **Smart Spend Forecaster & Habit Insights**: Outlier-dampened cycle projections and behavioral spend insights on the **Insights** screen.
 * **Budgeting, Fixed Costs & Safe-to-Spend**:
   * Custom billing cycle reset day (`Day 1–28`), per-category monthly caps with warnings, recurring bill detection, and prorated sinking-fund reserves.

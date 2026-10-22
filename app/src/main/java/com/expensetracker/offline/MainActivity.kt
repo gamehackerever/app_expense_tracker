@@ -700,7 +700,7 @@ fun ProminentDisclosureScreen(
                                         ) {
                                             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                                                 Text(
-                                                    "Import this month's bank SMS",
+                                                    "Import past 90 days of bank SMS",
                                                     fontWeight = FontWeight.SemiBold,
                                                     fontSize = 13.5.sp,
                                                     color = MaterialTheme.colorScheme.onSurface
@@ -1096,7 +1096,7 @@ fun ProminentDisclosureScreen(
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
                                     text = if (enableAutoCapture) {
-                                        if (importPastSms) "Ready! Next, allow SMS access so we can import this month's bank transactions offline."
+                                        if (importPastSms) "Ready! Next, allow SMS access so we can import past 90 days of bank transactions offline."
                                         else "Ready! Next, allow SMS access to auto-detect new payments going forward."
                                     } else {
                                         "Ready! You're starting in Manual & Receipt mode with zero permissions."

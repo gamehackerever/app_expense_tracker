@@ -127,7 +127,7 @@ object AutomatedTestSuite {
                 .filter { it != "Uncategorized" }
                 .all { hasCategoryIcon(it) }
             require(allHaveIcons) { "Every predefined Indian category must have a dedicated icon" }
-            "Verified 18 Indian categories & icons ($fuelCat, $telecomCat, $rentCat, $emiCat)"
+            "Verified 17 spending categories & icons ($fuelCat, $telecomCat, $rentCat, $emiCat)"
         }
 
         // ── 3. Active Review Pattern Learner Tests ─────────────────────────
