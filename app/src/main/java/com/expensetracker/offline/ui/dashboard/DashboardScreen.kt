@@ -2400,10 +2400,25 @@ fun DashboardScreen(
                                         }
                                     }
                                     Spacer(modifier = Modifier.width(14.dp))
-                                    Column {
-                                        Text("$pendingReviewCount to review", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "$pendingReviewCount to review",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 16.sp,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                         Spacer(modifier = Modifier.height(2.dp))
-                                        Text("Approve, edit, or discard all in 1 tap", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            "Approve, edit, or discard",
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                     }
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -2448,8 +2463,21 @@ fun DashboardScreen(
                                     OutlinedButton(
                                         onClick = {
                                             haptic.confirm()
-                                            viewModel.bulkResolveReviewItems(pendingReviewItems) { approved, _ ->
-                                                showSnack("Approved $approved transactions")
+                                            viewModel.bulkResolveReviewItems(pendingReviewItems) { approved, skipped ->
+                                                when {
+                                                    approved > 0 && skipped == 0 ->
+                                                        showSnack("Approved $approved ${if (approved == 1) "transaction" else "transactions"}")
+                                                    approved > 0 && skipped > 0 -> {
+                                                        showSnack("Approved $approved · $skipped need an amount")
+                                                        onNavigateToReview()
+                                                    }
+                                                    approved == 0 && skipped > 0 -> {
+                                                        showSnack("Please enter an amount to approve")
+                                                        onNavigateToReview()
+                                                    }
+                                                    else ->
+                                                        showSnack("Removed non-transaction alert")
+                                                }
                                             }
                                         },
                                         modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 42.dp),

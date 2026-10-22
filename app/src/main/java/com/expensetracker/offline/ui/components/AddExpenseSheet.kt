@@ -331,12 +331,11 @@ fun AddExpenseSheet(
                     enter = fadeIn(tween(180)) + expandVertically(tween(180)),
                     exit = fadeOut(tween(140)) + shrinkVertically(tween(140))
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         smartPredictions.forEach { pred ->
                             val typicalRupees = pred.typicalAmountPaise / 100L

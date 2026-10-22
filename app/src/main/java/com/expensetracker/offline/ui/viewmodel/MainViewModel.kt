@@ -792,22 +792,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val prefs = BalanceCache.prefs(context)
 
             items.sortedBy { it.timestamp }.forEach { item ->
-                val needsParse = item.bankName == null && item.balance == null && item.referenceId == null && item.type == null
-                val parsed = if (needsParse) FinancialParser.parse(item.rawContent, item.sender) else null
-                val amt = item.extractedPartialAmount ?: parsed?.amount ?: 0L
-                val type = item.type ?: parsed?.type
-                val rawPayee = item.extractedPartialPayee ?: parsed?.payee
+                val parsed = FinancialParser.parse(item.rawContent, item.sender, item.source)
+                val amt = item.extractedPartialAmount?.takeIf { it > 0L } ?: parsed.amount ?: 0L
+                val type = item.type ?: parsed.type ?: if (amt > 0L) TransactionType.DEBIT else null
+                val rawPayee = item.extractedPartialPayee ?: parsed.payee
                 val payee = if (!rawPayee.isNullOrBlank() && !rawPayee.equals("Unknown", ignoreCase = true)) {
                     rawPayee
                 } else {
                     FinancialParser.inferFallbackPayee(item.rawContent, type, settingsRepo.fallbackPayee)
                 }
 
-                if (amt > 0 && type != null) {
+                if (amt > 0L && type != null) {
                     val category = repository.classifyCategory(payee, item.rawContent, amt, item.timestamp, type)
-                    val bank = item.bankName ?: parsed?.bankName
-                    val account = item.accountNumber ?: parsed?.accountNumber
-                    val balance = item.balance ?: parsed?.balance
+                    val bank = item.bankName ?: parsed.bankName
+                    val account = item.accountNumber ?: parsed.accountNumber
+                    val balance = item.balance ?: parsed.balance
 
                     val newTransaction = TransactionEntity(
                         amount = amt,
@@ -819,12 +818,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         bankName = bank,
                         accountNumber = account,
                         balance = balance,
-                        referenceId = item.referenceId ?: parsed?.referenceId,
-                        note = parsed?.note,
+                        referenceId = item.referenceId ?: parsed.referenceId,
+                        note = parsed.note,
                         source = item.source,
                         itemsSummary = null,
                         receiptImageUri = null,
-                        excludeFromSpend = parsed?.excludeFromSpend ?: false
+                        excludeFromSpend = parsed.excludeFromSpend
                     )
 
                     approvals.add(newTransaction to item.id)
@@ -833,6 +832,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         BalanceCache.updateIfNewer(prefs, bank, account, it, item.timestamp)
                     }
                     approved++
+                } else if (!parsed.isFinancial && !item.rawContent.startsWith("Silent Deduction", ignoreCase = true)) {
+                    // Automatically discard non-monetary promo/data alerts instead of leaving them stuck
+                    repository.discardReviewItem(item.id)
                 } else {
                     skipped++
                 }

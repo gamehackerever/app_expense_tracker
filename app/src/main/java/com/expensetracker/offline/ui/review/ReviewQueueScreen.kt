@@ -37,7 +37,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.SelectAll
@@ -332,8 +331,13 @@ fun ReviewQueueScreen(
             onConfirm = {
                 val selectedItems = items.filter { selectedIds.contains(it.id) }
                 viewModel.bulkResolveReviewItems(selectedItems) { approved, skipped ->
-                    if (skipped > 0) {
-                        Toast.makeText(context, "$approved approved. $skipped still need an amount. Tap them to fix.", Toast.LENGTH_LONG).show()
+                    when {
+                        approved == 0 && skipped > 0 ->
+                            Toast.makeText(context, "Please enter an amount below to approve.", Toast.LENGTH_LONG).show()
+                        approved > 0 && skipped > 0 ->
+                            Toast.makeText(context, "$approved approved · $skipped still need an amount.", Toast.LENGTH_LONG).show()
+                        approved == 0 && skipped == 0 ->
+                            Toast.makeText(context, "Removed non-transaction alert.", Toast.LENGTH_SHORT).show()
                     }
                 }
                 confirmBulkApprove = false
@@ -389,7 +393,7 @@ private fun ReviewExplainer(
             lineHeight = 18.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        if (count > 1) {
+        if (count >= 1) {
             Spacer(modifier = Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
@@ -405,7 +409,7 @@ private fun ReviewExplainer(
                     Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = ExpenseRed, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Discard All ($count)",
+                        text = if (count == 1) "Discard" else "Discard All ($count)",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = ExpenseRed,
@@ -426,7 +430,7 @@ private fun ReviewExplainer(
                     Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Approve All ($count)",
+                        text = if (count == 1) "Approve" else "Approve All ($count)",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
@@ -905,23 +909,25 @@ fun ReviewCard(
 
                                             val reviewAmtPaise = (amountText.toDoubleOrNull()?.times(100))?.toLong()
                                             val reviewQuery = if (payeeText.equals("Silent Deduction", ignoreCase = true)) "" else payeeText
-                                            val reviewSuggestions = remember(reviewQuery, reviewAmtPaise, item.timestamp, transactionType, transactionsHistory) {
-                                                SmartExpenseEngine.predictContextualPayees(
-                                                    transactions = transactionsHistory,
-                                                    query = reviewQuery,
-                                                    nowMillis = item.timestamp,
-                                                    isDebit = transactionType == TransactionType.DEBIT,
-                                                    limit = 4,
-                                                    amountPaise = reviewAmtPaise
-                                                ).filterNot { it.payee.equals(payeeText.trim(), ignoreCase = true) }
+                                            var reviewSuggestions by remember { mutableStateOf<List<SmartExpenseEngine.SmartPayeePrediction>>(emptyList()) }
+                                            LaunchedEffect(reviewQuery, reviewAmtPaise, item.timestamp, transactionType, transactionsHistory) {
+                                                reviewSuggestions = withContext(Dispatchers.Default) {
+                                                    SmartExpenseEngine.predictContextualPayees(
+                                                        transactions = transactionsHistory,
+                                                        query = reviewQuery,
+                                                        nowMillis = item.timestamp,
+                                                        isDebit = transactionType == TransactionType.DEBIT,
+                                                        limit = 4,
+                                                        amountPaise = reviewAmtPaise
+                                                    ).filterNot { it.payee.equals(payeeText.trim(), ignoreCase = true) }
+                                                }
                                             }
                                             if (reviewSuggestions.isNotEmpty()) {
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .horizontalScroll(rememberScrollState()),
+                                                @OptIn(ExperimentalLayoutApi::class)
+                                                FlowRow(
+                                                    modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
+                                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
                                                     reviewSuggestions.forEach { pred ->
                                                         Surface(
