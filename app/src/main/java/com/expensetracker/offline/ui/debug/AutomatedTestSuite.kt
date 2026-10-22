@@ -59,7 +59,10 @@ object AutomatedTestSuite {
             val otp = "Your OTP for Rs 5,000 transaction at Amazon is 482910. Do not share this OTP."
             val res = FinancialParser.parse(otp, "VM-SBIINB")
             require(!res.isFinancial) { "OTP message must be rejected as non-financial" }
-            "Rejected OTP message with ₹5,000 amount"
+            val viPromo = "Congrats! 2GB data CREDITED in your Vi a/c. Validity: 2 Days. You can use this to enjoy Live TV, Movies, Games & more on viapp.onelink.me/bSC3/ViD1"
+            val viRes = FinancialParser.parse(viPromo, "VI-CARE")
+            require(!viRes.isFinancial) { "Telecom data pack credit must be rejected as non-financial" }
+            "Rejected OTP & telecom data pack ('2GB data CREDITED in your Vi a/c')"
         }
 
         check("FinancialParser", "Word-Boundary 'consent' False-Positive Guard") {
@@ -387,21 +390,47 @@ object AutomatedTestSuite {
             "Dampened ₹2,500 one-off spike: forecast ₹${forecast / 100} vs ₹10,200 naive linear"
         }
 
-        check("RecurringPaymentDetector", "First-Week Brand & 28-Day Telecom Detection") {
+        check("RecurringPaymentDetector", "First-Week Brand, 28-Day Telecom & Casual Habit Filter") {
             val now = System.currentTimeMillis()
+            val dayMs = 86_400_000L
             val debits = listOf(
                 TransactionDao.DebitPoint(
                     id = 1L, payee = "VI Recharge", amount = 39800L,
-                    timestamp = now - 3 * 86_400_000L, category = "Recharge & Telecom"
+                    timestamp = now - 3 * dayMs, category = "Recharge & Telecom"
                 ),
                 TransactionDao.DebitPoint(
-                    id = 2L, payee = "Spotify", amount = 6800L,
-                    timestamp = now - 5 * 86_400_000L, category = "Subscriptions"
+                    id = 2L, payee = "Spotify", amount = 11900L,
+                    timestamp = now - 5 * dayMs, category = "Subscriptions"
+                ),
+                TransactionDao.DebitPoint(
+                    id = 3L, payee = "Spotify", amount = 11900L,
+                    timestamp = now - 35 * dayMs, category = "Subscriptions"
+                ),
+                // Casual frequent eatery with 2 matching amounts must NOT be flagged as a recurring bill
+                TransactionDao.DebitPoint(
+                    id = 4L, payee = "Tatva Cafe", amount = 9800L,
+                    timestamp = now - 1 * dayMs, category = "Food & Dining"
+                ),
+                TransactionDao.DebitPoint(
+                    id = 5L, payee = "Tatva Cafe", amount = 14000L,
+                    timestamp = now - 3 * dayMs, category = "Food & Dining"
+                ),
+                TransactionDao.DebitPoint(
+                    id = 6L, payee = "Tatva Cafe", amount = 12000L,
+                    timestamp = now - 6 * dayMs, category = "Food & Dining"
+                ),
+                TransactionDao.DebitPoint(
+                    id = 7L, payee = "Tatva Cafe", amount = 9800L,
+                    timestamp = now - 15 * dayMs, category = "Food & Dining"
                 )
             )
             val detected = RecurringPaymentDetector.detect(debits, now)
-            require(detected.size == 2) { "Expected 2 recurring bills detected in first week, got ${detected.size}" }
-            "Detected ${detected.joinToString { "${it.payee} (${it.cadence.label})" }} from single week"
+            require(detected.size == 2) { "Expected 2 recurring bills (VI + Spotify) and 0 casual false positives, got ${detected.map { it.payee }}" }
+            val spotify = detected.first { it.payee == "Spotify" }
+            val vi = detected.first { it.payee == "VI Recharge" }
+            require(spotify.cadence.name == "MONTHLY") { "Expected MONTHLY for Spotify, got ${spotify.cadence}" }
+            require(vi.cadence.name == "RECHARGE_28D") { "Expected RECHARGE_28D for VI Recharge, got ${vi.cadence}" }
+            "Detected ${detected.joinToString { "${it.payee} (${it.cadence.label})" }} & filtered casual dining"
         }
 
         check("SmartExpenseEngine", "Live Telemetry & Leave-One-Out Benchmark") {

@@ -759,11 +759,11 @@ private fun MlDiagnosticsCard(
                     fontWeight = FontWeight.SemiBold,
                     color = scheme.onSurfaceVariant
                 )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     report.livePredictions.forEach { pred ->
                         Surface(
