@@ -33,6 +33,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.round
 
+data class OnboardingScanSummary(
+    val isScanning: Boolean = false,
+    val hasCompleted: Boolean = false,
+    val scannedSmsCount: Int = 0,
+    val importedTxnCount: Int = 0,
+    val reviewCount: Int = 0,
+    val detectedAccountsCount: Int = 0,
+    val typicalMonthlySpendRupees: Long = 0L,
+    val suggestedBudgetRupees: Long = 15000L,
+    val permissionGranted: Boolean = false
+)
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val app: ExpenseTrackerApp
@@ -47,12 +59,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val startDayOfMonth = MutableStateFlow(settingsRepo.startDayOfMonth)
     val necessityChunkLimit = MutableStateFlow(settingsRepo.necessityChunkLimit)
     val isBudgetExplicitlySet = MutableStateFlow(settingsRepo.isBudgetExplicitlySet)
+    val isManualModePreferred = MutableStateFlow(settingsRepo.isManualModePreferred)
+    val isAutoCaptureBannerDismissed = MutableStateFlow(settingsRepo.isAutoCaptureBannerDismissed)
+
+    private val _onboardingScanSummary = MutableStateFlow(OnboardingScanSummary())
+    val onboardingScanSummary: StateFlow<OnboardingScanSummary> = _onboardingScanSummary
+
+    private val dbEpoch = MutableStateFlow(0)
 
     val categoryBudgets = MutableStateFlow(settingsRepo.getCategoryBudgets())
     val dismissedCategoryWarnings = MutableStateFlow<Set<String>>(emptySet())
     val dismissedCategoryWarningLevels = MutableStateFlow<Map<String, String>>(emptyMap())
 
-    val unsettledSplitsWithDebts = repository.unsettledSplitsWithDebts
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val unsettledSplitsWithDebts = dbEpoch.flatMapLatest { repository.unsettledSplitsWithDebts }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
@@ -114,7 +134,133 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         startDayOfMonth.value = settingsRepo.startDayOfMonth
         necessityChunkLimit.value = settingsRepo.necessityChunkLimit
         isBudgetExplicitlySet.value = settingsRepo.isBudgetExplicitlySet
+        isManualModePreferred.value = settingsRepo.isManualModePreferred
+        isAutoCaptureBannerDismissed.value = settingsRepo.isAutoCaptureBannerDismissed
         categoryBudgets.value = settingsRepo.getCategoryBudgets()
+        val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+        val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
+        dismissedCategoryWarningLevels.value = levels
+        dismissedCategoryWarnings.value = levels.keys
+    }
+
+    fun refreshAfterRestore() {
+        refreshSettings()
+        dbEpoch.value += 1
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.syncCategoryRulesFromHistory() }
+        }
+    }
+
+    fun setManualModePreferred(manual: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.isManualModePreferred = manual
+            if (manual) {
+                settingsRepo.isAutoCaptureBannerDismissed = true
+            }
+        }
+        isManualModePreferred.value = manual
+        if (manual) {
+            isAutoCaptureBannerDismissed.value = true
+        }
+    }
+
+    fun setAutoCaptureBannerDismissed(dismissed: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.isAutoCaptureBannerDismissed = dismissed
+        }
+        isAutoCaptureBannerDismissed.value = dismissed
+    }
+
+    fun runOnboardingSmsScan() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>().applicationContext
+            val hasReadSms = androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.READ_SMS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!hasReadSms) {
+                _onboardingScanSummary.value = OnboardingScanSummary(
+                    isScanning = false,
+                    hasCompleted = true,
+                    permissionGranted = false
+                )
+                return@launch
+            }
+
+            _onboardingScanSummary.value = OnboardingScanSummary(
+                isScanning = true,
+                hasCompleted = false,
+                permissionGranted = true
+            )
+
+            val now = System.currentTimeMillis()
+            val ninetyDaysAgo = now - 90L * 86_400_000L
+            val scanner = com.expensetracker.offline.engine.scanner.SmsHistoryScanner(context, app.database)
+            val scanResp = scanner.scanSmsSince(ninetyDaysAgo)
+
+            syncLatestBalanceFromSms()
+
+            val recentTxns = runCatching {
+                app.database.transactionDao().getTransactionsInRangeSync(ninetyDaysAgo, now)
+            }.getOrDefault(emptyList())
+
+            val thirtyDaysAgo = now - 30L * 86_400_000L
+            val debits90d = recentTxns.filter {
+                it.type == TransactionType.DEBIT &&
+                    !it.excludeFromSpend &&
+                    !it.category.equals("Transfer", ignoreCase = true) &&
+                    !it.category.equals("Split Settlement", ignoreCase = true)
+            }
+            val debits30dPaise = debits90d.filter { it.timestamp >= thirtyDaysAgo }.sumOf { it.amount }
+            val total90dPaise = debits90d.sumOf { it.amount }
+
+            val typicalMonthlyPaise = when {
+                debits30dPaise > 0L -> debits30dPaise
+                total90dPaise > 0L -> total90dPaise / 3L
+                else -> 0L
+            }
+            val typicalMonthlyRupees = (typicalMonthlyPaise / 100L).coerceAtLeast(0L)
+            val suggestedRupees = if (typicalMonthlyRupees > 0L) {
+                (((typicalMonthlyRupees + 999L) / 1000L) * 1000L).coerceIn(5000L, 500_000L)
+            } else {
+                15000L
+            }
+
+            val accountsCount = recentTxns
+                .mapNotNull { t -> t.bankName?.trim()?.takeIf { it.isNotEmpty() }?.let { b -> "$b|${t.accountNumber ?: ""}" } }
+                .distinct()
+                .size
+
+            when (scanResp) {
+                is com.expensetracker.offline.engine.scanner.ScanResponse.Success -> {
+                    val r = scanResp.result
+                    settingsRepo.lastImportedTxnIds = r.importedTransactionIds
+                    settingsRepo.lastImportedReviewIds = r.importedReviewIds
+                    settingsRepo.prefs.edit().putBoolean("key_setup_scan_done", true).apply()
+                    _onboardingScanSummary.value = OnboardingScanSummary(
+                        isScanning = false,
+                        hasCompleted = true,
+                        scannedSmsCount = r.scannedCount,
+                        importedTxnCount = r.directImportedCount,
+                        reviewCount = r.reviewCount,
+                        detectedAccountsCount = accountsCount,
+                        typicalMonthlySpendRupees = typicalMonthlyRupees,
+                        suggestedBudgetRupees = suggestedRupees,
+                        permissionGranted = true
+                    )
+                }
+                else -> {
+                    _onboardingScanSummary.value = OnboardingScanSummary(
+                        isScanning = false,
+                        hasCompleted = true,
+                        detectedAccountsCount = accountsCount,
+                        typicalMonthlySpendRupees = typicalMonthlyRupees,
+                        suggestedBudgetRupees = suggestedRupees,
+                        permissionGranted = true
+                    )
+                }
+            }
+        }
     }
 
     fun exportBackupToUri(uri: Uri, password: String? = null, onResult: (Boolean) -> Unit) {
@@ -130,11 +276,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val context = getApplication<Application>().applicationContext
             val result = BackupManager.restoreBackup(context, uri.toString(), password ?: "")
             if (result is RestoreResult.SuccessRestart) {
-                monthlyBudget.value = settingsRepo.monthlyBudget
-                startDayOfMonth.value = settingsRepo.startDayOfMonth
-                necessityChunkLimit.value = settingsRepo.necessityChunkLimit
-                isBudgetExplicitlySet.value = settingsRepo.isBudgetExplicitlySet
-                categoryBudgets.value = settingsRepo.getCategoryBudgets()
+                refreshAfterRestore()
             }
             withContext(Dispatchers.Main) { onResult(result) }
         }
@@ -150,10 +292,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         AutoBackupWorker.schedule(context)
     }
 
-    val pendingReviewItems: StateFlow<List<ReviewItemEntity>> = repository.pendingReviewItems
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val pendingReviewItems: StateFlow<List<ReviewItemEntity>> = dbEpoch.flatMapLatest { repository.pendingReviewItems }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val pendingReviewCount: StateFlow<Int> = repository.pendingReviewCount
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val pendingReviewCount: StateFlow<Int> = dbEpoch.flatMapLatest { repository.pendingReviewCount }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     private val searchQuery = MutableStateFlow("")
@@ -170,10 +314,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _manualSyncBalance = MutableStateFlow<Long?>(null)
     val manualSyncBalance: StateFlow<Long?> = _manualSyncBalance
 
-    val linkedAccounts: StateFlow<List<AccountInfo>> = repository.getLinkedAccountsFlow()
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val linkedAccounts: StateFlow<List<AccountInfo>> = dbEpoch.flatMapLatest { repository.getLinkedAccountsFlow() }
+        .map { list ->
+            val normalized = list.map { acc ->
+                val cleanBank = acc.bankName.removeSuffix(" CC").removeSuffix(" cc").trim()
+                val cleanAcc = acc.accountNumber?.trim()?.takeLast(4)?.takeIf { it.isNotEmpty() }
+                AccountInfo(cleanBank, cleanAcc)
+            }
+            val byBank = normalized.groupBy { it.bankName.lowercase() }
+            byBank.flatMap { (_, group) ->
+                val withAcc = group.filter { it.accountNumber != null }.distinctBy { it.accountNumber }
+                when {
+                    withAcc.isEmpty() -> listOf(group.first())
+                    group.first().bankName.equals("South Indian Bank", ignoreCase = true) -> listOf(withAcc.first())
+                    else -> withAcc
+                }
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val accountBalances: StateFlow<List<AccountBalanceInsight>> = repository.getLatestBalancesForAllAccountsFlow()
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val accountBalances: StateFlow<List<AccountBalanceInsight>> = dbEpoch.flatMapLatest { repository.getLatestBalancesForAllAccountsFlow() }
+        .map { list ->
+            val normalized = list.map { item ->
+                val cleanBank = item.bankName.removeSuffix(" CC").removeSuffix(" cc").trim()
+                val cleanAcc = item.accountNumber?.trim()?.takeLast(4)?.takeIf { it.isNotEmpty() }
+                item.copy(bankName = cleanBank, accountNumber = cleanAcc)
+            }
+            val byBank = normalized.groupBy { it.bankName.lowercase() }
+            byBank.flatMap { (_, bankGroup) ->
+                val primaryAcc = bankGroup.mapNotNull { it.accountNumber }.firstOrNull()
+                val unifiedGroup = if (bankGroup.first().bankName.equals("South Indian Bank", ignoreCase = true) && primaryAcc != null) {
+                    bankGroup.map { it.copy(accountNumber = primaryAcc) }
+                } else {
+                    bankGroup.map { if (it.accountNumber == null && primaryAcc != null) it.copy(accountNumber = primaryAcc) else it }
+                }
+                unifiedGroup
+                    .groupBy { "${it.bankName.lowercase()}|${it.accountNumber ?: ""}" }
+                    .map { (_, g) ->
+                        val newestWithBal = g.filter { it.latestBalance != null }.maxByOrNull { it.lastUpdated }
+                        val newestOverall = g.maxByOrNull { it.lastUpdated } ?: g.first()
+                        newestOverall.copy(latestBalance = newestWithBal?.latestBalance ?: newestOverall.latestBalance)
+                    }
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val selectedAccount = MutableStateFlow<AccountInfo?>(null)
@@ -182,7 +367,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val pendingDeleteIds: StateFlow<Map<Long, Long>> = _pendingDeleteIds
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val latestBalance: StateFlow<Long?> = selectedAccount.flatMapLatest { account ->
+    val latestBalance: StateFlow<Long?> = combine(selectedAccount, dbEpoch) { account, _ -> account }.flatMapLatest { account ->
         if (account != null) {
             repository.getLatestBalanceForAccountFlow(account.bankName, account.accountNumber)
         } else {
@@ -190,7 +375,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    val allTransactionsWithDebts = repository.allTransactionsWithDebts
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val allTransactionsWithDebts = dbEpoch.flatMapLatest { repository.allTransactionsWithDebts }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val splitLinkInfo: StateFlow<SplitLinkInfo> = allTransactionsWithDebts.map { list: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts> ->
@@ -218,16 +404,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .map { list -> list.map { it.transaction } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val totalMoneyOwed: StateFlow<Long?> = repository.totalMoneyOwed
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val totalMoneyOwed: StateFlow<Long?> = dbEpoch.flatMapLatest { repository.totalMoneyOwed }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
-    val totalMoneyYouOwe: StateFlow<Long?> = repository.totalMoneyYouOwe
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val totalMoneyYouOwe: StateFlow<Long?> = dbEpoch.flatMapLatest { repository.totalMoneyYouOwe }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val searchedTransactions: StateFlow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> = combine(
-        searchQuery, filterCategory, filterStartTime, transactionLimit
-    ) { q, c, s, l -> Triple(q, c, Pair(s, l)) }
+        searchQuery, filterCategory, filterStartTime, transactionLimit, dbEpoch
+    ) { q, c, s, l, _ -> Triple(q, c, Pair(s, l)) }
         .flatMapLatest { (q, c, sl) -> repository.searchAndFilterTransactionsFlow(q, c, sl.first, sl.second) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -286,8 +474,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     val recurringPayments: StateFlow<List<RecurringPayment>?> =
-        repository.recurringPaymentsFlow()
+        dbEpoch.flatMapLatest { repository.recurringPaymentsFlow() }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun resetManualSync() {
@@ -606,11 +795,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val needsParse = item.bankName == null && item.balance == null && item.referenceId == null && item.type == null
                 val parsed = if (needsParse) FinancialParser.parse(item.rawContent, item.sender) else null
                 val amt = item.extractedPartialAmount ?: parsed?.amount ?: 0L
-                val payee = item.extractedPartialPayee ?: parsed?.payee ?: "Unknown"
                 val type = item.type ?: parsed?.type
+                val rawPayee = item.extractedPartialPayee ?: parsed?.payee
+                val payee = if (!rawPayee.isNullOrBlank() && !rawPayee.equals("Unknown", ignoreCase = true)) {
+                    rawPayee
+                } else {
+                    FinancialParser.inferFallbackPayee(item.rawContent, type, settingsRepo.fallbackPayee)
+                }
 
                 if (amt > 0 && type != null) {
-                    val category = repository.classifyCategory(payee, item.rawContent, amt, item.timestamp)
+                    val category = repository.classifyCategory(payee, item.rawContent, amt, item.timestamp, type)
                     val bank = item.bankName ?: parsed?.bankName
                     val account = item.accountNumber ?: parsed?.accountNumber
                     val balance = item.balance ?: parsed?.balance
@@ -653,6 +847,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun bulkDiscardReviewItems(ids: List<Long>) {
         viewModelScope.launch(Dispatchers.IO) {
             ids.forEach { repository.discardReviewItem(it) }
+        }
+    }
+
+    fun scanCurrentCycleSms(importDirectly: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>().applicationContext
+            val hasReadSms = androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.READ_SMS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!hasReadSms) return@launch
+
+            settingsRepo.skipScanReview = importDirectly
+            val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+            val scanner = com.expensetracker.offline.engine.scanner.SmsHistoryScanner(context, app.database)
+            val resp = scanner.scanSmsSince(cycleStart)
+            if (resp is com.expensetracker.offline.engine.scanner.ScanResponse.Success) {
+                settingsRepo.lastImportedTxnIds = resp.result.importedTransactionIds
+                settingsRepo.lastImportedReviewIds = resp.result.importedReviewIds
+                settingsRepo.prefs.edit().putBoolean("key_setup_scan_done", true).apply()
+            }
+            syncLatestBalanceFromSms()
         }
     }
 

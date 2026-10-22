@@ -996,13 +996,13 @@ internal fun LinkTransactionSheet(
                 }
                 if (thisMonth.isNotEmpty()) {
                     item(key = "hdr_this_month") { LinkSectionHeader("This month") }
-                    items(thisMonth, key = { it.id }) { t ->
+                    items(thisMonth, key = { "m_${it.id}" }) { t ->
                         LinkTxnRow(t, matchState(item, t.payee), dateFmt) { onRowClick(t) }
                     }
                 }
                 if (earlier.isNotEmpty()) {
                     item(key = "hdr_earlier") { LinkSectionHeader("Earlier") }
-                    items(earlier, key = { it.id }) { t ->
+                    items(earlier, key = { "e_${it.id}" }) { t ->
                         LinkTxnRow(t, matchState(item, t.payee), dateFmt) { onRowClick(t) }
                     }
                 }

@@ -86,6 +86,7 @@ fun InsightsScreen(
     var showManageCategoryBudgetsSheet by remember { mutableStateOf(false) }
     var initialCategoryForBudgetSheet by remember { mutableStateOf<String?>(null) }
     var showStartDayDialog by remember { mutableStateOf(false) }
+    var showRecurringPaymentsSheet by rememberSaveable { mutableStateOf(false) }
     var activeTransactionForEditId by rememberSaveable { mutableStateOf<Long?>(null) }
     val activeTransactionForEdit = remember(activeTransactionForEditId, allTransactions) {
         allTransactions.find { it.transaction.id == activeTransactionForEditId }?.transaction
@@ -392,16 +393,7 @@ fun InsightsScreen(
 
     val cycleProgress = (elapsedDays.toFloat() / cycleLengthDays).coerceIn(0f, 1f)
 
-    var isInsightsReady by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(isAppLocked) {
-        if (isAppLocked) {
-            isInsightsReady = false
-        } else if (!isInsightsReady) {
-            delay(120)
-            isInsightsReady = true
-        }
-    }
-    val startBarAnimations = !isAppLocked && isInsightsReady
+    val startBarAnimations = !isAppLocked
     val seenSections = remember { mutableSetOf<String>() }
 
     val listState = rememberLazyListState()
@@ -908,7 +900,8 @@ fun InsightsScreen(
                                 haptic.tap()
                                 viewModel.requestNecessityPrefill(draft)
                                 onNavigateToNecessities()
-                            }
+                            },
+                            onViewAllClick = { showRecurringPaymentsSheet = true }
                         )
                         val totalMonthlyReservePaise = remember(necessities) {
                             necessities.sumOf { item ->
@@ -932,6 +925,20 @@ fun InsightsScreen(
             item(key = "bottomSpacer") { Spacer(modifier = Modifier.height(8.dp)) }
         }
     }
+    }
+
+    if (showRecurringPaymentsSheet && !recurringPayments.isNullOrEmpty()) {
+        RecurringPaymentsAllSheet(
+            payments = recurringPayments!!,
+            necessities = necessities,
+            onAddToFixedCosts = { draft ->
+                haptic.tap()
+                showRecurringPaymentsSheet = false
+                viewModel.requestNecessityPrefill(draft)
+                onNavigateToNecessities()
+            },
+            onDismiss = { showRecurringPaymentsSheet = false }
+        )
     }
 
     val catName = selectedCategoryForBreakdown

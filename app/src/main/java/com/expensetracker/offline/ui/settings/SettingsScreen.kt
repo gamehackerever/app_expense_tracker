@@ -1,6 +1,10 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package com.expensetracker.offline.ui.settings
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.core.content.ContextCompat
 
 import android.content.Context
 import android.content.Intent
@@ -42,6 +46,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.BatteryAlert
@@ -214,26 +220,26 @@ fun SettingsScreen(
         }
     }
 
+    val settingsRepo = remember { SettingsRepository(context) }
+    var isRestoringBackup by remember { mutableStateOf(false) }
+
     fun handleRestoreResult(result: RestoreResult) {
         when (result) {
             is RestoreResult.SuccessRestart -> {
-                viewModel.refreshSettings()
-                showSnack("Data restored! Restarting app to apply changes...")
-                val appContext = context.applicationContext
+                isRestoringBackup = true
+                viewModel.refreshAfterRestore()
+                showSnack("Backup restored successfully!")
                 Handler(Looper.getMainLooper()).postDelayed({
-                    appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)?.let { intent ->
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                        appContext.startActivity(intent)
+                    val activity = (context as? android.app.Activity)
+                    if (activity != null && !activity.isFinishing) {
+                        activity.recreate()
                     }
-                    Process.killProcess(Process.myPid())
-                }, 400L)
+                }, 250L)
             }
             is RestoreResult.WrongPassphrase -> showSnack("Incorrect passphrase!")
             is RestoreResult.Error -> showSnack(result.message)
         }
     }
-
-    val settingsRepo = remember { SettingsRepository(context) }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) { SecurePassphraseStore.migrateLegacy(context) }
@@ -248,6 +254,7 @@ fun SettingsScreen(
     var budgetText by remember(vmMonthlyBudget) { mutableStateOf(vmMonthlyBudget.toString()) }
 
     var startDayOfMonth by remember { mutableIntStateOf(settingsRepo.startDayOfMonth) }
+    val isManualModePreferred by viewModel.isManualModePreferred.collectAsState()
     var skipReviewQueue by remember { mutableStateOf(settingsRepo.skipReviewQueue) }
     var defaultFallbackPayee by remember { mutableStateOf(settingsRepo.fallbackPayee) }
     var autoSaveUnknown by remember { mutableStateOf(settingsRepo.autoSaveUnknownDeductions) }
@@ -287,13 +294,15 @@ fun SettingsScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            val pending = myUpiInput.trim()
-            if (pending != settingsRepo.myUpiVpa && isValidUpiVpa(pending)) {
-                settingsRepo.myUpiVpa = pending
-            }
-            val pendingBudget = budgetText.toLongOrNull()?.takeIf { it > 0L }
-            if (pendingBudget != null && pendingBudget != settingsRepo.monthlyBudget) {
-                viewModel.updateMonthlyBudget(pendingBudget)
+            if (!isRestoringBackup) {
+                val pending = myUpiInput.trim()
+                if (pending != settingsRepo.myUpiVpa && isValidUpiVpa(pending)) {
+                    settingsRepo.myUpiVpa = pending
+                }
+                val pendingBudget = budgetText.toLongOrNull()?.takeIf { it > 0L }
+                if (pendingBudget != null && pendingBudget != settingsRepo.monthlyBudget) {
+                    viewModel.updateMonthlyBudget(pendingBudget)
+                }
             }
         }
     }
@@ -347,6 +356,12 @@ fun SettingsScreen(
     var isProTipsDismissed by remember { mutableStateOf(prefs.getBoolean("key_pro_tips_dismissed", false)) }
     var isIgnoringBatteryOptimizations by remember { mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName)) }
     var hasNotificationPermission by remember { mutableStateOf(isNotificationPermissionGranted(context)) }
+    var hasSmsPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
+        )
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -354,6 +369,8 @@ fun SettingsScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 isIgnoringBatteryOptimizations = powerManager.isIgnoringBatteryOptimizations(context.packageName)
                 hasNotificationPermission = isNotificationPermissionGranted(context)
+                hasSmsPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED ||
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
                 lastBackupTimestamp = prefs.getLong("key_last_backup_timestamp", 0L)
                 autoBackupEnabled = prefs.getBoolean("key_auto_backup_enabled", false)
                 autoBackupStatus = AutoBackupWorker.lastRunSummary(context)
@@ -574,7 +591,7 @@ fun SettingsScreen(
         ) {
             Spacer(modifier = Modifier.height(4.dp))
 
-            val needsHealthFix = !hasNotificationPermission || !isIgnoringBatteryOptimizations
+            val needsHealthFix = !isManualModePreferred && (!(hasNotificationPermission || hasSmsPermission) || !isIgnoringBatteryOptimizations)
 
             if (needsHealthFix) {
                 Surface(
@@ -606,12 +623,16 @@ fun SettingsScreen(
                         if (!isIgnoringBatteryOptimizations) {
                             OutlinedButton(
                                 onClick = {
-                                    val intent =
-                                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                            data =
-                                                Uri.fromParts("package", context.packageName, null)
+                                    val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                        data = Uri.parse("package:${context.packageName}")
+                                    }
+                                    val ok = runCatching { context.startActivity(direct); true }.getOrDefault(false)
+                                    if (!ok) {
+                                        val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                            data = Uri.fromParts("package", context.packageName, null)
                                         }
-                                    context.startActivitySafely(intent)
+                                        context.startActivitySafely(fallback)
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth().height(40.dp),
                                 shape = RoundedCornerShape(AppRadius.small),
@@ -1232,6 +1253,48 @@ fun SettingsScreen(
             ) {
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Box(modifier = Modifier.padding(top = 2.dp)) {
+                        SettingsIcon(
+                            Icons.Default.FlashOn,
+                            if (!isManualModePreferred) AppColors.positive else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
+                        Text(
+                            "Auto-Capture (SMS & Notifications)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            if (!isManualModePreferred) "Active — automatically detects bank SMS & UPI payment alerts."
+                            else "Paused (Manual Mode) — turn on anytime to auto-detect bank & UPI payments.",
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Box(modifier = Modifier.height(44.dp), contentAlignment = Alignment.Center) {
+                        Switch(
+                            checked = !isManualModePreferred,
+                            onCheckedChange = { enableAuto ->
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.setManualModePreferred(!enableAuto)
+                                if (enableAuto) {
+                                    viewModel.setAutoCaptureBannerDismissed(false)
+                                    showSnack("Auto-capture enabled")
+                                } else {
+                                    showSnack("Auto-capture paused — switched to Manual Mode")
+                                }
+                            },
+                            colors = settingsSwitchColors()
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), modifier = Modifier.padding(vertical = 4.dp))
+
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Box(modifier = Modifier.padding(top = 2.dp)) {
                         SettingsIcon(Icons.Default.FlashOn, MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(modifier = Modifier.width(12.dp))
@@ -1294,7 +1357,7 @@ fun SettingsScreen(
 
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Box(modifier = Modifier.padding(top = 2.dp)) {
-                        SettingsIcon(Icons.Default.HelpOutline, MaterialTheme.colorScheme.onSurfaceVariant)
+                        SettingsIcon(Icons.AutoMirrored.Filled.HelpOutline, MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
@@ -1479,7 +1542,7 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(AppRadius.small)
                     ) {
                         Icon(
-                            Icons.Default.Undo,
+                            Icons.AutoMirrored.Filled.Undo,
                             contentDescription = null,
                             modifier = Modifier.size(16.dp)
                         )
@@ -1701,6 +1764,7 @@ fun SettingsScreen(
                             contentColor = MaterialTheme.colorScheme.onSurface
                         ),
                         shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         modifier = Modifier.weight(1f).height(48.dp)
                     ) {
                         Icon(
@@ -1709,7 +1773,14 @@ fun SettingsScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Restore", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Restore",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
 
                     Button(
@@ -1726,6 +1797,7 @@ fun SettingsScreen(
                         },
                         enabled = !isBackingUp,
                         shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         modifier = Modifier.weight(1f).height(48.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.onSurface,
@@ -1738,7 +1810,14 @@ fun SettingsScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Backup Now", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Backup Now",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 
@@ -1771,6 +1850,7 @@ fun SettingsScreen(
                         },
                         enabled = !isCsvBusy,
                         shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         modifier = Modifier.weight(1f).height(48.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = MaterialTheme.colorScheme.onSurface
@@ -1782,7 +1862,14 @@ fun SettingsScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Import", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Import",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
 
                     Button(
@@ -1792,6 +1879,7 @@ fun SettingsScreen(
                         },
                         enabled = !isCsvBusy,
                         shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         modifier = Modifier.weight(1f).height(48.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.onSurface,
@@ -1804,7 +1892,14 @@ fun SettingsScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Export", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Export",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
@@ -1983,19 +2078,23 @@ fun SettingsScreen(
                             OutlinedButton(
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    val intent =
-                                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                            data =
-                                                Uri.fromParts("package", context.packageName, null)
+                                    val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                        data = Uri.parse("package:${context.packageName}")
+                                    }
+                                    val ok = runCatching { context.startActivity(direct); true }.getOrDefault(false)
+                                    if (!ok) {
+                                        val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                            data = Uri.fromParts("package", context.packageName, null)
                                         }
-                                    context.startActivitySafely(intent)
+                                        context.startActivitySafely(fallback)
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth().height(44.dp),
                                 shape = RoundedCornerShape(AppRadius.small),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
                             ) {
-                                Text("Open App Info", fontWeight = FontWeight.SemiBold)
+                                Text("Allow Unrestricted Battery", fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }

@@ -1,4 +1,5 @@
 package com.expensetracker.offline.ui.components
+import androidx.compose.ui.text.style.TextOverflow
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -130,24 +131,41 @@ fun SheetReceiptCard(
                 OutlinedButton(
                     onClick = { haptic.tap(); onPick() },
                     shape = RoundedCornerShape(AppRadius.small),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                     modifier = Modifier.weight(1f).height(44.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
                 ) {
                     Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Change", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Change",
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
                 OutlinedButton(
                     onClick = { haptic.tap(); onRemove() },
                     shape = RoundedCornerShape(AppRadius.small),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                     modifier = Modifier.weight(1f).height(44.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f))
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Remove", color = MaterialTheme.colorScheme.error, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Remove",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         } else {

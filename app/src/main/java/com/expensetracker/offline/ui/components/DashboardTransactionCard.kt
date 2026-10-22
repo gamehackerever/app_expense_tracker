@@ -386,7 +386,8 @@ fun DashboardTransactionCard(
                 }
 
                 when {
-                    isRepayment -> CategoryBadge(icon = Icons.Default.SouthWest, initial = null, tint = AppColors.positive)
+                    isRepayment || (isCredit && transaction.category.equals("Uncategorized", ignoreCase = true)) ->
+                        CategoryBadge(icon = Icons.Default.SouthWest, initial = null, tint = AppColors.positive)
                     !hasCategoryIcon(transaction.category) && payeeInitial != null ->
                         CategoryBadge(icon = null, initial = payeeInitial, tint = glyphColor)
                     else -> CategoryBadge(icon = categoryIcon, initial = null, tint = glyphColor)
@@ -421,8 +422,17 @@ fun DashboardTransactionCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val metaColor = colors.onSurfaceVariant
                         if (showCategoryText) {
+                            val displayCategoryLabel = when {
+                                isRepayment -> "Repayment"
+                                isCredit && transaction.category.equals("Uncategorized", ignoreCase = true) -> {
+                                    if (transaction.payee.contains("Google", ignoreCase = true) ||
+                                        transaction.note?.contains("Cashback", ignoreCase = true) == true
+                                    ) "Cashback" else "Received"
+                                }
+                                else -> transaction.category
+                            }
                             Text(
-                                text = if (isRepayment) "Repayment" else transaction.category,
+                                text = displayCategoryLabel,
                                 fontSize = RowType.body,
                                 fontWeight = FontWeight.Medium,
                                 color = metaColor,

@@ -471,6 +471,7 @@ fun SheetPrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit) {
         enabled = enabled,
         interactionSource = interactionSource,
         shape = RoundedCornerShape(AppRadius.small),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
         elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = MaterialTheme.colorScheme.onSurface,
@@ -486,6 +487,13 @@ fun SheetPrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit) {
                 scaleY = scale
             }
     ) {
-        Text(text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(
+            text = text,
+            fontSize = 15.5.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

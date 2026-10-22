@@ -158,7 +158,7 @@ class ExpenseWidget : GlanceAppWidget() {
             val size = LocalSize.current
             val isTall = size.height >= 210.dp
 
-            val formatter = NumberFormat.getNumberInstance(Locale("en", "IN")).apply {
+            val formatter = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
                 maximumFractionDigits = 0
                 minimumFractionDigits = 0
             }

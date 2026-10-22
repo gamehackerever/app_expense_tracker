@@ -29,7 +29,9 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.Undo
+import com.expensetracker.offline.engine.ml.SmsPatternLearner
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -251,7 +253,21 @@ fun ReviewQueueScreen(
                 contentPadding = PaddingValues(vertical = 16.dp)
             ) {
                 if (!isSelectionMode) {
-                    item { ReviewExplainer(items.size) }
+                    item {
+                        ReviewExplainer(
+                            count = items.size,
+                            onApproveAll = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                selectedIds = items.map { it.id }.toSet()
+                                confirmBulkApprove = true
+                            },
+                            onDiscardAll = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                selectedIds = items.map { it.id }.toSet()
+                                confirmBulkDiscard = true
+                            }
+                        )
+                    }
 
                     if (hasUnknownDeduction && !unknownEduDismissed) {
                         item {
@@ -326,7 +342,7 @@ fun ReviewQueueScreen(
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             }
         ) {
-            Text("They'll be added using the amount and merchant we could read from each message. Merchants we don't recognise stay Uncategorized, and you can change them later. To pick categories now, approve them one at a time instead.",
+            Text("They'll be added using the amount, merchant, and category predicted from each message, and we'll learn their SMS patterns and categories for future alerts.",
                 fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp)
         }
     }
@@ -346,14 +362,18 @@ fun ReviewQueueScreen(
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             }
         ) {
-            Text("They won't be added to your expenses. This can't be undone.",
+            Text("They won't be added to your expenses, and we'll learn this message pattern so similar non-transaction alerts are ignored automatically.",
                 fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-private fun ReviewExplainer(count: Int) {
+private fun ReviewExplainer(
+    count: Int,
+    onApproveAll: () -> Unit = {},
+    onDiscardAll: () -> Unit = {}
+) {
     Column {
         Text(
             "$count ${if (count == 1) "message" else "messages"} to review",
@@ -364,12 +384,57 @@ private fun ReviewExplainer(count: Int) {
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "These looked like transactions, but we couldn't read every detail. " +
-                    "Check each one, then approve it, or discard it if it isn't real.",
+            "Approve individual messages below, or use the 1-tap actions to approve or discard all $count at once.",
             fontSize = 13.sp,
             lineHeight = 18.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        if (count > 1) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onDiscardAll,
+                    modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 46.dp),
+                    shape = RoundedCornerShape(AppRadius.small),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    border = BorderStroke(1.dp, ExpenseRed.copy(alpha = 0.5f))
+                ) {
+                    Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = ExpenseRed, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Discard All ($count)",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ExpenseRed,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Button(
+                    onClick = onApproveAll,
+                    modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 46.dp),
+                    shape = RoundedCornerShape(AppRadius.small),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.onSurface,
+                        contentColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Approve All ($count)",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -440,31 +505,43 @@ fun ReviewCard(
 
     LaunchedEffect(item.rawContent, item.sender, transactionsHistory) {
         withContext(Dispatchers.Default) {
+            val learnedEval = SmsPatternLearner.evaluate(item.sender, item.rawContent)
             val parsed = FinancialParser.parse(item.rawContent, item.sender, item.source)
-            val catToClassify = item.extractedPartialPayee?.takeIf { it.isNotBlank() } ?: parsed.payee ?: "Unknown"
+            val catToClassify = item.extractedPartialPayee?.takeIf { it.isNotBlank() }
+                ?: parsed.payee
+                ?: learnedEval.inferredPayee
+                ?: "Unknown"
             val amtPaise = item.extractedPartialAmount ?: parsed.amount
-            val cat = SmartExpenseEngine.predictCategoryContextual(
-                payee = catToClassify,
-                amountPaise = amtPaise,
-                timestampMillis = item.timestamp,
-                history = transactionsHistory,
-                rawContent = item.rawContent
-            ).takeUnless { it == "Uncategorized" }
-                ?: CategoryClassifier.classifySync(catToClassify, item.rawContent)
+            val effectiveType = item.type ?: parsed.type ?: learnedEval.inferredType
+            val cat = if (effectiveType == TransactionType.CREDIT) {
+                "Uncategorized"
+            } else {
+                SmartExpenseEngine.predictCategoryContextual(
+                    payee = catToClassify,
+                    amountPaise = amtPaise,
+                    timestampMillis = item.timestamp,
+                    history = transactionsHistory,
+                    rawContent = item.rawContent
+                ).takeUnless { it == "Uncategorized" }
+                    ?: CategoryClassifier.classifySync(catToClassify, item.rawContent)
+            }
 
             withContext(Dispatchers.Main) {
                 if (amountText.isBlank() && parsed.amount != null) {
                     amountText = String.format(AMOUNT_LOCALE, "%.2f", parsed.amount / 100.0)
                 }
-                if ((payeeText.isBlank() || payeeText == "Silent Deduction") && !parsed.payee.isNullOrBlank()) {
-                    payeeText = parsed.payee
+                val bestPayee = parsed.payee?.takeIf { it.isNotBlank() } ?: learnedEval.inferredPayee
+                if ((payeeText.isBlank() || payeeText == "Silent Deduction") && !bestPayee.isNullOrBlank()) {
+                    payeeText = bestPayee
                 }
-                if (selectedBankName == null && !parsed.bankName.isNullOrBlank()) {
-                    selectedBankName = parsed.bankName
+                val bestBank = parsed.bankName?.takeIf { it.isNotBlank() } ?: learnedEval.inferredBankName
+                if (selectedBankName == null && !bestBank.isNullOrBlank()) {
+                    selectedBankName = bestBank
                     selectedAccountNum = parsed.accountNumber
                 }
-                if (!userSetType && parsed.type != null) transactionType = parsed.type
-                if (!userSetCategory) categoryText = cat
+                val bestType = parsed.type ?: learnedEval.inferredType
+                if (!userSetType && bestType != null) transactionType = bestType
+                if (!userSetCategory) categoryText = learnedEval.inferredCategory?.takeIf { it.isNotBlank() } ?: cat
             }
         }
     }
@@ -598,7 +675,7 @@ fun ReviewCard(
                     SwipeToDismissBoxValue.StartToEnd -> {
                         val parsedAmt = (amountText.toDoubleOrNull()?.times(100))?.toLong() ?: 0L
                         if (parsedAmt > 0L) {
-                            val payee = payeeText.trim().ifBlank { "Unknown" }
+                            val payee = payeeText.trim().ifBlank { FinancialParser.inferFallbackPayee(item.rawContent, transactionType) }
                             val category = categoryText.trim().ifBlank { "Uncategorized" }
                             val (finalBank, finalAcct) = resolvedBankInfo()
                             commit("Approved · ₹${String.format(AMOUNT_LOCALE, "%.2f", parsedAmt / 100.0)} to $payee", IncomeGreen) {
@@ -608,7 +685,7 @@ fun ReviewCard(
                         } else false
                     }
                     SwipeToDismissBoxValue.EndToStart -> {
-                        commit("Discarded", ExpenseRed) { onDiscard() }
+                        commit("Discarded · Pattern learned to ignore similar alerts", ExpenseRed) { onDiscard() }
                         true
                     }
                     else -> false
@@ -619,18 +696,22 @@ fun ReviewCard(
 
     var hasCrossedThreshold by remember { mutableStateOf(false) }
     val showUndo = stage == CardStage.UNDO || stage == CardStage.COLLAPSING_FINAL
+    val useAnimatedHeight = stage != CardStage.SWIPING || animatedHeightPx.isRunning
     val animatedHeightDp = with(density) { animatedHeightPx.value.toDp() }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(animatedHeightDp)
+            .then(if (useAnimatedHeight) Modifier.height(animatedHeightDp) else Modifier.wrapContentHeight())
             .clipToBounds()
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .wrapContentHeight(align = Alignment.Top, unbounded = true)
+                .then(
+                    if (useAnimatedHeight) Modifier.wrapContentHeight(align = Alignment.Top, unbounded = true)
+                    else Modifier.wrapContentHeight()
+                )
                 .onGloballyPositioned { coordinates ->
                     if (!showUndo && coordinates.size.height > 0) fullHeightPx = coordinates.size.height.toFloat()
                 }
@@ -929,7 +1010,7 @@ fun ReviewCard(
                                                         // Light red tint for semantics
                                                         color = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
                                                         modifier = Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(AppRadius.small)).quietClickable {
-                                                            commit("Discarded", ExpenseRed) { onDiscard() }
+                                                            commit("Discarded · Pattern learned to ignore similar alerts", ExpenseRed) { onDiscard() }
                                                         }
                                                     ) {
                                                         Box(contentAlignment = Alignment.Center) {
@@ -945,7 +1026,7 @@ fun ReviewCard(
                                                             val parsedAmt = (amountText.toDoubleOrNull()?.times(100))?.toLong() ?: 0L
                                                             if (parsedAmt > 0L) {
                                                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                                val payee = payeeText.trim().ifBlank { "Unknown" }
+                                                                val payee = payeeText.trim().ifBlank { FinancialParser.inferFallbackPayee(item.rawContent, transactionType) }
                                                                 val category = categoryText.trim().ifBlank { "Uncategorized" }
                                                                 val (finalBank, finalAcct) = resolvedBankInfo()
                                                                 commit("Approved · ₹${String.format(AMOUNT_LOCALE, "%.2f", parsedAmt / 100.0)} to $payee", IncomeGreen) {
@@ -1119,7 +1200,7 @@ fun SilentDeductionBanner(onDismiss: () -> Unit) {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.HelpOutline, contentDescription = null, tint = MaterialTheme.colorScheme.surface, modifier = Modifier.size(20.dp))
+                Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null, tint = MaterialTheme.colorScheme.surface, modifier = Modifier.size(20.dp))
                 Spacer(modifier = Modifier.width(10.dp))
                 Text("What is a Silent Deduction?", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = MaterialTheme.colorScheme.surface)
             }

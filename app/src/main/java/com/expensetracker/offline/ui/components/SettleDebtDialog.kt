@@ -385,7 +385,7 @@ fun SettleDebtDialog(
 
                         // ── Debts Owed To You ──
                         owedToYouGroups.forEachIndexed { index, group ->
-                            item(key = "header_owed_${group.name}") {
+                            item(key = "header_owed_${group.name.lowercase()}") {
                                 PersonGroupHeader(group = group, isFirst = index == 0)
                             }
                             items(group.debts, key = { it.debt.id }) { debtInfo ->
@@ -447,7 +447,7 @@ fun SettleDebtDialog(
 
                         // ── Debts You Owe Others ──
                         youOweGroups.forEachIndexed { index, group ->
-                            item(key = "header_youowe_${group.name}") {
+                            item(key = "header_youowe_${group.name.lowercase()}") {
                                 PersonGroupHeader(group = group, isFirst = owedToYouGroups.isEmpty() && index == 0)
                             }
                             items(group.debts, key = { it.debt.id }) { debtInfo ->
@@ -820,16 +820,27 @@ private fun DebtCard(
                                 onClick = { tap(); onForgive() },
                                 modifier = Modifier.weight(1f).height(48.dp),
                                 shape = RoundedCornerShape(AppRadius.small),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                                 colors = ButtonDefaults.filledTonalButtonColors(
                                     containerColor = scheme.onSurface.copy(alpha = 0.06f),
                                     contentColor = scheme.onSurface
                                 )
-                            ) { Text("Forgive", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
+                            ) {
+                                Text(
+                                    "Forgive",
+                                    fontSize = 14.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                             Button(
                                 onClick = { if (typedPaise > 0L) { confirm(); onLogCash(typedPaise) } },
                                 enabled = typedPaise > 0L && !exceedsOwed,
                                 modifier = Modifier.weight(1f).height(48.dp),
                                 shape = RoundedCornerShape(AppRadius.small),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                                 elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = scheme.onSurface,
@@ -837,7 +848,16 @@ private fun DebtCard(
                                     disabledContainerColor = scheme.onSurface.copy(alpha = 0.08f),
                                     disabledContentColor = scheme.onSurface.copy(alpha = 0.40f)
                                 )
-                            ) { Text(if (isYouOwe) "Record paid" else "Log cash", fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+                            ) {
+                                Text(
+                                    if (isYouOwe) "Record paid" else "Log cash",
+                                    fontSize = 14.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
 
                         if (!isYouOwe) {

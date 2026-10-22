@@ -8,10 +8,12 @@ import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.engine.ml.SmartExpenseEngine
+import com.expensetracker.offline.engine.ml.SmsPatternLearner
 import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
 import com.expensetracker.offline.engine.split.ReceiptScanner
 import com.expensetracker.offline.ui.components.evaluateBasicMath
+import com.expensetracker.offline.ui.theme.hasCategoryIcon
 import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
@@ -82,11 +84,11 @@ object AutomatedTestSuite {
             "Parsed ₹25,000.00 credit to A/c ..9876"
         }
 
-        // ── 2. CategoryClassifier Tests ────────────────────────────────────
-        check("CategoryClassifier", "Food & Dining Merchant Classification") {
+        // ── 2. CategoryClassifier & Indian Categories Tests ────────────────
+        check("CategoryClassifier", "Food & Dining / Groceries Classification") {
             val cat = CategoryClassifier.classifySync("Swiggy Instamart", "Paid to Swiggy")
             require(cat.isNotBlank() && !cat.equals("Uncategorized", true)) { "Expected categorized merchant, got $cat" }
-            "Classified 'Swiggy' -> $cat"
+            "Classified 'Swiggy Instamart' -> $cat"
         }
 
         check("CategoryClassifier", "Transport & Cab Classification") {
@@ -109,7 +111,50 @@ object AutomatedTestSuite {
             "Classified 'Broast' -> $foodCat, 'Creatine' -> $healthCat"
         }
 
-        // ── 3. NecessityManager & Bill Reminders Tests ─────────────────────
+        check("CategoryClassifier", "Expanded Indian Categories & Icons") {
+            val fuelCat = CategoryClassifier.classifySync("HPCL Petrol Pump", "NETC FASTag toll")
+            val telecomCat = CategoryClassifier.classifySync("Jio Prepaid", "Recharge ₹299")
+            val rentCat = CategoryClassifier.classifySync("NoBroker Hood", "Society maintenance")
+            val emiCat = CategoryClassifier.classifySync("Bajaj Finance", "Loan EMI")
+            require(fuelCat == "Fuel & Fastag") { "Expected Fuel & Fastag, got $fuelCat" }
+            require(telecomCat == "Recharge & Telecom") { "Expected Recharge & Telecom, got $telecomCat" }
+            require(rentCat == "Rent & Housing") { "Expected Rent & Housing, got $rentCat" }
+            require(emiCat == "EMI & Loans") { "Expected EMI & Loans, got $emiCat" }
+            val allHaveIcons = CategoryClassifier.PREDEFINED_CATEGORIES
+                .filter { it != "Uncategorized" }
+                .all { hasCategoryIcon(it) }
+            require(allHaveIcons) { "Every predefined Indian category must have a dedicated icon" }
+            "Verified 18 Indian categories & icons ($fuelCat, $telecomCat, $rentCat, $emiCat)"
+        }
+
+        // ── 3. Active Review Pattern Learner Tests ─────────────────────────
+        check("SmsPatternLearner", "Active Learning on Review Approve & Discard") {
+            val spamSender = "AX-TESTPR"
+            val spamSample1 = "Alert: Your reward points worth Rs 500 are expiring on 12-10-26. Redeem now."
+            val spamSample2 = "Alert: Your reward points worth Rs 850 are expiring on 25-10-26. Redeem now."
+            SmsPatternLearner.learnDiscardedReview(spamSender, spamSample1)
+            val parsedSpam = FinancialParser.parse(spamSample2, spamSender)
+            require(!parsedSpam.isFinancial) { "Discarded SMS template must be blocked on future variations" }
+
+            val bankSender = "VM-COOPBK"
+            val validSample1 = "A/c XX4411 debited by Rs 340.00 on 10-10-26 towards MKT: NILGIRIS DAIRY. Bal Rs 12400.00"
+            val validSample2 = "A/c XX4411 debited by Rs 520.00 on 15-10-26 towards MKT: MILMA BOOTH. Bal Rs 11880.00"
+            SmsPatternLearner.learnApprovedReview(
+                sender = bankSender,
+                rawContent = validSample1,
+                resolvedPayee = "Nilgiris Dairy",
+                resolvedCategory = "Groceries",
+                resolvedType = TransactionType.DEBIT,
+                resolvedBankName = "Co-op Bank"
+            )
+            val eval2 = SmsPatternLearner.evaluate(bankSender, validSample2)
+            require(eval2.isConfirmedTransaction && eval2.inferredCategory == "Groceries") {
+                "Expected approved template to confirm transaction and infer Groceries"
+            }
+            "Blocked discarded template & learned dynamic anchor + category from approval"
+        }
+
+        // ── 4. NecessityManager & Bill Reminders Tests ─────────────────────
         check("NecessityManager", "Monthly & Sinking Fund Reserve Math") {
             val yearly = NecessityItem(
                 id = "t1",
@@ -173,17 +218,17 @@ object AutomatedTestSuite {
                 TransactionEntity(
                     id = 1, amount = 64900L, payee = "Netflix", timestamp = now - 2 * dayMs,
                     type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null,
-                    rawContent = "Paid to Netflix", category = "Subscription"
+                    rawContent = "Paid to Netflix", category = "Subscriptions"
                 ),
                 TransactionEntity(
                     id = 2, amount = 64900L, payee = "Netflix", timestamp = now - 32 * dayMs,
                     type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null,
-                    rawContent = "Paid to Netflix", category = "Subscription"
+                    rawContent = "Paid to Netflix", category = "Subscriptions"
                 ),
                 TransactionEntity(
                     id = 3, amount = 64900L, payee = "Netflix", timestamp = now - 62 * dayMs,
                     type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null,
-                    rawContent = "Paid to Netflix", category = "Subscription"
+                    rawContent = "Paid to Netflix", category = "Subscriptions"
                 )
             )
             val sug = NecessityManager.recurringSuggestion("Netflix", txns)
@@ -191,7 +236,7 @@ object AutomatedTestSuite {
             "Detected 30-day recurring pattern for Netflix (₹649)"
         }
 
-        // ── 4. ReceiptScanner & Pro-Rata Split Math Tests ──────────────────
+        // ── 5. ReceiptScanner & Pro-Rata Split Math Tests ──────────────────
         check("ReceiptScanner", "Multi-Line Thermal Receipt & Continuation Parsing") {
             val lines = listOf(
                 "AL TAZA RESTAURANT",
@@ -234,7 +279,7 @@ object AutomatedTestSuite {
             "Allocated ₹425.03 across 3 people with 0 paisa drift (sum = $sumShares paise)"
         }
 
-        // ── 5. Math Evaluator & Billing Cycle Invariant Tests ──────────────
+        // ── 6. Math Evaluator & Billing Cycle Invariant Tests ──────────────
         check("Math & Cycles", "Inline Calculator Precedence & Parentheses") {
             val paise = evaluateBasicMath("(120 + 30) * 2 + 45.50")
             require(paise == 34550L) { "Expected 34550 paise, got $paise" }
@@ -251,7 +296,7 @@ object AutomatedTestSuite {
             "Verified cycle continuity for reset days 1, 5, 15, and 28"
         }
 
-        // ── 6. On-Device ML & SmartExpenseEngine Tests ─────────────────────
+        // ── 7. On-Device ML & SmartExpenseEngine Tests ─────────────────────
         check("SmartExpenseEngine", "Contextual Time-of-Day & Typical Amount Predictor") {
             val now = System.currentTimeMillis()
             val dayMs = 86_400_000L
@@ -301,9 +346,6 @@ object AutomatedTestSuite {
             val dayMs = 86_400_000L
             val cycleStart = now - 10 * dayMs
             val cycleEnd = cycleStart + 30 * dayMs
-            // 9 days of ₹100/day + 1 one-off ₹2,500 spike = ₹3,400 in 10 days.
-            // Naive linear projection would be ₹3,400 * 3 = ₹10,200.
-            // Winsorized EWMA dampens the one-off ₹2,500 spike so projected spend stays realistic (~₹5,400).
             val txns = (0 until 9).map { d ->
                 TransactionWithDebts(
                     transaction = TransactionEntity(
@@ -343,11 +385,11 @@ object AutomatedTestSuite {
             val debits = listOf(
                 TransactionDao.DebitPoint(
                     id = 1L, payee = "VI Recharge", amount = 39800L,
-                    timestamp = now - 3 * 86_400_000L, category = "Bills & Utilities"
+                    timestamp = now - 3 * 86_400_000L, category = "Recharge & Telecom"
                 ),
                 TransactionDao.DebitPoint(
                     id = 2L, payee = "Spotify", amount = 6800L,
-                    timestamp = now - 5 * 86_400_000L, category = "Subscription"
+                    timestamp = now - 5 * 86_400_000L, category = "Subscriptions"
                 )
             )
             val detected = RecurringPaymentDetector.detect(debits, now)

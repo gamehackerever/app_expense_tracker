@@ -6,7 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -92,13 +92,14 @@ private fun dueColor(payment: RecurringPayment, now: Long, lapsed: Boolean): Col
 fun RecurringPaymentsSection(
     payments: List<RecurringPayment>?,
     necessities: List<NecessityItem>,
-    onAddToFixedCosts: (NecessityItem) -> Unit
+    onAddToFixedCosts: (NecessityItem) -> Unit,
+    onViewAllClick: (() -> Unit)? = null
 ) {
     if (payments == null) return
     if (payments.isEmpty()) {
         RecurringEmptyState()
     } else {
-        RecurringPaymentsContent(payments, necessities, onAddToFixedCosts)
+        RecurringPaymentsContent(payments, necessities, onAddToFixedCosts, onViewAllClick)
     }
 }
 
@@ -155,7 +156,8 @@ private fun RecurringEmptyState() {
 private fun RecurringPaymentsContent(
     payments: List<RecurringPayment>,
     necessities: List<NecessityItem>,
-    onAddToFixedCosts: (NecessityItem) -> Unit
+    onAddToFixedCosts: (NecessityItem) -> Unit,
+    onViewAllClick: (() -> Unit)? = null
 ) {
     val haptic = LocalHapticFeedback.current
     val now = remember(payments) { System.currentTimeMillis() }
@@ -176,7 +178,10 @@ private fun RecurringPaymentsContent(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(AppRadius.large))
-            .quietClickable(pressedAlpha = 0.85f) { haptic.tap(); showSheet = true },
+            .quietClickable(pressedAlpha = 0.85f) {
+                haptic.tap()
+                if (onViewAllClick != null) onViewAllClick() else showSheet = true
+            },
         shape = RoundedCornerShape(AppRadius.large),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
@@ -361,6 +366,31 @@ private fun RecurringCompactRow(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+fun RecurringPaymentsAllSheet(
+    payments: List<RecurringPayment>,
+    necessities: List<NecessityItem>,
+    onAddToFixedCosts: (NecessityItem) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val now = remember(payments) { System.currentTimeMillis() }
+    val dateFormat = remember { SimpleDateFormat("d MMM yyyy", Locale.getDefault()) }
+    val active = remember(payments) { payments.filter { it.isActive }.sortedBy { it.nextExpected } }
+    val lapsed = remember(payments) { payments.filterNot { it.isActive }.sortedByDescending { it.lastSeen } }
+    val monthlyTotal = remember(payments) { RecurringPaymentDetector.monthlyTotal(payments) }
+    RecurringPaymentsSheet(
+        active = active,
+        lapsed = lapsed,
+        now = now,
+        dateFormat = dateFormat,
+        monthlyTotal = monthlyTotal,
+        necessities = necessities,
+        onAddToFixedCosts = onAddToFixedCosts,
+        onDismiss = onDismiss
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun RecurringPaymentsSheet(
     active: List<RecurringPayment>,
     lapsed: List<RecurringPayment>,
@@ -471,8 +501,14 @@ private fun RecurringPaymentsSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(list, key = { it.payee }) { payment ->
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    itemsIndexed(
+                        items = list,
+                        key = { index, payment -> "${payment.payee}_${payment.amount}_${payment.cadence.name}_$index" }
+                    ) { _, payment ->
                         RecurringPaymentCard(
                             payment = payment,
                             now = now,
@@ -650,7 +686,7 @@ private fun RecurringBadge(text: String, color: Color) {
 private fun buildFixedCostDraft(payment: RecurringPayment): NecessityItem {
     val is28Day = payment.cadence == Cadence.RECHARGE_28D
     val matched = if (is28Day) NecessityFrequency.EVERY_N_DAYS
-    else NecessityFrequency.values().firstOrNull { it.name == payment.cadence.name }
+    else NecessityFrequency.entries.firstOrNull { it.name == payment.cadence.name }
     val frequency = matched ?: NecessityFrequency.MONTHLY
     val amount = if (matched != null) payment.amount else payment.monthlyCost
 

@@ -169,7 +169,7 @@ fun CategoryTransactionsSheet(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            LazyColumn {
+            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp)) {
                 item {
                     TransactionGroup {
                         categoryTxns.forEachIndexed { index, item ->
@@ -255,7 +255,7 @@ fun MerchantTransactionsSheet(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            LazyColumn {
+            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp)) {
                 item {
                     TransactionGroup {
                         merchantTxns.forEachIndexed { index, item ->

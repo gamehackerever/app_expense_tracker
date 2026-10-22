@@ -110,19 +110,26 @@ fun AddExpenseSheet(
     val calculatedAmount = remember(amountStr) { evaluateBasicMath(amountStr) }
 
     // Smart contextual payee & amount predictions conditioned on amount, hour-of-day, day-of-week & recency
-    val smartPredictions = remember(payee, calculatedAmount, transactionDateMillis, transactionType, isTransferMode, transactionsHistory) {
+    // Computed off the main thread so typing in Payee/Amount never stutters on large histories.
+    var smartPredictions by remember { mutableStateOf<List<SmartExpenseEngine.SmartPayeePrediction>>(emptyList()) }
+    LaunchedEffect(payee, calculatedAmount, transactionDateMillis, transactionType, isTransferMode, transactionsHistory) {
         if (isTransferMode || transactionsHistory.isEmpty()) {
-            emptyList()
+            smartPredictions = emptyList()
         } else {
-            SmartExpenseEngine.predictContextualPayees(
-                transactions = transactionsHistory,
-                query = payee,
-                nowMillis = transactionDateMillis,
-                isDebit = transactionType == TransactionType.DEBIT,
-                limit = 5,
-                amountPaise = calculatedAmount
-            ).filterNot { pred ->
-                pred.payee.equals(payee.trim(), ignoreCase = true) && amountStr.isNotBlank()
+            if (payee.isNotEmpty() || amountStr.isNotEmpty()) delay(50)
+            val cleanPayee = payee.trim()
+            val hasAmt = amountStr.isNotBlank()
+            smartPredictions = withContext(Dispatchers.Default) {
+                SmartExpenseEngine.predictContextualPayees(
+                    transactions = transactionsHistory,
+                    query = cleanPayee,
+                    nowMillis = transactionDateMillis,
+                    isDebit = transactionType == TransactionType.DEBIT,
+                    limit = 5,
+                    amountPaise = calculatedAmount
+                ).filterNot { pred ->
+                    pred.payee.equals(cleanPayee, ignoreCase = true) && hasAmt
+                }
             }
         }
     }

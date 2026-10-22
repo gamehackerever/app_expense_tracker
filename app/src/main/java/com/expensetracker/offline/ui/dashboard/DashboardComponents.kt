@@ -990,6 +990,7 @@ private fun CategoryDetailManagementContent(
                             onDelete()
                         },
                         shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
                         modifier = Modifier
@@ -1003,7 +1004,14 @@ private fun CategoryDetailManagementContent(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Delete", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Delete",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
                 Box(modifier = Modifier.weight(if (row.isCustom) 1.3f else 1f)) {
@@ -1121,7 +1129,12 @@ fun DeleteCategoryDialog(
 }
 
 @Composable
-fun SelectTargetDialog(currentTarget: Long, onDismiss: () -> Unit, onSaveTarget: (Long) -> Unit) {
+fun SelectTargetDialog(
+    currentTarget: Long,
+    onDismiss: () -> Unit,
+    onSaveTarget: (Long) -> Unit,
+    onManageCategoryCaps: (() -> Unit)? = null
+) {
     var textValue by remember { mutableStateOf(if (currentTarget > 0) currentTarget.toString().removeSuffix(".0") else "") }
     val haptic = LocalHapticFeedback.current
     val parsedValue = textValue.toLongOrNull()
@@ -1203,6 +1216,341 @@ fun SelectTargetDialog(currentTarget: Long, onDismiss: () -> Unit, onSaveTarget:
                 }
             }
         )
+        if (onManageCategoryCaps != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(AppRadius.small))
+                    .quietClickable {
+                        haptic.tap()
+                        onDismiss()
+                        onManageCategoryCaps()
+                    },
+                shape = RoundedCornerShape(AppRadius.small),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Category spending caps",
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            "Set limits for Food, Shopping & more",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AutoCaptureSetupSheet(
+    hasSmsPermission: Boolean,
+    hasNotificationPermission: Boolean,
+    isIgnoringBatteryOptimizations: Boolean,
+    onOpenSmsPermissions: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+    onRequestBatteryUnrestricted: () -> Unit,
+    onSwitchToManualMode: () -> Unit,
+    onDismiss: () -> Unit,
+    onDone: () -> Unit = onDismiss
+) {
+    val haptic = LocalHapticFeedback.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
+        containerColor = MaterialTheme.colorScheme.background,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+                .padding(top = 4.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            SheetHeader(
+                title = "Auto-Capture Status",
+                subtitle = "Grant permissions below for hands-free tracking, or use manual mode."
+            )
+
+            // 1. SMS Access Card
+            SheetCard(contentPadding = 16.dp, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "1. Bank SMS Access",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    StatusBadge(
+                        text = if (hasSmsPermission) "Active" else "Paused",
+                        color = if (hasSmsPermission) AppColors.positive else AppColors.warning
+                    )
+                }
+                Text(
+                    "Detects bank debit/credit SMS alerts and updates account balances offline.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 18.sp
+                )
+                if (!hasSmsPermission) {
+                    Surface(
+                        shape = RoundedCornerShape(AppRadius.small),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "If SMS is grayed out in Android Settings:",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Tap the three dots (⋮) at the top right of the App Info screen and choose 'Allow restricted settings' first, then allow SMS in Permissions.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 17.sp
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = { haptic.tap(); onOpenSmsPermissions() },
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        shape = RoundedCornerShape(AppRadius.small),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.onSurface,
+                            contentColor = MaterialTheme.colorScheme.surface
+                        )
+                    ) {
+                        Text("Open App Permissions", fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // 2. Notification Access Card
+            SheetCard(contentPadding = 16.dp, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "2. Live UPI & App Notifications",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    StatusBadge(
+                        text = when {
+                            hasNotificationPermission -> "Active"
+                            hasSmsPermission -> "Optional"
+                            else -> "Paused"
+                        },
+                        color = when {
+                            hasNotificationPermission -> AppColors.positive
+                            hasSmsPermission -> MaterialTheme.colorScheme.onSurfaceVariant
+                            else -> AppColors.warning
+                        }
+                    )
+                }
+                Text(
+                    "Captures real-time payment alerts from GPay, PhonePe, Paytm, and banking apps.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 18.sp
+                )
+                if (!hasNotificationPermission) {
+                    Button(
+                        onClick = { haptic.tap(); onOpenNotificationSettings() },
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.onSurface,
+                            contentColor = MaterialTheme.colorScheme.surface
+                        )
+                    ) {
+                        Text(
+                            "Enable Notification Access",
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(AppRadius.small),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(AppRadius.small))
+                            .quietClickable {
+                                haptic.tap()
+                                onOpenSmsPermissions()
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "Greyed out? Tap here → ⋮ → Allow restricted settings",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 3. Battery Optimization Card
+            SheetCard(contentPadding = 16.dp, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "3. Background Reliability",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    StatusBadge(
+                        text = if (isIgnoringBatteryOptimizations) "Unrestricted" else "Restricted",
+                        color = if (isIgnoringBatteryOptimizations) AppColors.positive else AppColors.warning
+                    )
+                }
+                Text(
+                    "Prevents Android from putting live payment capture to sleep in the background.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 18.sp
+                )
+                if (!isIgnoringBatteryOptimizations) {
+                    OutlinedButton(
+                        onClick = { haptic.tap(); onRequestBatteryUnrestricted() },
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        )
+                    ) {
+                        Text(
+                            "Allow Background Activity",
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        haptic.tap()
+                        onSwitchToManualMode()
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(AppRadius.small),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    )
+                ) {
+                    Text(
+                        text = "Use Manual Mode",
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Button(
+                    onClick = {
+                        haptic.tap()
+                        onDone()
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(AppRadius.small),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.onSurface,
+                        contentColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Text(
+                        text = "Done",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1277,7 +1625,7 @@ internal fun OnboardingTaskItem(
                 }
                 if (!isDone) {
                     Spacer(modifier = Modifier.width(12.dp))
-                    Icon(Icons.Default.ArrowForward, contentDescription = null, tint = if (isNext) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = if (isNext) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
                 }
             }
             if (!isDone && quickAction != null) {
@@ -1674,17 +2022,43 @@ internal fun NecessityBreakdownDialog(
                     OutlinedButton(
                         onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onManage() },
                         shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
                         modifier = Modifier
                             .weight(1f)
                             .height(48.dp)
-                    ) { Text("Manage", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
+                    ) {
+                        Text(
+                            "Manage",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                     Button(
                         onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onDismiss() },
                         shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.onSurface,
+                            contentColor = MaterialTheme.colorScheme.surface
+                        ),
                         modifier = Modifier
                             .weight(1f)
                             .height(48.dp)
-                    ) { Text("Close", fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+                    ) {
+                        Text(
+                            "Close",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -1708,30 +2082,28 @@ internal fun dayLabel(ts: Long): String {
 
 @Composable
 internal fun DayHeader(label: String, total: String? = null) {
-    val backgroundColor = MaterialTheme.colorScheme.background
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(backgroundColor)
-            // Soft fade just below the header, drawn outside its bounds. It is invisible over the plain
-            // background and only shows when rows scroll underneath, so they dissolve instead of being sliced.
-            .drawBehind {
-                val fadeHeight = 14.dp.toPx()
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(backgroundColor, backgroundColor.copy(alpha = 0f)),
-                        startY = size.height,
-                        endY = size.height + fadeHeight
-                    ),
-                    topLeft = Offset(0f, size.height),
-                    size = Size(size.width, fadeHeight)
-                )
-            }
-            .padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.3.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (total != null) Text(total, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            text = label,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.2.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (total != null) {
+            Text(
+                text = total,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -3069,6 +3441,7 @@ private fun CategoryBudgetFormContent(
                             onRemove()
                         },
                         shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
                         modifier = Modifier
@@ -3082,7 +3455,14 @@ private fun CategoryBudgetFormContent(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Remove", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Remove",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 

@@ -36,8 +36,7 @@ fun FullScreenImageViewer(
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-            decorFitsSystemWindows = false
+            dismissOnClickOutside = true
         )
     ) {
         var scale by remember { mutableFloatStateOf(1f) }

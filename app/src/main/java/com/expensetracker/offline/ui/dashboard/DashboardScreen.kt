@@ -35,7 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
@@ -181,6 +181,10 @@ fun DashboardScreen(
     val settingsRepo = remember { SettingsRepository(context) }
     val monthlyBudget by viewModel.monthlyBudget.collectAsState()
     val isBudgetExplicitlySet by viewModel.isBudgetExplicitlySet.collectAsState()
+    val isManualModePreferred by viewModel.isManualModePreferred.collectAsState()
+    val isAutoCaptureBannerDismissed by viewModel.isAutoCaptureBannerDismissed.collectAsState()
+    var showAutoCaptureSheet by rememberSaveable { mutableStateOf(false) }
+    var showDiscardAllReviewsDialog by remember { mutableStateOf(false) }
 
     var customCategories by remember { mutableStateOf(prefs.getStringSet("key_custom_categories", emptySet()) ?: emptySet()) }
     var isSetupDismissed by remember { mutableStateOf(prefs.getBoolean("key_setup_dismissed", false)) }
@@ -190,6 +194,7 @@ fun DashboardScreen(
     val transactions by viewModel.allTransactions.collectAsState()
     val latestBalance by viewModel.latestBalance.collectAsState()
     val pendingReviewCount by viewModel.pendingReviewCount.collectAsState()
+    val pendingReviewItems by viewModel.pendingReviewItems.collectAsState()
 
     val chunkLimit by viewModel.necessityChunkLimit.collectAsState()
     var showNecessityBreakdownDialog by remember { mutableStateOf(false) }
@@ -362,7 +367,7 @@ fun DashboardScreen(
             }
         }
     }
-    val isFabVisible by remember { derivedStateOf { !isFabScrolledAway || isFabExpanded || !listState.canScrollForward } }
+    val isFabVisible by remember { derivedStateOf { !isFabScrolledAway || isFabExpanded } }
 
     var hasNotificationPermission by remember { mutableStateOf(isNotificationPermissionGranted(context)) }
 
@@ -503,7 +508,7 @@ fun DashboardScreen(
             }
             val matchesAccount = currentAccount == null ||
                     (currentAccount.bankName == "Unspecified" && txn.bankName == null) ||
-                    (txn.bankName == currentAccount.bankName && txn.accountNumber == currentAccount.accountNumber)
+                    ((txn.bankName == currentAccount.bankName || txn.bankName?.removeSuffix(" CC")?.removeSuffix(" cc")?.trim() == currentAccount.bankName) && txn.accountNumber == currentAccount.accountNumber)
             if (!matchesAccount) continue
 
             val matchesCategory = when (categoryFilter) {
@@ -586,16 +591,7 @@ fun DashboardScreen(
     var activeCreditTransactionToLinkId by rememberSaveable { mutableStateOf<Long?>(null) }
     val activeCreditTransactionToLink = remember(activeCreditTransactionToLinkId, transactionsWithDebts) { transactionsWithDebts.find { it.transaction.id == activeCreditTransactionToLinkId }?.transaction }
 
-    var isDashboardReadyAfterLock by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(isAppLocked) {
-        if (isAppLocked) {
-            isDashboardReadyAfterLock = false
-        } else if (!isDashboardReadyAfterLock) {
-            delay(140)
-            isDashboardReadyAfterLock = true
-        }
-    }
-    val isAnimationTriggered = !isAppLocked && isDashboardReadyAfterLock
+    val isAnimationTriggered = !isAppLocked
 
     val shownSpent = periodSpent
     val shownOwed = moneyOwedToYou
@@ -636,6 +632,8 @@ fun DashboardScreen(
     }
 
     val anyDialogOpen = showAddExpenseSheet ||
+            showAutoCaptureSheet ||
+            showDiscardAllReviewsDialog ||
             showAccountsDialog ||
             showBudgetDialog ||
             showManageCategoryBudgetsDialog ||
@@ -963,7 +961,7 @@ fun DashboardScreen(
                                             Text(split.debt.debtorName, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                                             Text("${split.parentTransaction.payee} · Owes ${CurrencyFormat.withSymbol(split.outstanding, 0)}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
-                                        Icon(Icons.Default.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                                     }
                                 }
                             }
@@ -990,19 +988,69 @@ fun DashboardScreen(
                 haptic.confirm()
                 viewModel.updateMonthlyBudget(newTarget)
                 showBudgetDialog = false
+            },
+            onManageCategoryCaps = {
+                initialCategoryForBudgetEdit = null
+                showManageCategoryBudgetsDialog = true
+            }
+        )
+    }
+
+    if (showAutoCaptureSheet) {
+        AutoCaptureSetupSheet(
+            hasSmsPermission = hasSmsPermission,
+            hasNotificationPermission = hasNotificationPermission,
+            isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
+            onOpenSmsPermissions = {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = android.net.Uri.fromParts("package", context.packageName, null)
+                }
+                runCatching { context.startActivity(intent) }
+            },
+            onOpenNotificationSettings = {
+                runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+            },
+            onRequestBatteryUnrestricted = {
+                val directIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = android.net.Uri.parse("package:${context.packageName}")
+                }
+                val launched = runCatching {
+                    context.startActivity(directIntent)
+                    true
+                }.getOrDefault(false)
+                if (!launched) {
+                    val appInfoIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = android.net.Uri.fromParts("package", context.packageName, null)
+                    }
+                    runCatching { context.startActivity(appInfoIntent) }
+                    showSnack("Tap 'Battery' and select 'Unrestricted'")
+                }
+            },
+            onSwitchToManualMode = {
+                viewModel.setManualModePreferred(true)
+                showAutoCaptureSheet = false
+                showSnack("Switched to manual mode — auto-capture warnings hidden")
+            },
+            onDismiss = { showAutoCaptureSheet = false },
+            onDone = {
+                viewModel.setAutoCaptureBannerDismissed(true)
+                showAutoCaptureSheet = false
             }
         )
     }
 
     if (showStartDayDialog) {
         var tempDay by remember { mutableFloatStateOf(startDayOfMonth.toFloat()) }
+        val previewCycleLabel = remember(tempDay.toInt()) {
+            BillingCycleHelper.getCycleLabel(tempDay.toInt())
+        }
         AppDialog(
             title = "Billing Cycle",
             onDismiss = { haptic.tap(); showStartDayDialog = false },
             confirmText = "Save",
             onConfirm = {
-                haptic.confirm() // Haptic confirm is perfect here
-                viewModel.updateStartDayOfMonth(tempDay.toInt()) // Route the update through ViewModel
+                haptic.confirm()
+                viewModel.updateStartDayOfMonth(tempDay.toInt())
                 showStartDayDialog = false
             }
         ) {
@@ -1011,14 +1059,36 @@ fun DashboardScreen(
                 fontSize = 14.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Resets on Day: ${tempDay.toInt()}",
+                text = "Resets on Day ${tempDay.toInt()} ($previewCycleLabel)",
                 fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
+                fontSize = 17.sp,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
+            if (tempDay.toInt() != 1) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(AppRadius.pill),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .clip(RoundedCornerShape(AppRadius.pill))
+                        .quietClickable {
+                            haptic.tap()
+                            tempDay = 1f
+                        }
+                ) {
+                    Text(
+                        text = "Reset to 1st of month (${BillingCycleHelper.getCycleLabel(1)})",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(8.dp))
             Slider(
                 value = tempDay,
@@ -1026,7 +1096,7 @@ fun DashboardScreen(
                     val snapped = kotlin.math.round(rawValue)
                     if (tempDay != snapped) {
                         tempDay = snapped
-                        haptic.tap() // Snappy haptic feedback as you drag
+                        haptic.tap()
                     }
                 },
                 valueRange = 1f..28f,
@@ -1038,7 +1108,7 @@ fun DashboardScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Capped at the 28th to ensure consistent cycles across short months like February.",
+                text = "Use Day 1 for standard calendar months, or set your salary day (1–28).",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -1202,6 +1272,29 @@ fun DashboardScreen(
         )
     }
 
+    if (showDiscardAllReviewsDialog) {
+        AppDialog(
+            title = "Discard all $pendingReviewCount review items?",
+            onDismiss = { haptic.tap(); showDiscardAllReviewsDialog = false },
+            confirmText = "Discard All",
+            destructive = true,
+            onConfirm = {
+                haptic.delete()
+                val ids = pendingReviewItems.map { it.id }
+                viewModel.bulkDiscardReviewItems(ids)
+                showDiscardAllReviewsDialog = false
+                showSnack("Discarded ${ids.size} review items")
+            }
+        ) {
+            Text(
+                "None of these $pendingReviewCount messages will be added to your expenses. This cannot be undone.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 20.sp
+            )
+        }
+    }
+
     if (showBulkDeleteConfirm) {
         AppDialog(
             title = "Delete ${selectedTxnIds.size} transactions?",
@@ -1328,9 +1421,10 @@ fun DashboardScreen(
                     it.transaction.type == TransactionType.DEBIT &&
                             !it.transaction.excludeFromSpend &&
                             it.transaction.category != "Split Settlement" &&
+                            !it.transaction.category.equals("Transfer", ignoreCase = true) &&
                             it.transaction.id !in pendingDeleteIds
                 }
-                .sumOf { r -> (r.transaction.amount - r.debts.sumOf { d -> d.amountOwed.toLong() }).coerceAtLeast(0L) }
+                .sumOf { r -> mySpendShare(r) }
             DayGroup(label, rows, daySpent)
         }
     }
@@ -1593,6 +1687,8 @@ fun DashboardScreen(
                 startDayOfMonth = startDayOfMonth,
                 hasNotificationPermission = hasNotificationPermission,
                 isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
+                hasSmsPermission = hasSmsPermission,
+                isManualModePreferred = isManualModePreferred,
                 isProTipsDismissed = isProTipsDismissed,
                 haptic = haptic,
                 onCancelSelection = {
@@ -1630,7 +1726,7 @@ fun DashboardScreen(
     ) { padding ->
         LazyColumn(
             state = listState,
-            contentPadding = PaddingValues(bottom = 88.dp),
+            contentPadding = PaddingValues(bottom = 116.dp),
             modifier = Modifier
                 .fillMaxSize()
                 .nestedScroll(fabScrollConnection)
@@ -1645,7 +1741,7 @@ fun DashboardScreen(
             item {
                 Column {
                     val isSetupBudgetDone = isBudgetExplicitlySet
-                    val isSetupAutoDone = hasNotificationPermission
+                    val isSetupAutoDone = hasSmsPermission || hasNotificationPermission
                     val isSetupFirstTxnDone = hasEverLoggedExpense
 
                     val completedSteps = listOf(
@@ -1654,107 +1750,61 @@ fun DashboardScreen(
                         isSetupFirstTxnDone
                     ).count { it }
 
-                    val needsHealthFix = !hasNotificationPermission || !isIgnoringBatteryOptimizations
+                    val hasMissingAutoCapture = !(hasSmsPermission || hasNotificationPermission) || !isIgnoringBatteryOptimizations
 
-                    if (needsHealthFix && isSetupDismissed) {
+                    if (!isManualModePreferred && !isAutoCaptureBannerDismissed && hasMissingAutoCapture) {
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(AppRadius.medium))
+                                .padding(bottom = 12.dp)
+                                .clip(RoundedCornerShape(AppRadius.pill))
                                 .quietClickable {
                                     haptic.tap()
-                                    onNavigateToSettings("Health")
+                                    showAutoCaptureSheet = true
                                 },
-                            shape = RoundedCornerShape(AppRadius.medium),
-                            color = MaterialTheme.colorScheme.errorContainer,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f))
+                            shape = RoundedCornerShape(AppRadius.pill),
+                            color = AppColors.warningContainer,
+                            border = BorderStroke(1.dp, AppColors.warning.copy(alpha = 0.45f))
                         ) {
                             Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Icon(
-                                    Icons.Default.WarningAmber,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        "Action Required",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.WarningAmber,
+                                        contentDescription = null,
+                                        tint = AppColors.warning,
+                                        modifier = Modifier.size(16.dp)
                                     )
-                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        if (!hasNotificationPermission) "Notification access is disabled. Live capture will fail."
-                                        else "Battery restrictions are active. The OS may kill the app in the background.",
+                                        text = "Auto-capture paused · Tap to fix",
                                         fontSize = 13.sp,
-                                        color = MaterialTheme.colorScheme.onErrorContainer,
-                                        lineHeight = 18.sp
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-
-                    if (!hasSmsPermission) {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 16.dp)
-                                .clip(RoundedCornerShape(AppRadius.medium))
-                                .quietClickable {
-                                    haptic.tap()
-                                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                        data = android.net.Uri.fromParts("package", context.packageName, null)
-                                    }
-                                    context.startActivity(intent)
-                                },
-                            shape = RoundedCornerShape(AppRadius.medium),
-                            color = AppColors.warningContainer,
-                            border = BorderStroke(1.dp, AppColors.warning.copy(alpha = 0.4f))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                Icon(
-                                    Icons.Default.WarningAmber,
-                                    contentDescription = null,
-                                    tint = AppColors.warning,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        "Please allow SMS access",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = AppColors.warning
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        "1. Tap this box to open Settings.\n2. Tap 'Permissions' and allow SMS.",
-                                        fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        lineHeight = 20.sp
-                                    )
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Text(
-                                        "If the setting is blocked or grayed out:",
-                                        fontSize = 13.sp,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        "Look for three dots (⋮) at the top right of the screen, tap them, and choose 'Allow restricted settings' first.",
-                                        fontSize = 13.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        lineHeight = 18.sp
+                                IconButton(
+                                    onClick = {
+                                        haptic.tap()
+                                        viewModel.setAutoCaptureBannerDismissed(true)
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Dismiss auto-capture warning",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(15.dp)
                                     )
                                 }
                             }
@@ -1762,7 +1812,7 @@ fun DashboardScreen(
                     }
 
                     AnimatedVisibility(
-                        visible = !isSetupDismissed && completedSteps < 3,
+                        visible = !isSetupDismissed && !isManualModePreferred && completedSteps < 3,
                         enter = expandVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
                         exit = shrinkVertically(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) + fadeOut()
                     ) {
@@ -1782,7 +1832,7 @@ fun DashboardScreen(
                                     icon = Icons.Default.FlashOn,
                                     title = "Enable auto-capture",
                                     isDone = isSetupAutoDone,
-                                    onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+                                    onClick = { showAutoCaptureSheet = true }
                                 ),
                                 OnboardingTask(
                                     icon = Icons.Default.Add,
@@ -1990,7 +2040,6 @@ fun DashboardScreen(
                     val isOverBudget = monthlyBudgetPaise > 0L && isMonthlyView && periodSpent > monthlyBudgetPaise
 
 
-                    val usedPct = if (monthlyBudgetPaise > 0L) ((periodSpent.toDouble() / monthlyBudgetPaise.toDouble()) * 100.0).roundToInt() else 0
                     val barColor = when {
                         isOverBudget -> AppColors.negative
                         budgetProgress >= 0.85f -> AppColors.warning
@@ -2090,36 +2139,30 @@ fun DashboardScreen(
                                     sessionKey = "dashboard_budget_bar"
                                 )
 
-                                Spacer(modifier = Modifier.height(16.dp))
+                                Spacer(modifier = Modifier.height(14.dp))
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column {
-                                        Text(
-                                            text = "Budget: ${CurrencyFormat.withSymbol(monthlyBudgetPaise, 0)} · $usedPct% used",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        if (!isOverBudget && daysLeft > 0) {
-                                            Spacer(modifier = Modifier.height(2.dp))
-                                            Text(
-                                                text = "≈ ${CurrencyFormat.withSymbol(remaining / daysLeft, 0)} / day left",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
                                     Text(
-                                        if (isOverBudget) "${CurrencyFormat.withSymbol(periodSpent - monthlyBudgetPaise, 0)} exceeded"
-                                        else "${CurrencyFormat.withSymbol(remaining, 0)} left",
-                                        fontSize = 14.sp,
+                                        text = if (isOverBudget)
+                                            "${CurrencyFormat.withSymbol(periodSpent - monthlyBudgetPaise, 0)} over ${CurrencyFormat.withSymbol(monthlyBudgetPaise, 0)}"
+                                        else
+                                            "${CurrencyFormat.withSymbol(remaining, 0)} left of ${CurrencyFormat.withSymbol(monthlyBudgetPaise, 0)}",
+                                        fontSize = 13.5.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = if (isOverBudget) AppColors.negative else MaterialTheme.colorScheme.onSurface
                                     )
+                                    if (!isOverBudget && daysLeft > 0) {
+                                        Text(
+                                            text = "${CurrencyFormat.withSymbol(remaining / daysLeft, 0)}/day safe pace",
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
 
                                 if (categoryBudgetStatuses.isNotEmpty()) {
@@ -2202,69 +2245,6 @@ fun DashboardScreen(
                                                 }
                                                 .padding(horizontal = 4.dp, vertical = 2.dp)
                                         )
-                                    }
-                                } else if (!isCategoryBudgetSetupDismissed) {
-                                    Spacer(modifier = Modifier.height(14.dp))
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .clip(RoundedCornerShape(AppRadius.small))
-                                                .quietClickable {
-                                                    haptic.tap()
-                                                    initialCategoryForBudgetEdit = null
-                                                    showManageCategoryBudgetsDialog = true
-                                                }
-                                                .padding(vertical = 2.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                "Set spending caps for Food, Shopping & more",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(
-                                                "Set caps →",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(AppRadius.small))
-                                                    .quietClickable {
-                                                        haptic.tap()
-                                                        initialCategoryForBudgetEdit = null
-                                                        showManageCategoryBudgetsDialog = true
-                                                    }
-                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                            IconButton(
-                                                onClick = {
-                                                    haptic.tap()
-                                                    settingsRepo.isCategoryBudgetSetupDismissed = true
-                                                    isCategoryBudgetSetupDismissed = true
-                                                },
-                                                modifier = Modifier.size(24.dp)
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Close,
-                                                    contentDescription = "Dismiss category caps suggestion",
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    modifier = Modifier.size(14.dp)
-                                                )
-                                            }
-                                        }
                                     }
                                 }
                             } else if (!isMonthlyView) {
@@ -2402,62 +2382,97 @@ fun DashboardScreen(
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ) {
-                        Row(modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.size(44.dp)) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.RateReview, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.size(44.dp)) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Default.RateReview, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Column {
+                                        Text("$pendingReviewCount to review", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text("Approve, edit, or discard all in 1 tap", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
-                                Spacer(modifier = Modifier.width(14.dp))
-                                Column {
-                                    Text("$pendingReviewCount to review", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text("Confirm payee or amount", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(AppRadius.pill),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                ) {
+                                    Text(
+                                        "Review →",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.surface,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                                    )
                                 }
                             }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                shape = RoundedCornerShape(AppRadius.pill),
-                                color = MaterialTheme.colorScheme.onSurface // Stark neutral background
-                            ) {
-                                Text(
-                                    "Review →",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.surface, // Pure white text
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                                )
+
+                            if (pendingReviewItems.isNotEmpty()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            haptic.tap()
+                                            showDiscardAllReviewsDialog = true
+                                        },
+                                        modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 42.dp),
+                                        shape = RoundedCornerShape(AppRadius.small),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    ) {
+                                        Text(
+                                            "Discard all ($pendingReviewCount)",
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = AppColors.negative,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            haptic.confirm()
+                                            viewModel.bulkResolveReviewItems(pendingReviewItems) { approved, _ ->
+                                                showSnack("Approved $approved transactions")
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 42.dp),
+                                        shape = RoundedCornerShape(AppRadius.small),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    ) {
+                                        Text(
+                                            "Approve all ($pendingReviewCount)",
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
 
-            item {
-                val hasUnspecified = remember(transactions) {
-                    transactions.asSequence().take(1000).any { it.bankName == null }
-                }
-                DashboardSearchAndFilter(
-                    searchOpen = searchOpen,
-                    searchQuery = searchQuery,
-                    onSearchQueryChange = { searchQuery = it },
-                    onSearchClear = { searchQuery = ""; debouncedSearchQuery = "" },
-                    focusManager = focusManager,
-                    haptic = haptic,
-                    selectedFilterCategory = selectedFilterCategory,
-                    onCategorySelected = { selectedFilterCategory = it },
-                    allAvailableCategories = allAvailableCategories,
-                    onManageCategories = { showManageCategoriesDialog = true },
-                    linkedAccounts = linkedAccounts,
-                    selectedAccount = selectedAccount,
-                    onAccountSelected = { viewModel.selectedAccount.value = it },
-                    hasUnspecifiedAccount = hasUnspecified,
-                    onAutoDetectBanks = { showBankInfoDialog = true }
-                )
-            }
             item {
                 val hasActiveListFilter = searchQuery.isNotBlank() || selectedFilterCategory != "All" || selectedAccount != null
                 val activeRows = remember(filteredTransactions, pendingDeleteIds) {
@@ -2477,71 +2492,99 @@ fun DashboardScreen(
                         }
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Transactions",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        if (hasActiveListFilter && filteredSpendTotal > 0L) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "· ${CurrencyFormat.smart(filteredSpendTotal)}",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        AnimatedContent(
-                            targetState = "$visibleCount ${if (visibleCount == 1) "entry" else "entries"}",
-                            transitionSpec = {
-                                fadeIn(tween(180)) togetherWith fadeOut(tween(120))
-                            },
-                            label = "visibleEntriesAnim"
-                        ) { countText ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                countText,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                "Transactions",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
-                        }
-                        if (hasActiveListFilter) {
-                            Surface(
-                                shape = RoundedCornerShape(AppRadius.pill),
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(AppRadius.pill))
-                                    .quietClickable {
-                                        haptic.tap()
-                                        searchQuery = ""
-                                        debouncedSearchQuery = ""
-                                        searchOpen = false
-                                        selectedFilterCategory = "All"
-                                        viewModel.selectedAccount.value = null
-                                    }
-                            ) {
+                            if (hasActiveListFilter && filteredSpendTotal > 0L) {
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    "Reset",
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    "· ${CurrencyFormat.smart(filteredSpendTotal)}",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            AnimatedContent(
+                                targetState = "$visibleCount ${if (visibleCount == 1) "entry" else "entries"}",
+                                transitionSpec = {
+                                    fadeIn(tween(180)) togetherWith fadeOut(tween(120))
+                                },
+                                label = "visibleEntriesAnim"
+                            ) { countText ->
+                                Text(
+                                    countText,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (hasActiveListFilter) {
+                                Surface(
+                                    shape = RoundedCornerShape(AppRadius.pill),
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(AppRadius.pill))
+                                        .quietClickable {
+                                            haptic.tap()
+                                            searchQuery = ""
+                                            debouncedSearchQuery = ""
+                                            searchOpen = false
+                                            selectedFilterCategory = "All"
+                                            viewModel.selectedAccount.value = null
+                                        }
+                                ) {
+                                    Text(
+                                        "Reset",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    val showCategoryFilterChips = visibleCount >= 4 || searchOpen || searchQuery.isNotBlank() || selectedFilterCategory != "All"
+                    val showAccountFilterChips = linkedAccounts.size > 1 || selectedAccount != null
+                    if (showCategoryFilterChips || showAccountFilterChips) {
+                        val hasUnspecified = remember(transactions) {
+                            transactions.asSequence().take(1000).any { it.bankName == null }
+                        }
+                        DashboardSearchAndFilter(
+                            searchOpen = searchOpen,
+                            searchQuery = searchQuery,
+                            onSearchQueryChange = { searchQuery = it },
+                            onSearchClear = { searchQuery = ""; debouncedSearchQuery = "" },
+                            focusManager = focusManager,
+                            haptic = haptic,
+                            selectedFilterCategory = selectedFilterCategory,
+                            onCategorySelected = { selectedFilterCategory = it },
+                            allAvailableCategories = allAvailableCategories,
+                            onManageCategories = { showManageCategoriesDialog = true },
+                            linkedAccounts = linkedAccounts,
+                            selectedAccount = selectedAccount,
+                            onAccountSelected = { viewModel.selectedAccount.value = it },
+                            hasUnspecifiedAccount = hasUnspecified,
+                            onAutoDetectBanks = { showBankInfoDialog = true },
+                            showCategoryChips = showCategoryFilterChips
+                        )
                     }
                 }
             }

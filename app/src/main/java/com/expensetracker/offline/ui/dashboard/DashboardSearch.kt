@@ -47,7 +47,8 @@ fun DashboardSearchAndFilter(
     selectedAccount: AccountInfo?,
     onAccountSelected: (AccountInfo?) -> Unit,
     hasUnspecifiedAccount: Boolean,
-    onAutoDetectBanks: () -> Unit
+    onAutoDetectBanks: () -> Unit,
+    showCategoryChips: Boolean = true
 ) {
     Column {
         AnimatedVisibility(visible = searchOpen || searchQuery.isNotEmpty()) {
@@ -110,21 +111,25 @@ fun DashboardSearchAndFilter(
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            PremiumFilterChip(text = "All", isSelected = selectedFilterCategory == "All", onClick = { haptic.tap(); onCategorySelected("All") })
-            PremiumFilterChip(text = "Split only", isSelected = selectedFilterCategory == "Split Only", onClick = { haptic.tap(); onCategorySelected("Split Only") })
-            allAvailableCategories.forEach { category ->
-                PremiumFilterChip(text = category, isSelected = selectedFilterCategory == category, onClick = { haptic.tap(); onCategorySelected(category) })
+        if (showCategoryChips) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PremiumFilterChip(text = "All", isSelected = selectedFilterCategory == "All", onClick = { haptic.tap(); onCategorySelected("All") })
+                PremiumFilterChip(text = "Split only", isSelected = selectedFilterCategory == "Split Only", onClick = { haptic.tap(); onCategorySelected("Split Only") })
+                allAvailableCategories.forEach { category ->
+                    PremiumFilterChip(text = category, isSelected = selectedFilterCategory == category, onClick = { haptic.tap(); onCategorySelected(category) })
+                }
+                PremiumFilterChip(text = "+ Manage", isSelected = false, onClick = { haptic.tap(); onManageCategories() })
             }
-            PremiumFilterChip(text = "+ Manage", isSelected = false, onClick = { haptic.tap(); onManageCategories() })
         }
 
-        if (linkedAccounts.isEmpty() || linkedAccounts.size > 1) {
-            Spacer(Modifier.height(10.dp))
+        if (linkedAccounts.size > 1 || selectedAccount != null) {
+            if (showCategoryChips) {
+                Spacer(Modifier.height(10.dp))
+            }
 
             Row(
                 modifier = Modifier
@@ -133,60 +138,30 @@ fun DashboardSearchAndFilter(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (linkedAccounts.isEmpty()) {
-                    Surface(
-                        shape = RoundedCornerShape(AppRadius.pill),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(AppRadius.pill))
-                            .quietClickable { haptic.tap(); onAutoDetectBanks() }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.AccountBalanceWallet,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                "Auto-detect Banks",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                } else {
+                PremiumFilterChip(
+                    text = "All Accounts",
+                    isSelected = selectedAccount == null,
+                    onClick = { haptic.tap(); onAccountSelected(null) }
+                )
+
+                if (hasUnspecifiedAccount) {
+                    val isUnspecifiedSelected = selectedAccount?.bankName == "Unspecified"
                     PremiumFilterChip(
-                        text = "All Accounts",
-                        isSelected = selectedAccount == null,
-                        onClick = { haptic.tap(); onAccountSelected(null) }
+                        text = "Unspecified",
+                        isSelected = isUnspecifiedSelected,
+                        onClick = {
+                            haptic.tap(); onAccountSelected(AccountInfo("Unspecified", null))
+                        }
                     )
+                }
 
-                    if (hasUnspecifiedAccount) {
-                        val isUnspecifiedSelected = selectedAccount?.bankName == "Unspecified"
-                        PremiumFilterChip(
-                            text = "Unspecified",
-                            isSelected = isUnspecifiedSelected,
-                            onClick = {
-                                haptic.tap(); onAccountSelected(AccountInfo("Unspecified", null))
-                            }
-                        )
-                    }
-
-                    linkedAccounts.forEach { account ->
-                        val label = if (account.accountNumber != null) "${account.bankName} (..${account.accountNumber})" else account.bankName
-                        PremiumFilterChip(
-                            text = label,
-                            isSelected = selectedAccount == account && account.bankName != "Unspecified",
-                            onClick = { haptic.tap(); onAccountSelected(account) }
-                        )
-                    }
+                linkedAccounts.forEach { account ->
+                    val label = if (account.accountNumber != null) "${account.bankName} (..${account.accountNumber})" else account.bankName
+                    PremiumFilterChip(
+                        text = label,
+                        isSelected = selectedAccount == account && account.bankName != "Unspecified",
+                        onClick = { haptic.tap(); onAccountSelected(account) }
+                    )
                 }
             }
         }

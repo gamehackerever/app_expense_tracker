@@ -282,11 +282,7 @@ internal fun CategoryRow(
     val percentage = share * 100.0
     val avgPerTxn = if (insight.transactionCount > 0) insight.totalSpent.toDouble() / insight.transactionCount else 0.0
 
-    val animatedProgress by rememberAnimatedValue(
-        target = if (isAnimating) share.toFloat().coerceIn(0f, 1f) else 0f,
-        key = insight.totalSpent to grandTotal,
-        sessionKey = "insights_cat_row_${insight.category}"
-    )
+    val targetProgress = if (isAnimating) share.toFloat().coerceIn(0f, 1f) else 0f
 
     Column(
         modifier = Modifier
@@ -337,8 +333,9 @@ internal fun CategoryRow(
 
         Spacer(modifier = Modifier.height(10.dp))
         InsightsProgressBar(
-            progress = animatedProgress,
-            color = categoryColor.copy(alpha = 0.85f)
+            progress = targetProgress,
+            color = categoryColor.copy(alpha = 0.85f),
+            sessionKey = "insights_cat_row_${insight.category}"
         )
     }
 }
@@ -371,11 +368,7 @@ internal fun CategoryRowWithBudget(
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
-    val animatedProgress by rememberAnimatedValue(
-        target = if (isAnimating) pct.coerceIn(0f, 1f) else 0f,
-        key = insight.totalSpent to budgetPaise,
-        sessionKey = "insights_cat_budget_${insight.category}"
-    )
+    val targetProgress = if (isAnimating) pct.coerceIn(0f, 1f) else 0f
 
     Column(
         modifier = Modifier
@@ -424,8 +417,9 @@ internal fun CategoryRowWithBudget(
 
         Spacer(modifier = Modifier.height(10.dp))
         InsightsProgressBar(
-            progress = animatedProgress,
-            color = barColor
+            progress = targetProgress,
+            color = barColor,
+            sessionKey = "insights_cat_budget_${insight.category}"
         )
     }
 }

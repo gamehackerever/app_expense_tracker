@@ -110,7 +110,10 @@ internal data class CycleStats(
 )
 
 internal fun matchesAccount(txn: TransactionEntity, filter: AccountInfo?): Boolean =
-    filter == null || (txn.bankName == filter.bankName && txn.accountNumber == filter.accountNumber)
+    filter == null || (
+        (txn.bankName == filter.bankName || txn.bankName?.removeSuffix(" CC")?.removeSuffix(" cc")?.trim() == filter.bankName) &&
+        txn.accountNumber == filter.accountNumber
+    )
 
 // Your own share of a bill = amount minus what other people owe (or your debt row when a friend paid).
 internal fun myShareOf(item: TransactionWithDebts): Long {
@@ -166,40 +169,12 @@ internal fun rememberAnimatedValue(
     sessionKey: String? = null
 ): State<Float> {
     val isReady = LocalAnimationReady.current
-    val resolvedKey = sessionKey ?: remember { "anim_${java.util.UUID.randomUUID()}" }
-    val alreadyPlayed = remember(resolvedKey) {
-        AnimationSessionTracker.hasPlayed(resolvedKey)
-    }
-    val anim = remember(resolvedKey) { Animatable(if (alreadyPlayed) target else 0f) }
-    var hasAnimatedOnce by remember(resolvedKey) { mutableStateOf(alreadyPlayed) }
-
-    LaunchedEffect(isReady, target, key) {
-        if (!isReady) {
-            if (!hasAnimatedOnce) anim.snapTo(0f)
-            return@LaunchedEffect
-        }
-        if (!hasAnimatedOnce) {
-            if ( kotlin.math.abs(target) > 0.0001f ) {
-                hasAnimatedOnce = true
-                AnimationSessionTracker.markPlayed(resolvedKey)
-                anim.snapTo(0f)
-                anim.animateTo(
-                    targetValue = target,
-                    animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing)
-                )
-            } else {
-                anim.snapTo(0f)
-            }
-        } else if (kotlin.math.abs(anim.value - target) > 0.005f) {
-            anim.animateTo(
-                targetValue = target,
-                animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing)
-            )
-        } else {
-            anim.snapTo(target)
-        }
-    }
-    return anim.asState()
+    val effectiveTarget = if (isReady) target else 0f
+    return animateFloatAsState(
+        targetValue = effectiveTarget,
+        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        label = sessionKey ?: "animatedValue"
+    )
 }
 
 @Composable

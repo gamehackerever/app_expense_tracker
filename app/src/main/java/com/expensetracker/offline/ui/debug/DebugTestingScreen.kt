@@ -448,9 +448,10 @@ fun DebugTestingScreen(
                         }
                     },
                     shape = RoundedCornerShape(AppRadius.small),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     modifier = Modifier.weight(1f).height(48.dp)
                 ) {
-                    Text("Trigger SMS", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Trigger SMS", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                 }
 
                 Button(
@@ -465,9 +466,10 @@ fun DebugTestingScreen(
                         }
                     },
                     shape = RoundedCornerShape(AppRadius.small),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     modifier = Modifier.weight(1f).height(48.dp)
                 ) {
-                    Text("Trigger Notif", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("Trigger Notif", fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                 }
             }
 

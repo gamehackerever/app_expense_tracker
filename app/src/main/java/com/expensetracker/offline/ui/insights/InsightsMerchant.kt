@@ -152,11 +152,7 @@ internal fun MerchantRow(
     val share = if (grandTotal > 0L) (insight.totalSpent.toDouble() / grandTotal.toDouble()) else 0.0
     val avgPerVisit = if (insight.transactionCount > 0) insight.totalSpent.toDouble() / insight.transactionCount else 0.0
 
-    val animatedProgress by rememberAnimatedValue(
-        target = if (isAnimating) share.toFloat().coerceIn(0f, 1f) else 0f,
-        key = insight.totalSpent to grandTotal,
-        sessionKey = "insights_merchant_${insight.payee}"
-    )
+    val targetProgress = if (isAnimating) share.toFloat().coerceIn(0f, 1f) else 0f
 
     Column(
         modifier = Modifier
@@ -215,8 +211,9 @@ internal fun MerchantRow(
 
         Spacer(modifier = Modifier.height(10.dp))
         InsightsProgressBar(
-            progress = animatedProgress,
-            color = MaterialTheme.colorScheme.onSurface
+            progress = targetProgress,
+            color = MaterialTheme.colorScheme.onSurface,
+            sessionKey = "insights_merchant_${insight.payee}"
         )
     }
 }

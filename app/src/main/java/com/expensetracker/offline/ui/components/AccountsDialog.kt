@@ -28,7 +28,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -391,7 +391,7 @@ fun AccountsDialog(
                                     }
                                 )
                             }
-                            items(accountBalances, key = { "${it.bankName}|${it.accountNumber ?: "none"}" }) { account ->
+                            itemsIndexed(accountBalances, key = { idx, it -> "${it.bankName}|${it.accountNumber ?: "none"}|$idx" }) { _, account ->
                                 val isSelected = selectedAccount?.bankName == account.bankName && selectedAccount?.accountNumber == account.accountNumber
                                 val ccConfig = remember(account, ccConfigVersion) {
                                     settingsRepo.getCreditCardConfig(account.bankName, account.accountNumber)

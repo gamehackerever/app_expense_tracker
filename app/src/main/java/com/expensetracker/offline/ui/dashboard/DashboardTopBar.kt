@@ -30,6 +30,8 @@ fun DashboardTopBar(
     startDayOfMonth: Int,
     hasNotificationPermission: Boolean,
     isIgnoringBatteryOptimizations: Boolean,
+    hasSmsPermission: Boolean = true,
+    isManualModePreferred: Boolean = false,
     isProTipsDismissed: Boolean,
     haptic: HapticFeedback,
     onCancelSelection: () -> Unit,
@@ -40,7 +42,7 @@ fun DashboardTopBar(
     onSettings: () -> Unit
 ) {
     val dividerAlpha by animateFloatAsState(if (isScrolled) 1f else 0f, tween(180), label = "headerDivider")
-    val captureHealthy = hasNotificationPermission && isIgnoringBatteryOptimizations
+    val captureHealthy = isManualModePreferred || ((hasSmsPermission || hasNotificationPermission) && isIgnoringBatteryOptimizations)
     val statusColor = if (captureHealthy) AppColors.positive else AppColors.warning
 
     Column(
