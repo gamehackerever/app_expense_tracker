@@ -2,14 +2,21 @@ package com.expensetracker.offline.engine.parser
 
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.engine.ml.SmsPatternLearner
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /** Real bank SMS / UPI notification shapes. Amounts are PAISE. */
 class FinancialParserTest {
+
+    @Before
+    fun resetLearner() {
+        SmsPatternLearner.clearAllLearnedPatterns()
+    }
 
     private fun sms(text: String, header: String) = FinancialParser.parse(text, header, TransactionSource.SMS)
     private fun notif(text: String, app: String) = FinancialParser.parse(text, app, TransactionSource.NOTIFICATION)
@@ -106,7 +113,6 @@ class FinancialParserTest {
 
     @Test
     fun upiAppNotification_hasNoBank_soDedupeMustAcceptAnUnknownBank() {
-        // The merge query in TransactionDao relies on this: a notification row is saved with bankName = null.
         val p = notif("Google Pay Paid ₹80 to Chai Point", "Google Pay")
         assertEquals(TransactionType.DEBIT, p.type)
         assertEquals(8_000L, p.amount)
@@ -120,5 +126,41 @@ class FinancialParserTest {
         assertEquals(TransactionType.CREDIT, p.type)
         assertEquals(20_000L, p.amount)
         assertEquals("Ravi", p.payee)
+    }
+
+    @Test
+    fun discardedReviewTemplate_isLearnedAndBlockedNextTime() {
+        val sample1 = "Dear Customer, Rs 1500 cashback voucher is waiting on your A/c XX1234 debited card campaign."
+        val sample2 = "Dear Customer, Rs 2500 cashback voucher is waiting on your A/c XX1234 debited card campaign."
+        assertTrue(sms(sample1, "AX-HDFCBK").isFinancial)
+
+        SmsPatternLearner.learnDiscardedReview("AX-HDFCBK", sample1)
+        assertFalse(sms(sample2, "VM-HDFCBK").isFinancial)
+    }
+
+    @Test
+    fun approvedReviewTemplate_learnsTypeAndPayeeForAmbiguousSms() {
+        val msg1 = "Rs 500 debited from your A/c and credited to A/c XX9999 of Ravi. UPI Ref 123456789012"
+        val msg2 = "Rs 850 debited from your A/c and credited to A/c XX8888 of Suresh. UPI Ref 987654321098"
+
+        // Before approval, type is ambiguous (null) so it goes to review
+        val initial = sms(msg1, "AX-SBIINB")
+        assertNull(initial.type)
+
+        // User approves msg1 in Review Queue as DEBIT to Ravi
+        SmsPatternLearner.learnApprovedReview(
+            sender = "AX-SBIINB",
+            rawContent = msg1,
+            resolvedPayee = "Ravi",
+            resolvedCategory = "Transfer",
+            resolvedType = TransactionType.DEBIT,
+            resolvedBankName = "SBI"
+        )
+
+        // Next time msg2 arrives with the same structure, type is automatically DEBIT and payee is Suresh!
+        val afterLearning = sms(msg2, "AX-SBIINB")
+        assertTrue(afterLearning.isFinancial)
+        assertEquals(TransactionType.DEBIT, afterLearning.type)
+        assertEquals("Suresh", afterLearning.payee)
     }
 }
