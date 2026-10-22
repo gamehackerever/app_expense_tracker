@@ -68,19 +68,31 @@ object RecurringPaymentDetector {
     private val RECHARGE_28D_REGEX = Regex("(?i)\\b(vi\\s*recharge|vodafone|jio|airtel|bsnl|prepaid|recharge)\\b")
 
     fun detect(debits: List<DebitPoint>, now: Long = System.currentTimeMillis()): List<RecurringPayment> {
+        val ignoredGenericPayees = setOf(
+            "unknown", "unspecified", "upi payment", "upi received", "bank transfer",
+            "bank credit", "card spend", "atm withdrawal", "self transfer",
+            "silent deduction", "cash", "manual entry", "split settlement"
+        )
         val byPayee = debits
             .filter { it.amount > 0L }
             .groupBy { normalizeKey(it.payee) }
-            .filterKeys { it.isNotBlank() && it != "unknown" }
+            .filterKeys { it.isNotBlank() && it !in ignoredGenericPayees }
 
         val results = mutableListOf<RecurringPayment>()
 
         for ((_, group) in byPayee) {
             if (group.size >= 2) {
                 // 1. Fixed-amount series: same payee AND (nearly) same amount.
-                val fixedHits = clusterByAmount(group).mapNotNull { evaluate(it, fixed = true, now = now) }
-                if (fixedHits.isNotEmpty()) {
-                    results += fixedHits
+                // Pick the strongest active series per payee so duplicate payee keys never crash LazyColumn.
+                val bestFixedHit = clusterByAmount(group)
+                    .mapNotNull { evaluate(it, fixed = true, now = now) }
+                    .maxWithOrNull(
+                        compareBy<RecurringPayment> { it.isActive }
+                            .thenBy { it.occurrences }
+                            .thenBy { it.lastSeen }
+                    )
+                if (bestFixedHit != null) {
+                    results += bestFixedHit
                     continue
                 }
 
@@ -120,9 +132,11 @@ object RecurringPaymentDetector {
             }
         }
 
-        return results.sortedWith(
-            compareByDescending<RecurringPayment> { it.isActive }.thenByDescending { it.monthlyCost }
-        )
+        return results
+            .distinctBy { normalizeKey(it.payee) }
+            .sortedWith(
+                compareByDescending<RecurringPayment> { it.isActive }.thenByDescending { it.monthlyCost }
+            )
     }
 
     /** Sum of what the active recurring payments cost per month. */
@@ -143,7 +157,7 @@ object RecurringPaymentDetector {
 
         val gaps = series.zipWithNext { a, b -> (b.timestamp - a.timestamp).toDouble() / DAY_MS }
 
-        val (cadence, ratio) = Cadence.values()
+        val (cadence, ratio) = Cadence.entries
             .filter { series.size >= it.minOccurrences && (fixed || !it.requiresFixedAmount) }
             .map { it to matchRatio(gaps, it) }
             .filter { it.second >= MIN_MATCH_RATIO }

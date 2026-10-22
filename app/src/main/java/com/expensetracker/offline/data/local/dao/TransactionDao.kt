@@ -258,4 +258,37 @@ interface TransactionDao {
 
     @Query("SELECT * FROM transactions WHERE category != 'Split Settlement' ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentTransactions(limit: Int): List<TransactionEntity>
+
+    @Query("""
+        UPDATE transactions
+        SET bankName = TRIM(SUBSTR(bankName, 1, LENGTH(bankName) - 3))
+        WHERE bankName LIKE '% CC'
+          AND (
+              bankName LIKE 'South Indian Bank%'
+              OR LOWER(rawContent) LIKE '%a/c%'
+              OR LOWER(rawContent) LIKE '%acct%'
+              OR LOWER(rawContent) LIKE '%upi%'
+              OR LOWER(rawContent) LIKE '%debit%'
+              OR LOWER(rawContent) LIKE '%avl bal%'
+              OR LOWER(rawContent) LIKE '%avail bal%'
+              OR LOWER(rawContent) LIKE '%balance%'
+              OR accountNumber IN (
+                  SELECT DISTINCT accountNumber
+                  FROM transactions
+                  WHERE bankName NOT LIKE '% CC' AND accountNumber IS NOT NULL
+              )
+          )
+    """)
+    suspend fun healFalseCreditCardAccounts(): Int
+
+    @Query("UPDATE transactions SET accountNumber = SUBSTR(accountNumber, -4) WHERE accountNumber IS NOT NULL AND LENGTH(accountNumber) > 4")
+    suspend fun normalizeAccountNumbersToLast4(): Int
+
+    @Query("""
+        UPDATE transactions
+        SET accountNumber = :canonicalAccountNumber
+        WHERE bankName = :bankName
+          AND (accountNumber IS NULL OR accountNumber != :canonicalAccountNumber)
+    """)
+    suspend fun unifyBankAccountNumber(bankName: String, canonicalAccountNumber: String): Int
 }

@@ -13,17 +13,18 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ReviewItemDao {
 
-    // FIXED: Changed to IGNORE to prevent identical review items from duplicating (PO-A)
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertReviewItem(item: ReviewItemEntity): Long
 
     @Update
     suspend fun updateReviewItem(item: ReviewItemEntity)
 
+    @Query("SELECT * FROM review_items WHERE id = :id LIMIT 1")
+    suspend fun getReviewItemById(id: Long): ReviewItemEntity?
+
     @Query("SELECT * FROM review_items WHERE status = 'PENDING' ORDER BY timestamp DESC")
     fun getPendingReviewItemsFlow(): Flow<List<ReviewItemEntity>>
 
-    // FIXED: Uses the `type` column to sum debits and credits in Long paise (PO-B)
     @Query("""
         SELECT SUM(CASE 
             WHEN type = 'DEBIT' THEN -extractedPartialAmount 
@@ -50,10 +51,6 @@ interface ReviewItemDao {
     @Query("DELETE FROM review_items WHERE id IN (:ids)")
     suspend fun deleteReviewItemsByIds(ids: List<Long>)
 
-    // FIXED: Deduplicate on amount and a 10-minute window rather than exact timestamp/rawText (PO-A)
-    // Two pending items are the same payment only if nothing tells them apart: references, bank and
-    // account must agree whenever both sides know them. Same amount alone is not enough (two different
-    // Rs 1,500 payments within minutes are two payments).
     @Query("""
         SELECT COUNT(*) FROM review_items
         WHERE extractedPartialAmount = :amount
@@ -69,9 +66,6 @@ interface ReviewItemDao {
         referenceId: String?, bankName: String?, accountNumber: String?
     ): Int
 
-    // Pending review items for ONE account between two timestamps (exclusive start, inclusive end),
-    // signed: debits negative, credits positive. Used by the ghost-transaction check so it only
-    // counts items the stored baseline balance has not already absorbed.
     @Query("""
         SELECT SUM(CASE WHEN type = 'DEBIT' THEN -extractedPartialAmount
                         WHEN type = 'CREDIT' THEN extractedPartialAmount ELSE 0 END)
@@ -85,4 +79,24 @@ interface ReviewItemDao {
 
     @Query("SELECT COUNT(*) FROM review_items WHERE rawContent = :raw AND timestamp = :ts")
     suspend fun countExactReviewItems(raw: String, ts: Long): Int
+
+    @Query("SELECT * FROM review_items WHERE status = 'PENDING' ORDER BY timestamp ASC")
+    suspend fun getPendingReviewItemsSync(): List<ReviewItemEntity>
+
+    @Query("""
+        UPDATE review_items
+        SET bankName = TRIM(SUBSTR(bankName, 1, LENGTH(bankName) - 3))
+        WHERE bankName LIKE '% CC'
+          AND (
+              bankName LIKE 'South Indian Bank%'
+              OR LOWER(rawContent) LIKE '%a/c%'
+              OR LOWER(rawContent) LIKE '%acct%'
+              OR LOWER(rawContent) LIKE '%upi%'
+              OR LOWER(rawContent) LIKE '%debit%'
+              OR LOWER(rawContent) LIKE '%avl bal%'
+              OR LOWER(rawContent) LIKE '%avail bal%'
+              OR LOWER(rawContent) LIKE '%balance%'
+          )
+    """)
+    suspend fun healFalseCreditCardReviewItems(): Int
 }

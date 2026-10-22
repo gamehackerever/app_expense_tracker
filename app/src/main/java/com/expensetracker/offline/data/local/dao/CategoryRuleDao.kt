@@ -18,15 +18,17 @@ interface CategoryRuleDao {
     @Query("SELECT * FROM category_rules ORDER BY usageCount DESC")
     suspend fun getAllRules(): List<CategoryRuleEntity>
 
-    // BUG FIX: was ordered by usageCount DESC only, so a short, generic learned
-    // pattern (e.g. "pay") with a high usage count could win over a longer,
-    // more specific pattern (e.g. "amazon pay") that's a better match for the
-    // actual payee — miscategorizing merchants that contain a common word.
-    // Prefer the longest (most specific) matching pattern first; usageCount is
-    // now only a tiebreaker between equally-specific patterns.
-    @Query("SELECT category FROM category_rules WHERE :query LIKE '%' || merchantPattern || '%' ESCAPE '\\' ORDER BY LENGTH(merchantPattern) DESC, usageCount DESC LIMIT 1")
+    // Prefer the longest matching pattern first (ignoring short <3 char patterns);
+    // usageCount is a tiebreaker between equally-specific patterns.
+    @Query("SELECT category FROM category_rules WHERE LENGTH(TRIM(merchantPattern)) >= 3 AND :query LIKE '%' || merchantPattern || '%' ESCAPE '\\' ORDER BY LENGTH(merchantPattern) DESC, usageCount DESC LIMIT 1")
     suspend fun findMatchingCategory(query: String): String?
 
     @Query("UPDATE category_rules SET category = :newCategory WHERE category = :oldCategory")
     suspend fun reassignRuleCategory(oldCategory: String, newCategory: String)
+
+    @Query("DELETE FROM category_rules WHERE merchantPattern = :pattern")
+    suspend fun deleteRuleByPattern(pattern: String)
+
+    @Query("DELETE FROM category_rules WHERE LOWER(TRIM(merchantPattern)) IN (:patterns) OR LENGTH(TRIM(merchantPattern)) < 3")
+    suspend fun deleteGenericOrShortRules(patterns: List<String>)
 }

@@ -113,8 +113,8 @@ class SettingsRepository(context: Context) {
 
     var scanFallbackPayee: String
         get() = prefs.getString(KEY_SCAN_FALLBACK_PAYEE, null)?.ifBlank { null }
-            ?: prefs.getString(KEY_FALLBACK_PAYEE, "Bank Transfer")?.ifBlank { "Bank Transfer" }
-            ?: "Bank Transfer"
+            ?: prefs.getString(KEY_FALLBACK_PAYEE, "UPI Payment")?.ifBlank { "UPI Payment" }
+            ?: "UPI Payment"
         set(value) = prefs.edit().putString(KEY_SCAN_FALLBACK_PAYEE, value).apply()
 
     var autoBackupEnabled: Boolean
@@ -148,6 +148,18 @@ class SettingsRepository(context: Context) {
     var disclosureAccepted: Boolean
         get() = prefs.getBoolean(KEY_DISCLOSURE_ACCEPTED, false)
         set(value) = prefs.edit().putBoolean(KEY_DISCLOSURE_ACCEPTED, value).apply()
+
+    var isManualModePreferred: Boolean
+        get() = prefs.getBoolean(KEY_MANUAL_MODE_PREFERRED, false)
+        set(value) = prefs.edit().putBoolean(KEY_MANUAL_MODE_PREFERRED, value).apply()
+
+    var isAutoCaptureBannerDismissed: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_CAPTURE_BANNER_DISMISSED, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_CAPTURE_BANNER_DISMISSED, value).apply()
+
+    var hasPromptedPermissionsOnce: Boolean
+        get() = prefs.getBoolean(KEY_PERMISSIONS_PROMPTED_ONCE, false)
+        set(value) = prefs.edit().putBoolean(KEY_PERMISSIONS_PROMPTED_ONCE, value).apply()
 
     var appThemeMode: String
         get() = prefs.getString(KEY_APP_THEME_MODE, "SYSTEM") ?: "SYSTEM"
@@ -466,6 +478,9 @@ class SettingsRepository(context: Context) {
         const val KEY_DAILY_DIGEST_ENABLED = "key_daily_digest_enabled"
         const val KEY_BILL_REMINDERS_ENABLED = "key_bill_reminders_enabled"
         const val KEY_DISCLOSURE_ACCEPTED = "key_disclosure_accepted"
+        const val KEY_MANUAL_MODE_PREFERRED = "key_manual_mode_preferred"
+        const val KEY_AUTO_CAPTURE_BANNER_DISMISSED = "key_auto_capture_banner_dismissed"
+        const val KEY_PERMISSIONS_PROMPTED_ONCE = "key_permissions_prompted_once"
         const val KEY_APP_THEME_MODE = "key_app_theme_mode"
         const val KEY_MY_UPI_VPA = "key_my_upi_vpa"
         const val KEY_CUSTOM_CATEGORIES = "key_custom_categories"

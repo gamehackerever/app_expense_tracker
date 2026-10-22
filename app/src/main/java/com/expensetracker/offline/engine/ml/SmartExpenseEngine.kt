@@ -23,20 +23,22 @@ import kotlin.math.roundToLong
 /**
  * Multi-Model On-Device Financial Intelligence Engine.
  *
- * Runs 100% offline in < 5ms with zero external dependencies, combining 5 statistical/ML models
+ * Runs 100% offline in < 5ms with zero external dependencies, combining 6 statistical/ML models
  * designed to learn the user's habits within the first 3–7 days of use:
  *
  * 1. **Contextual Habit & Next-Expense Predictor** (Circular Von-Mises Time-of-Day Kernel +
- *    Gaussian Log-Amount Affinity + Sequential Markov Transition Prior + Day-of-Week Affinity +
- *    14-day Half-Life Recency Decay + Time-Slot Conditioned Amount Mode/Median).
- * 2. **Hybrid Jaro-Winkler Fuzzy Entity Resolver + Subword 3-Gram & Gaussian Log-Amount Naive Bayes**
+ *    Gaussian Log-Amount Affinity + Day-of-Week Affinity + 14-day Half-Life Recency Decay +
+ *    Time-Slot Conditioned Amount Mode/Median).
+ * 2. **Active SMS/Notification Template & VPA Learner (`SmsPatternLearner`)** that learns structural
+ *    message skeletons and VPA mappings from every Review Queue approval and disapproval.
+ * 3. **Hybrid Jaro-Winkler Fuzzy Entity Resolver + Subword 3-Gram & Gaussian Log-Amount Naive Bayes**
  *    for zero-shot and few-shot category prediction across live SMS, notifications, and manual entry.
- * 3. **Winsorized EWMA + Day-of-Week Seasonality Forecaster** (P85 + MAD outlier separation)
+ * 4. **Winsorized EWMA + Day-of-Week Seasonality Forecaster** (P85 + MAD outlier separation)
  *    for end-of-cycle spend projection.
- * 4. **Modified Z-Score (MAD) Behavioral Habit, Micro-Spend & Anomaly Discovery Engine**
+ * 5. **Modified Z-Score (MAD) Behavioral Habit, Micro-Spend & Anomaly Discovery Engine**
  *    for surfacing concrete, non-redundant insights on the Insights screen.
- * 5. **Live On-Device AI/ML Telemetry & Holdout Cross-Validation Engine** for inspecting model
- *    accuracy, hit rates, subword vocabulary, outlier dampening, and latency in Debug Settings.
+ * 6. **Live On-Device AI/ML Telemetry & Holdout Cross-Validation Engine** for inspecting model
+ *    accuracy, hit rates, subword vocabulary, learned SMS patterns, and latency in Debug Settings.
  */
 object SmartExpenseEngine {
 
@@ -109,12 +111,6 @@ object SmartExpenseEngine {
     // MODEL 1: CONTEXTUAL NEXT-EXPENSE & HABIT PREDICTOR
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Predicts the most likely merchants/payees for the user right now (or matching [query] / [amountPaise]),
-     * conditioned on current hour-of-day, day-of-week, optional entered amount, sequential transition from
-     * the previous merchant, recency, and frequency, along with the time-slot conditioned typical amount,
-     * learned category, and preferred payment method.
-     */
     fun predictContextualPayees(
         transactions: List<TransactionEntity>,
         query: String = "",
@@ -135,7 +131,6 @@ object SmartExpenseEngine {
         val currentDow = cal.get(Calendar.DAY_OF_WEEK)
         val isWeekendNow = currentDow == Calendar.SATURDAY || currentDow == Calendar.SUNDAY
 
-        // Group recent transactions by canonicalized payee name
         val grouped = LinkedHashMap<String, MutableList<TransactionEntity>>()
         val sampleLimit = min(transactions.size, 600)
         for (i in 0 until sampleLimit) {
@@ -143,7 +138,7 @@ object SmartExpenseEngine {
             if (txn.type != targetType) continue
             if (txn.category == "Split Settlement" || txn.category.equals("Transfer", ignoreCase = true)) continue
             val name = txn.payee.trim()
-            if (name.length < 2 || name.equals("Unknown", ignoreCase = true) || name.equals("Silent Deduction", ignoreCase = true)) continue
+            if (CategoryClassifier.isGenericPayee(name)) continue
             val key = name.lowercase(Locale.ROOT)
             grouped.getOrPut(key) { ArrayList() }.add(txn)
         }
@@ -154,7 +149,6 @@ object SmartExpenseEngine {
         for ((key, list) in grouped) {
             val displayPayee = list.first().payee.trim()
 
-            // Filter or score by query if user is typing
             val querySim = if (cleanQuery.isEmpty()) {
                 1.0
             } else if (key.startsWith(cleanQuery)) {
@@ -186,7 +180,6 @@ object SmartExpenseEngine {
                 itemCal.timeInMillis = txn.timestamp
                 val h = itemCal.get(Calendar.HOUR_OF_DAY) + itemCal.get(Calendar.MINUTE) / 60.0
                 val circularDiff = circularHourDistance(currentHour, h)
-                // Sharp Gaussian kernel over circular hours (sigma = 2.0 hours)
                 val hourKernel = exp(-(circularDiff * circularDiff) / (2.0 * 2.0 * 2.0))
                 hourWeightSum += hourKernel
                 if (hourKernel > bestHourKernel) bestHourKernel = hourKernel
@@ -199,7 +192,6 @@ object SmartExpenseEngine {
                     if (hasEnteredAmount) {
                         val lAmt = ln((txn.amount / 100.0).coerceAtLeast(1.0))
                         val diffLog = lAmt - targetLogAmt
-                        // Gaussian kernel in log-rupee space (sigma = 0.25 -> ~25% price band)
                         val amtKernel = exp(-(diffLog * diffLog) / (2.0 * 0.25 * 0.25))
                         if (amtKernel > bestAmountKernel) bestAmountKernel = amtKernel
                         if (abs(txn.amount - amountPaise!!) <= max(200L, (amountPaise * 0.05).toLong())) {
@@ -235,7 +227,6 @@ object SmartExpenseEngine {
 
             val finalScore = recencyFreqScore * temporalMultiplier * amountMultiplier * querySim
 
-            // Prefer time-slot specific typical amount when >= 2 transactions exist near this hour
             val typicalAmount = if (timeSlotAmounts.size >= 2) {
                 computeTypicalAmount(timeSlotAmounts)
             } else {
@@ -274,17 +265,9 @@ object SmartExpenseEngine {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MODEL 2: HYBRID FUZZY + SUBWORD & LOG-AMOUNT BAYESIAN CATEGORIZER
+    // MODEL 2: HYBRID FUZZY + TEMPLATE/VPA + SUBWORD & LOG-AMOUNT BAYESIAN CATEGORIZER
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Predicts the best category for a payee and optional amount/timestamp/rawContent using:
-     * 1. Explicit learned rules (`CategoryRuleEntity`).
-     * 2. Exact, substring, or Jaro-Winkler fuzzy match against the user's historical transactions.
-     * 3. Built-in deterministic keyword dictionary on both payee and raw SMS/notification text.
-     * 4. Character 3-gram + word token Multinomial Naive Bayes + Gaussian Log-Amount + Time-of-Day
-     *    joint Bayesian posterior over the user's transaction history.
-     */
     fun predictCategoryContextual(
         payee: String,
         amountPaise: Long?,
@@ -295,11 +278,31 @@ object SmartExpenseEngine {
     ): String {
         val cleanPayee = payee.trim()
         val lower = cleanPayee.lowercase(Locale.ROOT)
+        val isGeneric = CategoryClassifier.isGenericPayee(cleanPayee)
 
-        // 1. Check explicit learned rules first (longest matching pattern wins)
+        // 0. Check exact VPA memory first
+        if (!isGeneric) {
+            SmsPatternLearner.lookupVpa(cleanPayee)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
+                return it
+            }
+        }
+        SmsPatternLearner.lookupVpa(rawContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
+            return it
+        }
+
+        // If the payee is a generic fallback ("Bank Transfer", "UPI Payment", "Bank Credit", etc.),
+        // never match it against learnedRules, historical payees, or Bayesian amount/time-of-day priors.
+        if (isGeneric) {
+            return CategoryClassifier.classifySync("", rawContent)
+        }
+
+        // 1. Check explicit learned rules first (longest matching non-generic pattern wins)
         if (lower.isNotEmpty() && learnedRules.isNotEmpty()) {
             val matchedRule = learnedRules
-                .filter { it.merchantPattern.isNotBlank() && lower.contains(it.merchantPattern.lowercase(Locale.ROOT)) }
+                .filter {
+                    val pat = it.merchantPattern.trim().lowercase(Locale.ROOT)
+                    pat.length >= 3 && !CategoryClassifier.isGenericPayee(pat) && lower.contains(pat)
+                }
                 .maxWithOrNull(compareBy<CategoryRuleEntity> { it.merchantPattern.length }.thenBy { it.usageCount })
             if (matchedRule != null && matchedRule.category.isNotBlank() &&
                 !matchedRule.category.equals("Uncategorized", ignoreCase = true)
@@ -308,7 +311,7 @@ object SmartExpenseEngine {
             }
         }
 
-        // 2. Exact or Jaro-Winkler fuzzy match against historical transactions
+        // 2. Exact or Jaro-Winkler fuzzy match against historical non-generic DEBIT transactions
         if (lower.isNotEmpty() && history.isNotEmpty()) {
             val exactCounts = HashMap<String, Int>()
             var bestSim = 0.0
@@ -317,10 +320,13 @@ object SmartExpenseEngine {
             val limit = min(history.size, 500)
             for (i in 0 until limit) {
                 val h = history[i]
+                if (h.type != TransactionType.DEBIT) continue
                 val hCat = h.category.trim()
-                if (hCat.isEmpty() || hCat.equals("Uncategorized", ignoreCase = true) || hCat == "Split Settlement") continue
+                if (hCat.isEmpty() || hCat.equals("Uncategorized", ignoreCase = true) ||
+                    hCat.equals("Transfer", ignoreCase = true) || hCat == "Split Settlement"
+                ) continue
                 val hPayee = h.payee.trim().lowercase(Locale.ROOT)
-                if (hPayee.isEmpty()) continue
+                if (hPayee.isEmpty() || CategoryClassifier.isGenericPayee(hPayee)) continue
                 if (hPayee == lower) {
                     exactCounts[hCat] = (exactCounts[hCat] ?: 0) + 1
                 } else if (exactCounts.isEmpty()) {
@@ -338,7 +344,7 @@ object SmartExpenseEngine {
             if (exactCounts.isNotEmpty()) {
                 return exactCounts.maxByOrNull { it.value }!!.key
             }
-            if (bestSim >= 0.84 && bestFuzzyCat != null) {
+            if (bestSim >= 0.86 && bestFuzzyCat != null) {
                 return bestFuzzyCat
             }
         }
@@ -348,13 +354,15 @@ object SmartExpenseEngine {
         val ruleMatch = CategoryClassifier.classifySync(cleanPayee, effectiveRaw)
         if (ruleMatch != "Uncategorized") return ruleMatch
 
-        // 4. Joint Subword 3-Gram + Gaussian Log-Amount + Time-of-Day Bayesian Classifier
-        if (history.size >= 4) {
+        // 4. Joint Subword + Word/Stem + Gaussian Log-Amount + Time-of-Day Bayesian Classifier
+        // Strictly requires >= 2 distinct categories in history AND at least one whole-word/stem token match!
+        if (history.size >= 6) {
             val cal = Calendar.getInstance().apply { timeInMillis = timestampMillis }
             val slot = hourToSlot(cal.get(Calendar.HOUR_OF_DAY))
             val hasAmt = amountPaise != null && amountPaise > 0L
             val logAmt = if (hasAmt) ln((amountPaise!! / 100.0).coerceAtLeast(1.0)) else 0.0
-            val queryTokens = if (lower.length >= 2) NaiveBayesCategorizer.tokenize(lower) else emptyList()
+            val queryTokens = if (lower.length >= 3) NaiveBayesCategorizer.tokenize(lower) else emptyList()
+            if (queryTokens.isEmpty()) return "Uncategorized"
 
             data class JointCatStats(
                 var count: Int = 0,
@@ -374,10 +382,14 @@ object SmartExpenseEngine {
             for (i in 0 until sample) {
                 val txn = history[i]
                 if (txn.type != TransactionType.DEBIT || txn.excludeFromSpend || txn.amount <= 0L) continue
+                if (CategoryClassifier.isGenericPayee(txn.payee)) continue
                 val cat = txn.category.trim()
                 if (cat.isEmpty() || cat.equals("Uncategorized", ignoreCase = true) ||
                     cat.equals("Transfer", ignoreCase = true) || cat == "Split Settlement"
                 ) continue
+
+                val toks = NaiveBayesCategorizer.tokenize(txn.payee)
+                if (toks.isEmpty()) continue
 
                 val st = statsByCat.getOrPut(cat) { JointCatStats() }
                 val l = ln((txn.amount / 100.0).coerceAtLeast(1.0))
@@ -387,9 +399,13 @@ object SmartExpenseEngine {
                 hCal.timeInMillis = txn.timestamp
                 st.slotCounts[hourToSlot(hCal.get(Calendar.HOUR_OF_DAY))]++
 
-                val toks = NaiveBayesCategorizer.tokenize(txn.payee)
                 for (t in toks) {
-                    val w = if (t.startsWith("g:")) 0.40 else 1.0
+                    val w = when {
+                        t.startsWith("g:") -> 0.35
+                        t.startsWith("s:") -> 0.90
+                        t.startsWith("b:") -> 1.15
+                        else -> 1.0
+                    }
                     st.tokenWeights[t] = (st.tokenWeights[t] ?: 0.0) + w
                     st.totalTokenWeight += w
                     vocab.add(t)
@@ -398,39 +414,50 @@ object SmartExpenseEngine {
             }
 
             val knownQueryTokens = queryTokens.filter { it in vocab }
-            if (totalValid >= 4 && statsByCat.isNotEmpty() && (hasAmt || knownQueryTokens.isNotEmpty())) {
-                var bestCategory = "Uncategorized"
-                var bestLogProb = Double.NEGATIVE_INFINITY
+            val hasMeaningfulTokenOverlap = knownQueryTokens.any { !it.startsWith("g:") } ||
+                knownQueryTokens.count { it.startsWith("g:") } >= 4
+
+            if (totalValid >= 6 && statsByCat.size >= 2 && hasMeaningfulTokenOverlap) {
+                val logScores = HashMap<String, Double>()
 
                 for ((cat, st) in statsByCat) {
                     val prior = (st.count + 0.5) / (totalValid + statsByCat.size * 0.5)
                     var totalLogScore = ln(prior)
 
-                    if (knownQueryTokens.isNotEmpty()) {
-                        val denom = st.totalTokenWeight + vocab.size * 0.35
-                        for (qt in knownQueryTokens) {
-                            val w = if (qt.startsWith("g:")) 0.45 else 1.1
-                            totalLogScore += w * ln(((st.tokenWeights[qt] ?: 0.0) + 0.35) / denom)
+                    val denom = st.totalTokenWeight + vocab.size * 0.45
+                    for (qt in knownQueryTokens) {
+                        val w = when {
+                            qt.startsWith("g:") -> 0.35
+                            qt.startsWith("s:") -> 0.90
+                            qt.startsWith("b:") -> 1.15
+                            else -> 1.1
                         }
+                        totalLogScore += w * ln(((st.tokenWeights[qt] ?: 0.0) + 0.45) / denom)
                     }
 
                     if (hasAmt) {
                         val slotProb = (st.slotCounts[slot] + 0.5) / (st.count + 2.0)
                         val mean = st.sumLog / st.count
                         val variance = if (st.count >= 2) {
-                            ((st.sumSqLog / st.count) - (mean * mean)).coerceAtLeast(0.22)
-                        } else 0.45
+                            ((st.sumSqLog / st.count) - (mean * mean)).coerceAtLeast(0.25)
+                        } else 0.50
                         val gaussianLogLikelihood = -0.5 * ln(2.0 * Math.PI * variance) -
                                 ((logAmt - mean) * (logAmt - mean)) / (2.0 * variance)
-                        totalLogScore += 0.65 * ln(slotProb) + 0.75 * gaussianLogLikelihood
+                        totalLogScore += 0.35 * ln(slotProb) + 0.40 * gaussianLogLikelihood
                     }
 
-                    if (totalLogScore > bestLogProb) {
-                        bestLogProb = totalLogScore
-                        bestCategory = cat
+                    logScores[cat] = totalLogScore
+                }
+
+                val maxLog = logScores.values.maxOrNull()
+                if (maxLog != null) {
+                    val probs = logScores.mapValues { exp(it.value - maxLog) }
+                    val probSum = probs.values.sum()
+                    val best = probs.maxByOrNull { it.value }
+                    if (best != null && probSum > 0.0 && (best.value / probSum) >= 0.72) {
+                        return best.key
                     }
                 }
-                if (bestCategory != "Uncategorized") return bestCategory
             }
         }
 
@@ -441,9 +468,6 @@ object SmartExpenseEngine {
     // MODEL 3: WINSORIZED EWMA + DAY-OF-WEEK SEASONALITY FORECASTER
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Computes the adaptive outlier spike threshold in paise using both MAD and the 85th percentile (P85).
-     */
     internal fun computeAdaptiveSpikeThreshold(shares: List<Long>): Pair<Long, Long> {
         if (shares.size < 5) return Long.MAX_VALUE to 100_00L
         val sorted = shares.sorted()
@@ -728,7 +752,7 @@ object SmartExpenseEngine {
                     !it.category.equals("Transfer", ignoreCase = true)
         }
 
-        // 1. Evaluate Contextual Payee & Amount Predictor (conditioned on timestamp & amount/prefix)
+        // 1. Evaluate Contextual Payee & Amount Predictor
         val t0Payee = System.nanoTime()
         val livePreds = predictContextualPayees(
             transactions = txns,
@@ -749,8 +773,6 @@ object SmartExpenseEngine {
         val amountRelErrors = ArrayList<Long>()
         for (target in evalCandidates) {
             val training = spendDebits.filter { it.id != target.id }
-            // Evaluate contextual ranking when amount is entered (AddExpenseSheet top field / ReviewQueue)
-            // or after 1st character typed
             val byAmountAndTime = predictContextualPayees(
                 transactions = training,
                 query = "",
@@ -783,7 +805,7 @@ object SmartExpenseEngine {
             (sortedErr[sortedErr.size / 2] / 100L).toInt()
         } else 12
 
-        // 2. Evaluate Hybrid Jaro-Winkler + Subword & Gaussian Bayesian Categorizer
+        // 2. Evaluate Hybrid Jaro-Winkler + Template/VPA + Subword & Gaussian Bayesian Categorizer
         val t0Cat = System.nanoTime()
         val categorizedDebits = spendDebits.filter {
             it.category.isNotBlank() && !it.category.equals("Uncategorized", ignoreCase = true)
@@ -792,7 +814,6 @@ object SmartExpenseEngine {
             ((categorizedDebits.size.toDouble() / spendDebits.size) * 100.0).roundToInt().coerceIn(0, 100)
         } else 100
 
-        // Evaluate generalization on merchants that have either >= 2 occurrences, a learned rule, or a keyword match
         val catCounts = categorizedDebits.groupingBy { it.category.trim().lowercase(Locale.ROOT) }.eachCount()
         val catSample = categorizedDebits.filter {
             val pKey = it.payee.trim().lowercase(Locale.ROOT)
@@ -899,6 +920,7 @@ object SmartExpenseEngine {
             (detectedRecurring.map { it.confidence }.average() * 100.0).roundToInt().coerceIn(60, 100)
         } else 85
 
+        val (_, approvedSmsTemplates, blockedSmsTemplates) = SmsPatternLearner.getStatsSummary()
         val totalEvalMicros = ((System.nanoTime() - tStart) / 1_000L).coerceAtLeast(1L)
 
         val rows = listOf(
@@ -911,10 +933,10 @@ object SmartExpenseEngine {
                 healthScorePct = payeeTop3HitRate.coerceAtLeast(80)
             ),
             ModelMetricRow(
-                modelName = "Hybrid Category Classifier",
-                algorithm = "Jaro-Winkler + 3-Gram & Gaussian NB",
+                modelName = "Hybrid Category & SMS Learner",
+                algorithm = "Jaro-Winkler + 3-Gram NB + Template Memory",
                 primaryMetric = "$holdoutAccuracyPct% Acc",
-                secondaryDetail = "$coveragePct% covered · ${vocabTokens.size} tokens · ${learnedRules.size} rules",
+                secondaryDetail = "$coveragePct% covered · ${learnedRules.size} rules · ${approvedSmsTemplates}✓/${blockedSmsTemplates}✗ SMS templates",
                 latencyMicros = catLatencyUs,
                 healthScorePct = ((holdoutAccuracyPct + coveragePct) / 2).coerceAtLeast(82)
             ),
@@ -978,8 +1000,8 @@ object SmartExpenseEngine {
             TransactionEntity(id = 3L, amount = 9800L, payee = "Tatva", timestamp = now - 3 * DAY_MS, type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null, rawContent = "Paid Tatva", category = "Food & Dining"),
             TransactionEntity(id = 4L, amount = 37000L, payee = "MA Mart", timestamp = now - 2 * DAY_MS - 3600_000L * 4, type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null, rawContent = "Paid MA Mart", category = "Groceries"),
             TransactionEntity(id = 5L, amount = 38000L, payee = "MA Mart", timestamp = now - 5 * DAY_MS - 3600_000L * 4, type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null, rawContent = "Paid MA Mart", category = "Groceries"),
-            TransactionEntity(id = 6L, amount = 39800L, payee = "VI Recharge", timestamp = now - 4 * DAY_MS, type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null, rawContent = "VI Recharge", category = "Bills & Utilities"),
-            TransactionEntity(id = 7L, amount = 6800L, payee = "Spotify", timestamp = now - 6 * DAY_MS, type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null, rawContent = "Spotify", category = "Entertainment"),
+            TransactionEntity(id = 6L, amount = 39800L, payee = "VI Recharge", timestamp = now - 4 * DAY_MS, type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null, rawContent = "VI Recharge", category = "Recharge & Telecom"),
+            TransactionEntity(id = 7L, amount = 6800L, payee = "Spotify", timestamp = now - 6 * DAY_MS, type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null, rawContent = "Spotify", category = "Subscriptions"),
             TransactionEntity(id = 8L, amount = 68200L, payee = "Al-Baik Broast", timestamp = now - 3 * DAY_MS, type = TransactionType.DEBIT, source = TransactionSource.SMS, referenceId = null, rawContent = "Broast", category = "Food & Dining")
         )
     }
@@ -994,10 +1016,10 @@ object SmartExpenseEngine {
     }
 
     private fun hourToSlot(hour: Int): Int = when (hour) {
-        in 5..10 -> 0   // Morning
-        in 11..15 -> 1  // Midday
-        in 16..20 -> 2  // Evening
-        else -> 3       // Night
+        in 5..10 -> 0
+        in 11..15 -> 1
+        in 16..20 -> 2
+        else -> 3
     }
 
     private fun timeSlotLabel(hour: Int): String = when (hourToSlot(hour)) {
