@@ -462,14 +462,10 @@ class TransactionRepository(
                         currentCat.equals("Transfer", ignoreCase = true) || currentCat == "Split Settlement" -> currentCat
                         parsed.isTransfer -> "Transfer"
                         txn.type == TransactionType.CREDIT -> "Uncategorized"
-                        isStillGeneric -> {
-                            // Generic fallback payees ("UPI Payment", "Bank Transfer") only take a category if rawContent has an explicit brand match
-                            trueCat
-                        }
                         currentCat.equals("Uncategorized", ignoreCase = true) && trueCat != "Uncategorized" -> {
                             trueCat
                         }
-                        else -> currentCat // Preserve user's category on all named payees
+                        else -> currentCat // Always preserve existing user/restored categories
                     }
 
                     if (healedPayee != txn.payee || healedCat != txn.category) {
@@ -487,12 +483,24 @@ class TransactionRepository(
                     transactionDao.deleteTransactionsByIds(genericSmsIdsToDelete)
                 }
 
-                // Also resolve any pending review items that duplicate an already-recorded transaction within 12h
+                // Also clean up non-financial/missing-amount review items and resolve duplicates within 12h
                 val remainingTxns = recentAll.filter { it.id !in genericSmsIdsToDelete }
                 val pendingReviews = reviewItemDao.getPendingReviewItemsSync()
                 for (rev in pendingReviews) {
-                    val revAmt = rev.extractedPartialAmount ?: continue
-                    val revType = rev.type ?: continue
+                    val isSilentDeduction = rev.rawContent.startsWith("Silent Deduction", ignoreCase = true)
+                    val parsedRev = com.expensetracker.offline.engine.parser.FinancialParser.parse(
+                        rawText = rev.rawContent,
+                        title = rev.sender,
+                        source = rev.source
+                    )
+                    val revAmt = rev.extractedPartialAmount ?: parsedRev.amount
+                    if (!isSilentDeduction && (!parsedRev.isFinancial || revAmt == null || revAmt <= 0L)) {
+                        reviewItemDao.updateStatus(rev.id, ReviewStatus.DISCARDED)
+                        anyHealed = true
+                        continue
+                    }
+                    if (revAmt == null || revAmt <= 0L) continue
+                    val revType = rev.type ?: parsedRev.type ?: continue
                     val alreadyLogged = remainingTxns.any { t ->
                         t.type == revType &&
                             (t.amount == revAmt || kotlin.math.abs(t.amount - revAmt) <= 99L) &&
@@ -936,7 +944,13 @@ class TransactionRepository(
         val result = database.withTransaction {
             val amount = parsed.amount
             val type = parsed.type ?: learnedEval.inferredType
-            if (amount == null || amount <= 0L || type == null) {
+            if (amount == null || amount <= 0L) {
+                if (!parsed.rawText.startsWith("Silent Deduction", ignoreCase = true)) {
+                    return@withTransaction IngestResult.Failed("No transaction amount found")
+                }
+                return@withTransaction queueForReview(parsed, sender, timestamp, source)
+            }
+            if (type == null) {
                 return@withTransaction queueForReview(parsed, sender, timestamp, source)
             }
 

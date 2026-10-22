@@ -122,20 +122,33 @@ class SmsHistoryScanner(
                     val amount = parsed.amount
                     val parsedType = parsed.type
 
-                    if (amount == null || amount <= 0L || parsedType == null) {
-                        run {
-                            val exists = reviewItemDao.countExactReviewItems(body, date) > 0 ||
-                                    batchReviews.any { it.rawContent == body && it.timestamp == date }
-                            if (!exists) {
-                                batchReviews.add(
-                                    ReviewItemEntity(
-                                        rawContent = body, sender = address, timestamp = date, source = TransactionSource.SMS,
-                                        extractedPartialAmount = amount?.takeIf { it > 0L }, extractedPartialPayee = parsed.payee,
-                                        type = parsedType, bankName = parsed.bankName, accountNumber = parsed.accountNumber,
-                                        balance = parsed.balance, referenceId = parsed.referenceId
-                                    )
+                    if (amount == null || amount <= 0L) {
+                        // Balance-only checkpoint or non-monetary SMS: update BalanceCache if balance is present,
+                        // but never queue zero/missing-amount historical SMS into Needs Review.
+                        if (parsed.balance != null) {
+                            com.expensetracker.offline.util.BalanceCache.updateIfNewer(
+                                com.expensetracker.offline.util.BalanceCache.prefs(context),
+                                parsed.bankName,
+                                parsed.accountNumber,
+                                parsed.balance,
+                                date
+                            )
+                        }
+                        continue
+                    }
+
+                    if (parsedType == null) {
+                        val exists = reviewItemDao.countExactReviewItems(body, date) > 0 ||
+                                batchReviews.any { it.rawContent == body && it.timestamp == date }
+                        if (!exists) {
+                            batchReviews.add(
+                                ReviewItemEntity(
+                                    rawContent = body, sender = address, timestamp = date, source = TransactionSource.SMS,
+                                    extractedPartialAmount = amount, extractedPartialPayee = parsed.payee,
+                                    type = null, bankName = parsed.bankName, accountNumber = parsed.accountNumber,
+                                    balance = parsed.balance, referenceId = parsed.referenceId
                                 )
-                            }
+                            )
                         }
                         if (batchTxns.size + batchReviews.size >= BATCH_SIZE) flushBatch()
                         continue

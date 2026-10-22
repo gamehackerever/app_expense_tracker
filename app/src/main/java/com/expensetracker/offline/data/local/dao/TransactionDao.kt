@@ -202,7 +202,24 @@ interface TransactionDao {
 
     data class DebitPoint(val id: Long, val payee: String, val amount: Long, val timestamp: Long, val category: String)
 
-    @Query("SELECT id, payee, amount, timestamp, category FROM transactions WHERE type = 'DEBIT' AND timestamp >= :since")
+    @Query("""
+        SELECT
+            t.id AS id,
+            t.payee AS payee,
+            CASE
+                WHEN t.paidBy IS NOT NULL AND LOWER(TRIM(t.paidBy)) != 'you' AND TRIM(t.paidBy) != ''
+                THEN COALESCE((SELECT MAX(sd.amountOwed) FROM split_debts sd WHERE sd.transactionId = t.id AND LOWER(TRIM(sd.debtorName)) = 'you'), 0)
+                ELSE MAX(0, t.amount - COALESCE((SELECT SUM(sd.amountOwed) FROM split_debts sd WHERE sd.transactionId = t.id AND LOWER(TRIM(sd.debtorName)) != 'you'), 0))
+            END AS amount,
+            t.timestamp AS timestamp,
+            t.category AS category
+        FROM transactions t
+        WHERE t.type = 'DEBIT'
+          AND t.excludeFromSpend = 0
+          AND LOWER(TRIM(t.category)) != 'transfer'
+          AND t.category != 'Split Settlement'
+          AND t.timestamp >= :since
+    """)
     fun getDebitsSinceFlow(since: Long): Flow<List<DebitPoint>>
 
     @Query("UPDATE transactions SET payee = :newPayee WHERE payee = :oldPayee")
