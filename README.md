@@ -86,3 +86,10 @@ app/src/main/java/com/expensetracker/offline/
 ├── widget/      Glance home screen widget
 └── service/     Quick Settings tile for instant manual logging
 ```
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE) - see the [LICENSE](LICENSE) file for details.
+
