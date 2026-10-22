@@ -1,185 +1,78 @@
-# Installing Expense Tracker (APK)
+# Installation & Setup Guide (v1.2.0)
 
-Expense Tracker is not on the Play Store. You install it by downloading the APK from the [Releases](https://github.com/gamehackerever/app_expense_tracker/releases) page. Because of that, Android and Google Play Protect will show warnings, and Android will restrict the SMS and notification permissions the app depends on. This guide covers every step. Menu names differ between phone brands and Android versions, so use the closest match on your phone.
+Expense Tracker is **100% offline** (it has no `INTERNET` permission, so your data never leaves your phone). Because you download the APK directly from GitHub Releases instead of the Play Store, Android may ask you to confirm the install.
 
 **Requirements:** Android 8.0 (API 26) or higher.
 
-**What the app needs:**
-
-| Access | Why | Required? |
-|---|---|---|
-| Install from unknown sources | You are installing outside the Play Store | Yes, to install |
-| SMS (read and receive) | Detects bank transaction messages and scans old ones | Yes, for SMS capture |
-| Notification access | Detects transactions from bank and UPI app notifications | Yes, for notification capture |
-| Post notifications (Android 13+) | Daily digest, low-balance and reminder alerts | Optional |
-| Unrestricted battery use | Stops your phone from killing the background capture | Strongly recommended |
-| Biometric / screen lock | Only if you turn on the app lock | Optional |
-
-The app has no internet permission. Your data stays on the device.
-
 ---
 
-## Easiest way: install with Obtainium
+## Quick Install (Takes ~60 Seconds)
 
-[Obtainium](https://github.com/ImranR98/Obtainium) is a separate open-source app that installs and updates APKs straight from GitHub Releases.
+### 1. Download & Open the APK
+1. Download the latest APK (`ExpenseTracker-v1.2.0.apk` or `app-release.apk`) from the [Releases](https://github.com/gamehackerever/app_expense_tracker/releases) page.
+2. Tap the downloaded file to open it.
+3. If your browser or file manager asks for permission to install apps, tap **Settings** → turn on **Allow from this source**, then press back.
 
-1. Install Obtainium.
-2. In Obtainium, tap **Add App** and enter this repository's URL: `https://github.com/gamehackerever/app_expense_tracker`
-3. Install the app from Obtainium.
-4. Continue from **Step 4** below. You can skip Steps 1 to 3.
+### 2. Tap "Scan app" on the Play Protect Prompt
+Because the APK is distributed outside the Play Store, Google Play Protect may display **"App scan recommended"** (*"Play Protect hasn't seen this app before"*):
+1. Tap **Scan app**.
+2. Play Protect will scan the APK, confirm it is safe, and show the **Install** button.
+3. Tap **Install**.
 
-On the author's phone this installed without the Play Protect block. Google can change how Play Protect behaves, so it isn't guaranteed on yours. If it is blocked, use the manual steps below.
-
----
-
-## Step 1: Download the APK
-
-1. On your phone, open the [Releases](https://github.com/gamehackerever/app_expense_tracker/releases) page and download `ExpenseTracker-v1.1.0.apk` under **Assets**.
-2. Or download it on a PC and copy it to your phone (USB, Google Drive, etc.).
-3. Do not download an APK from anywhere other than this repository's Releases page.
-
-Optional: to check the file wasn't corrupted or swapped, compare its SHA-256 with the one in the release notes (if listed). On a PC: `certutil -hashfile ExpenseTracker-v1.1.0.apk SHA256` (Windows) or `sha256sum ExpenseTracker-v1.1.0.apk` (Linux/macOS).
-
-## Step 2: Allow installs from your browser or file manager
-
-1. Tap the downloaded APK (from the browser's download notification, or from the **Files** / **Downloads** app).
-2. Android will say something like *"For your security, your phone is not allowed to install unknown apps from this source."* Tap **Settings**.
-3. Turn on **Allow from this source**. This is the app you opened the APK from (Chrome, Files, Drive, etc.).
-4. Press back and tap **Install**.
-
-If you don't get that prompt, enable it manually:
-- **Android 8 and above:** Settings → Apps → Special app access → **Install unknown apps** → pick Chrome (or your file manager) → **Allow from this source**.
-- On some phones this is under Settings → Security / Privacy → **Install unknown apps**.
-
-After installing, you can turn this setting back **off** for that app.
-
-## Step 3: Handle the Play Protect warning
-
-You will probably see **"Blocked by Play Protect"** or **"App scan recommended"**. This appears because the app isn't distributed through the Play Store, and because it asks for SMS access. It does not mean it found a virus.
-
-1. Tap **More details** (or **Details**), then **Install anyway**.
-2. If a dialog offers **Scan app**, you can choose it. Play Protect will check the APK and usually lets you continue.
-3. If it only shows **OK** with no way to proceed (some phones do this): open the **Play Store** → tap your profile picture → **Play Protect** → gear icon (Settings) → turn off **Scan apps with Play Protect**. Install the APK, then **turn the setting back on**.
-   Only disable it if you downloaded the APK from this repository's Releases page. Leaving it off permanently is not recommended.
-
-## Step 4: Open the app and grant permissions
-
+### 3. Open the App & Complete the 2-Step Setup
 1. Open **Expense Tracker**.
-2. It will ask for **SMS** permission. Tap **Allow**. Without it, bank messages can't be read.
-3. On Android 13 and above it will also ask to **send notifications**. Tap **Allow**.
-
-**If Allow is greyed out or the permission is blocked, go to Step 5. This is the most common problem.**
-
-## Step 5: Allow restricted settings (Android 13 and above)
-
-Android blocks SMS and notification access for apps installed outside the Play Store until you approve them manually. This is a system protection, not a bug in the app. You may see *"Restricted setting. For your security, this setting is currently unavailable."*
-
-1. Long-press the **Expense Tracker** icon → **App info** (or Settings → Apps → Expense Tracker).
-2. Tap the **⋮** (three dots) at the top right.
-3. Tap **Allow restricted settings**. Confirm with your PIN, pattern or fingerprint.
-   - The option only appears after you have tried to enable a blocked permission at least once. If you don't see the ⋮ menu or the option, go back, try enabling the SMS or notification permission once so it gets blocked, then return here.
-4. Now repeat the permission steps below.
-
-## Step 6: Grant SMS permission manually (if needed)
-
-1. Settings → Apps → Expense Tracker → **Permissions** → **SMS**.
-2. Choose **Allow**.
-3. On some phones it appears as **Messages** or under *Other permissions*.
-
-## Step 7: Turn on Notification access
-
-This lets the app read payment notifications from bank and UPI apps.
-
-1. Open Expense Tracker → **Settings** and find the notification access option, which opens the system screen. Or go to Settings → **Notifications** → **Device & app notifications** (on some phones: Settings → Apps → Special app access → **Notification access**).
-2. Find **Expense Tracker** in the list and switch it **On**.
-3. Android shows a warning that the app can read all notifications. Tap **Allow**.
-4. If the toggle is greyed out, do Step 5 first.
-
-Also check that regular notifications are on: Settings → Apps → Expense Tracker → **Notifications** → **Allow**.
-
-## Step 8: Set battery use to Unrestricted
-
-Android and phone makers aggressively stop background apps, which can cause missed transactions. Do this so captures keep working when the app is closed.
-
-**Stock Android / Pixel:**
-Settings → Apps → Expense Tracker → **App battery usage** (or Battery) → **Unrestricted**.
-
-**Samsung (One UI):**
-- Settings → Apps → Expense Tracker → **Battery** → **Unrestricted**.
-- Settings → Battery → **Background usage limits** → make sure Expense Tracker is not in *Sleeping apps* or *Deep sleeping apps*. Optionally add it to **Never sleeping apps**.
-
-**Xiaomi / Redmi / POCO (MIUI / HyperOS):**
-- Settings → Apps → Manage apps → Expense Tracker → **Battery saver** → **No restrictions**.
-- Same screen: turn on **Autostart**.
-- In Recent apps, long-press the app card and tap the **lock** icon so it isn't cleared.
-
-**OnePlus / Oppo / Realme (OxygenOS / ColorOS):**
-- Settings → Apps → Expense Tracker → **Battery usage** → **Allow background activity** / **Unrestricted**.
-- Turn on **Auto-launch** if shown.
-
-**Vivo (Funtouch / OriginOS):**
-- Settings → Battery → **Background power consumption management** → Expense Tracker → **Allow high background power consumption**.
-- Settings → Apps → Autostart → turn it on for Expense Tracker.
-
-**Other brands:** search Settings for "battery optimization", "background activity" or "autostart" and allow Expense Tracker. The website [dontkillmyapp.com](https://dontkillmyapp.com) has per-brand instructions.
-
-Also turn off any **Battery saver / Power saving mode** if you notice that transactions arrive late or not at all.
-
-## Step 9: Import your past transactions
-
-Open the app and use the history scan option (in Settings or the first-run prompt) to read existing bank SMS. It runs locally.
-
-## Step 10: Optional app lock
-
-If you enable the app lock in Settings, your phone must have a screen lock or fingerprint set up. If you remove your phone's screen lock later, the app lock can't authenticate.
+2. Choose **Automatic Hands-Free Tracking** (recommended) or **Manual & Receipt Entry Only**.
+3. Tap **Allow** when prompted for SMS and notification permissions—the app will automatically scan your last 90 days of bank SMS and set up your accounts.
+4. Pick an optional monthly budget preset and tap **Start Tracking**.
 
 ---
 
-## Troubleshooting
+## Optional: Enabling Live UPI App Notifications (Android 13+)
 
-**"App not installed"**
-- You may already have a copy signed with a different key. Uninstall that copy first (back up first, see below).
-- Not enough storage, or the APK download was incomplete. Download it again.
-- Android 8 or newer is required.
+Bank SMS auto-capture works immediately once you grant SMS permission on first launch.
 
-**Transactions aren't being captured**
-1. Check that SMS permission is **Allowed** (Step 6).
-2. Check that Notification access is **On** (Step 7).
-3. Check that battery is **Unrestricted** (Step 8).
-4. Check the sender: only recognised bank/UPI senders are processed, so unusual sender IDs may be ignored. Add a transaction manually if needed.
-5. Send yourself a test: make a small payment and see whether it shows up.
+If you also want to capture live push notifications from **GPay, PhonePe, Paytm, or banking apps**, tap the **Auto-Capture Status** card (or go to **Settings → System Health → Notification Interceptor**):
 
-**Notification access turns itself off**
-Some phones disable notification listeners when an app is force-stopped or the battery saver kills it. Re-enable it (Step 7) and set battery to Unrestricted (Step 8).
+1. Tap **Enable Notification Access** and switch **Expense Tracker** to **On**.
+2. **Is the toggle greyed out (*"Restricted setting"*)?**
+   On Android 13, 14, and 15, Android locks special permissions for non-Play Store apps until you unlock them once in App Info:
+   - Open **App Info** for Expense Tracker (long-press the app icon → **App info**, or tap the *"Greyed out?"* shortcut inside the app).
+   - Tap the **⋮** (three dots) in the top-right corner.
+   - Tap **Allow restricted settings** and verify with your fingerprint or PIN.
+   - Return to **Notification Access** and toggle **Expense Tracker** on.
 
-**"Allow restricted settings" is missing**
-Try to enable the blocked permission once first, then check the ⋮ menu in App info again. This setting only exists on Android 13 and above.
-
-**Play Protect keeps warning me**
-This is normal for sideloaded apps with SMS access. It's a warning, not a detection of malware.
+*(Tip: If you don't see the **⋮** menu in App Info right away, tap the greyed-out toggle once first so Android registers the blocked attempt, then reopen App Info.)*
 
 ---
 
-## Updating
+## Preparing for Everything: Fallbacks & Edge Cases
 
-1. Download the new APK from Releases.
-2. Open it and tap **Install**. Android updates in place and keeps your data, as long as it's signed with the same key as the version you have installed.
-3. Re-check your permissions and battery setting afterward, since some phones reset them.
+### What if Play Protect shows a different dialog on my phone or a future update?
+Google occasionally updates Play Protect rules for apps that use SMS permissions outside the Play Store. Here is how to handle every possible screen:
+* **"App scan recommended"**: Tap **Scan app** → wait a few seconds for the scan to pass → tap **Install**.
+* **"Unsafe app blocked" / Warning with "More details"**: Tap **More details** → tap **Install anyway**.
+* **Hard block with only an "OK" button (no "More details" option)**:
+  1. Open the **Google Play Store** app → tap your profile icon (top right) → **Play Protect**.
+  2. Tap the **⚙️ (Settings)** gear icon (top right) → pause **Scan apps with Play Protect**.
+  3. Install the Expense Tracker APK, then **turn Play Protect back on immediately**.
 
-If you installed with Obtainium, it will offer updates itself when a new release is published.
+### Keeping Background Auto-Capture Reliable (Battery Settings)
+During setup, tap **Allow Background Activity** when prompted so Android sets Expense Tracker to **Unrestricted** battery use. If your phone brand still delays background alerts, check these quick brand settings:
+* **Samsung (One UI):** *App Info → Battery → Unrestricted*, and ensure the app is not in *Settings → Battery → Background usage limits → Deep sleeping apps*.
+* **Xiaomi / Redmi / POCO (HyperOS / MIUI):** *App Info → Battery saver → No restrictions*, and enable **Autostart**.
+* **OnePlus / Oppo / Realme (OxygenOS / ColorOS):** *App Info → Battery usage → Allow background activity*.
+* **Vivo / iQOO (Funtouch / OriginOS):** *Settings → Battery → Background power consumption → Allow high background power consumption*, and enable **Autostart**.
+* **Pixel / Stock Android:** *App Info → App battery usage → Unrestricted*.
 
-## Uninstalling and backups
+---
 
-The app does not use Android's cloud backup (`allowBackup` is off), so **uninstalling deletes all your data**. Before uninstalling or switching phones:
-1. Open the app → Settings → create an **encrypted backup** (or export a **CSV**).
-2. Save the backup file somewhere outside the app (Downloads, Drive, PC).
-3. Remember your backup passphrase. It can't be recovered.
+## Updating & Backups
 
-To uninstall: Settings → Apps → Expense Tracker → **Uninstall**. To remove access without uninstalling, revoke SMS permission and turn off Notification access.
+### Installing Updates
+Download the newer APK from [Releases](https://github.com/gamehackerever/app_expense_tracker/releases) and tap **Install**. Android updates the app in place and preserves all your transactions, categories, and settings.
 
-## Privacy
-
-- No internet permission, so the app cannot send data anywhere.
-- SMS and notification content is parsed on the device.
-- Backups are encrypted with a passphrase you choose.
-- The source code is in this repository, so you can check it.
+### Backing Up Before Uninstalling or Switching Phones
+For strict privacy, Android cloud auto-backup is disabled (`allowBackup="false"`), which means **uninstalling the app erases its local database**. Before uninstalling or moving to a new phone:
+1. Open **Expense Tracker → Settings → Backup & Restore**.
+2. Tap **Backup Now** to save an **AES-256 encrypted backup** (or use **CSV Export**).
+3. On your new phone, tap **Switching phones? Restore from backup** right on the welcome screen (or use **Restore** in Settings).
