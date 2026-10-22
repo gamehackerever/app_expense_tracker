@@ -42,6 +42,9 @@ object CaptureDispatcher {
     ): IngestResult? = withContext(Dispatchers.IO) {
         ingestMutex.withLock {
             try {
+                if (SettingsRepository(app.applicationContext).isManualModePreferred) {
+                    return@withLock IngestResult.Failed("Manual mode active — auto-capture paused")
+                }
                 val repository = TransactionRepository(app.database, app.applicationContext)
 
                 // 1. SAVE (single DB transaction)

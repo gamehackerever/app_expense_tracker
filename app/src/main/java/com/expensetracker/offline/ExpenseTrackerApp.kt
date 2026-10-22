@@ -5,6 +5,8 @@ import com.expensetracker.offline.data.local.AppDatabase
 import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.data.repository.TransactionRepository
 import com.expensetracker.offline.engine.backup.AutoBackupWorker
+import com.expensetracker.offline.engine.interceptor.NotificationCaptureService
+import com.expensetracker.offline.engine.ml.SmsPatternLearner
 import com.expensetracker.offline.engine.notification.DailyDigestWorker
 import com.expensetracker.offline.engine.notification.DailySummaryReceiver
 import kotlinx.coroutines.CoroutineScope
@@ -39,15 +41,24 @@ class ExpenseTrackerApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Initialize on-device active SMS/Notification pattern learner
+        SmsPatternLearner.initialize(this)
+
         DailySummaryReceiver.cancelLegacyAlarm(this)
         DailyDigestWorker.schedule(this)
         AutoBackupWorker.schedule(this)
+
+        // Ensure NotificationCaptureService stays bound when auto-capture is enabled
+        val settings = SettingsRepository(this)
+        if (settings.disclosureAccepted && !settings.isManualModePreferred) {
+            NotificationCaptureService.forceRebind(this)
+        }
 
         // Commit any soft-deleted transaction IDs that were still inside their 5-second undo window
         // when the app process was previously killed by the OS or swiped away from Recents.
         appScope.launch {
             runCatching {
-                val leftoverDeletes = SettingsRepository(this@ExpenseTrackerApp).consumeAllPendingDeleteIds()
+                val leftoverDeletes = settings.consumeAllPendingDeleteIds()
                 if (leftoverDeletes.isNotEmpty()) {
                     repository.deleteTransactionsByIds(leftoverDeletes.toList())
                 }

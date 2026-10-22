@@ -11,6 +11,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import com.expensetracker.offline.data.local.entity.TransactionSource
+import com.expensetracker.offline.util.SenderFilter
 
 class NotificationCaptureService : NotificationListenerService() {
 
@@ -21,23 +22,63 @@ class NotificationCaptureService : NotificationListenerService() {
         private const val TAG = "NotificationInterceptor"
         private const val REBIND_DELAY_MS = 1000L
 
-        // Expanded to cover major Indian UPI, wallet, and neobank apps
+        // Expanded to cover 40+ Indian UPI, mobile banking, credit card, wallet, and neobank apps
         private val UPI_PACKAGES = setOf(
-            "com.google.android.apps.nbu.paisa.user", // Google Pay
+            "com.google.android.apps.nbu.paisa.user", // Google Pay (GPay)
             "com.phonepe.app",                        // PhonePe
             "net.one97.paytm",                        // Paytm
             "in.org.npci.upiapp",                     // BHIM
             "in.amazon.mShop.android.shopping",       // Amazon Pay
-            "money.super.app",                        // Super.money
+            "money.super.app",                        // Super.money (Flipkart UPI)
+            "com.dreamplug.androidapp",               // CRED
+            "in.gokiwi.kiwitpap",                     // Kiwi (RuPay CC on UPI)
+            "com.tatadigital.tcp",                    // Tata Neu
+            "com.fampay.in",                          // FamPay / FamApp
+            "com.bharatpe.app",                       // BharatPe
             "com.mobikwik_new",                       // MobiKwik
             "indwin.c3.shareapp",                     // Slice
+            "com.slice",                              // Slice (new)
+            "com.fplabs.onecard",                     // OneCard
             "com.naviapp",                            // Navi UPI
             "com.samsung.android.spay",               // Samsung Wallet / Pay
             "com.samsung.android.spaymini",           // Samsung Pay Mini
             "com.epifi.paisa",                        // Fi Money
             "money.jupiter",                          // Jupiter
             "com.freecharge.android",                 // Freecharge
-            "com.myairtelapp"                         // Airtel Thanks
+            "com.myairtelapp",                        // Airtel Thanks
+            "com.jio.myjio",                          // MyJio
+            "com.jio.finance",                        // JioFinance
+            "com.lazypay.app",                        // LazyPay
+            "com.getsimpl.android",                   // Simpl
+            // Major Indian Banking Apps
+            "com.sbi.lotusintouch",                   // YONO SBI
+            "com.sbi.SBIFreedomPlus",                 // YONO Lite SBI
+            "com.sbicard.pay",                        // SBI Card
+            "com.snapwork.hdfc",                      // HDFC Bank MobileBanking
+            "com.hdfcbank.payzapp",                   // HDFC PayZapp
+            "com.csam.icici.bank.imobile",            // ICICI iMobile Pay
+            "com.axis.mobile",                        // Axis Mobile
+            "com.msf.kbank.mobile",                   // Kotak811 / Kotak Bank
+            "com.kotak.bank.mobile",                  // Kotak Mobile Banking
+            "com.idfcfirstbank.optimus",              // IDFC FIRST Bank
+            "com.indusind.indusmobile",               // IndusMobile
+            "com.yesbank",                            // IRIS by YES BANK
+            "com.fedmobile",                          // Federal Bank FedMobile
+            "com.bankofbaroda.mconnect",              // BoB World
+            "com.canarabank.mobility",                // Canara ai1
+            "com.Version1",                           // PNB ONE
+            "com.infrasoft.uboi",                     // Union Bank Vyom
+            "com.IndianBank.IndOASIS",                // Indian Bank IndOASIS
+            "com.SIBMobile",                          // SIB Mirror+
+            "com.rblbank.mobank",                     // RBL MoBank
+            "com.aubank.aupay"                        // AU 0101
+        )
+
+        // RCS / SMS Messaging Apps — only processed when the notification sender header passes SenderFilter
+        private val MESSAGING_PACKAGES = setOf(
+            "com.google.android.apps.messaging",      // Google Messages (RCS + SMS)
+            "com.samsung.android.messaging",          // Samsung Messages
+            "com.microsoft.android.smsorganizer"      // Microsoft SMS Organizer
         )
 
         fun isPermissionGranted(context: Context): Boolean {
@@ -118,7 +159,9 @@ class NotificationCaptureService : NotificationListenerService() {
         if (sbn == null) return
 
         val pkgName = sbn.packageName ?: return
-        if (!UPI_PACKAGES.contains(pkgName)) return
+        val isUpiOrBankApp = UPI_PACKAGES.contains(pkgName)
+        val isMessagingApp = MESSAGING_PACKAGES.contains(pkgName)
+        if (!isUpiOrBankApp && !isMessagingApp) return
 
         val notification = sbn.notification ?: return
         if ((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0) return
@@ -126,9 +169,15 @@ class NotificationCaptureService : NotificationListenerService() {
 
         val extras = notification.extras ?: return
 
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
-        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty().trim()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty().trim()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty().trim()
+
+        // For RCS/SMS messaging apps, strictly require a verified DLT/Bank sender header in the title
+        // so personal chat notifications are never captured.
+        if (isMessagingApp) {
+            if (title.isBlank() || !SenderFilter.isAllowedSmsSender(title)) return
+        }
 
         val body = if (bigText.isNotBlank() && (bigText.length >= text.length)) bigText else text
         val combinedContent = "$title $body".trim()
