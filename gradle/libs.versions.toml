@@ -17,7 +17,6 @@ lifecycleViewmodelCompose = "2.8.7"
 activityCompose = "1.10.0"
 composeBom = "2025.02.00"
 navigationCompose = "2.8.8"
-securityCrypto = "1.1.0"
 textRecognition = "16.0.1"
 workRuntimeKtx = "2.11.2"
 
@@ -47,8 +46,7 @@ androidx-room-runtime = { group = "androidx.room", name = "room-runtime", versio
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 
-# Testing
-androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "securityCrypto" }
+# Utilities & Testing
 core = { module = "com.google.zxing:core", version.ref = "core" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

@@ -22,8 +22,8 @@ android {
         applicationId = "com.srinand.expensetracker.offline"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -84,7 +84,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.navigation.compose)
 
-    // Room
+    // Room & WorkManager
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.work.runtime.ktx)
@@ -104,12 +104,10 @@ dependencies {
     implementation(libs.androidx.fragment.ktx)
 
     implementation(libs.androidx.glance.appwidget)
-    implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.documentfile)
     implementation(libs.text.recognition)
     // Native QR Code generation for one-tap settlement
     implementation(libs.core)
-
 }
 
 kotlin {

@@ -22,6 +22,9 @@ object AppColors {
     val positive @Composable get() = if (isSystemInDarkTheme()) Color(0xFF10B981) else Color(0xFF059669)
     val positiveContainer @Composable get() = positive.copy(alpha = 0.10f)
 
+    // Alias used by onboarding and income badges
+    val IncomeGreen @Composable get() = positive
+
     val warning @Composable get() = if (isSystemInDarkTheme()) Color(0xFFF59E0B) else Color(0xFFD97706)
     val warningContainer @Composable get() = warning.copy(alpha = 0.10f)
 

@@ -194,8 +194,12 @@ fun ExpenseTrackerTheme(
                 val bgArgb = colorScheme.background.toArgb()
                 window.decorView.setBackgroundColor(bgArgb)
                 window.setBackgroundDrawable(ColorDrawable(bgArgb))
-                window.statusBarColor = bgArgb
-                window.navigationBarColor = bgArgb
+                if (Build.VERSION.SDK_INT < 35) {
+                    @Suppress("DEPRECATION")
+                    window.statusBarColor = bgArgb
+                    @Suppress("DEPRECATION")
+                    window.navigationBarColor = bgArgb
+                }
                 val controller = WindowCompat.getInsetsController(window, view)
                 controller.isAppearanceLightStatusBars = !appliedDarkTheme
                 controller.isAppearanceLightNavigationBars = !appliedDarkTheme
