@@ -1169,11 +1169,36 @@ internal fun NecessityUndoBar(
 internal fun cardBorder() = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
 /** One due date for every bill: NecessityManager's own, else an estimate for monthly bills. */
-internal fun effectiveDue(item: NecessityItem, txns: List<TransactionEntity>, now: Long): Long? =
-    NecessityManager.computeEffectiveDueDate(item, txns)
-        ?: if (item.frequency == NecessityFrequency.MONTHLY)
+internal fun effectiveDue(
+    item: NecessityItem,
+    txns: List<TransactionEntity>,
+    now: Long,
+    isPaid: Boolean = false
+): Long? {
+    val baseDue = NecessityManager.computeEffectiveDueDate(item, txns)
+        ?: if (item.frequency == NecessityFrequency.MONTHLY) {
             estimateMonthlyDue(item, NecessityManager.findLastTransaction(item, txns)?.timestamp, now)
-        else null
+        } else null
+    if (baseDue == null) return null
+    if (!isPaid) return baseDue
+
+    val today = dayStart(now)
+    if (dayStart(baseDue) >= today) return baseDue
+
+    return if (item.frequency == NecessityFrequency.EVERY_N_DAYS && (item.validityDays ?: 0) > 0) {
+        val cycleMillis = item.validityDays!! * 86_400_000L
+        var d = baseDue
+        var guard = 0
+        while (dayStart(d) < today && guard++ < 600) d += cycleMillis
+        d
+    } else {
+        val months = if (item.frequency.months > 0) item.frequency.months else 1
+        val cal = Calendar.getInstance().apply { timeInMillis = baseDue }
+        var guard = 0
+        while (dayStart(cal.timeInMillis) < today && guard++ < 600) cal.add(Calendar.MONTH, months)
+        cal.timeInMillis
+    }
+}
 
 /**
  * NecessityManager gives monthly bills no due date. Estimate one: the manual due date if set,

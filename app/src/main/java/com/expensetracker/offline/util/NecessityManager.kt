@@ -64,8 +64,9 @@ object NecessityManager {
     fun matches(item: NecessityItem, payee: String, category: String): Boolean {
         if (item.name.isBlank()) return false
         val nameRegex = getWordBoundaryRegex(item.name)
-        if (nameRegex.containsMatchIn(payee) || nameRegex.containsMatchIn(category)) return true
-        return item.aliases.any { alias -> alias.isNotBlank() && getWordBoundaryRegex(alias).containsMatchIn(payee) }
+        if (nameRegex.containsMatchIn(payee)) return true
+        if (item.aliases.any { alias -> alias.isNotBlank() && getWordBoundaryRegex(alias).containsMatchIn(payee) }) return true
+        return item.aliases.isEmpty() && item.name.trim().equals(category.trim(), ignoreCase = true)
     }
 
     fun getMonthlyReserveAmount(item: NecessityItem): Long {
@@ -89,25 +90,50 @@ object NecessityManager {
         }
     }
 
-    fun computeEffectiveDueDate(item: NecessityItem, txns: List<TransactionEntity> = emptyList()): Long? {
-        val baseTime = item.dueTimestamp ?: findLastTransaction(item, txns)?.timestamp
-        val now = System.currentTimeMillis()
+    private fun startOfDay(t: Long): Long = Calendar.getInstance().apply {
+        timeInMillis = t
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
 
-        if (baseTime != null) {
+    fun computeEffectiveDueDate(item: NecessityItem, txns: List<TransactionEntity> = emptyList()): Long? {
+        val lastTxnTime = findLastTransaction(item, txns)?.timestamp
+        val manualDue = item.dueTimestamp
+        val now = System.currentTimeMillis()
+        val todayStart = startOfDay(now)
+
+        if (lastTxnTime != null && (manualDue == null || lastTxnTime > manualDue)) {
+            return if (item.frequency == NecessityFrequency.EVERY_N_DAYS && (item.validityDays ?: 0) > 0) {
+                lastTxnTime + item.validityDays!! * 86_400_000L
+            } else {
+                val months = if (item.frequency.months > 0) item.frequency.months else 1
+                Calendar.getInstance().apply {
+                    timeInMillis = lastTxnTime
+                    add(Calendar.MONTH, months)
+                }.timeInMillis
+            }
+        }
+
+        if (manualDue != null) {
             if (item.frequency == NecessityFrequency.EVERY_N_DAYS && (item.validityDays ?: 0) > 0) {
                 val cycleMillis = item.validityDays!! * 86_400_000L
-                var due = if (item.dueTimestamp != null) baseTime else baseTime + cycleMillis
+                var due = manualDue
                 var guard = 0
-                while (due < now && guard++ < 600) {
+                while (startOfDay(due) < todayStart - cycleMillis && guard++ < 600) {
                     due += cycleMillis
                 }
                 return due
             } else {
-                val c = Calendar.getInstance().apply { timeInMillis = baseTime }
+                val c = Calendar.getInstance().apply { timeInMillis = manualDue }
                 val months = if (item.frequency.months > 0) item.frequency.months else 1
-                if (item.dueTimestamp == null) c.add(Calendar.MONTH, months)
+                val oneCycleAgo = Calendar.getInstance().apply {
+                    timeInMillis = todayStart
+                    add(Calendar.MONTH, -months)
+                }.timeInMillis
                 var guard = 0
-                while (c.timeInMillis < now && guard++ < 600) {
+                while (startOfDay(c.timeInMillis) < oneCycleAgo && guard++ < 600) {
                     c.add(Calendar.MONTH, months)
                 }
                 return c.timeInMillis

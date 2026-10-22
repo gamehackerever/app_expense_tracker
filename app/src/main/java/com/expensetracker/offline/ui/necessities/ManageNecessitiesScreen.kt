@@ -112,8 +112,11 @@ fun ManageNecessitiesScreen(
     }
 
     // Every bill gets a due date, monthly ones included.
-    val dueById = remember(localItems, allTxns, now) {
-        localItems.associate { it.id to effectiveDue(it, allTxns, now) }
+    val dueById = remember(localItems, allTxns, statuses, cycleKey, now) {
+        localItems.associate { item ->
+            val paid = item.paidCycleKey == cycleKey || statuses[item.id]?.isFullyPaid == true
+            item.id to effectiveDue(item, allTxns, now, isPaid = paid)
+        }
     }
 
     // Unpaid first (soonest due on top), paid last.
