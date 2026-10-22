@@ -21,10 +21,16 @@ object FinancialParser {
         "\\bautopay\\b", "\\bmandate\\s+executed\\b", "\\btoll\\s+plaza\\b", "\\bint\\.pd\\b"
     ).map { Pattern.compile("(?i)$it") }
 
-    // Reject list for OTPs, limits, failed transactions, and future mandate reminders
+    // Reject list for OTPs, limits, failed transactions, future mandate reminders, and telecom data/reward promos
     private val REJECT_PATTERNS = listOf(
         "\\botp\\b", "\\bdeclined\\b", "\\bfailed\\b",
-        "\\bavl lmt\\b", "\\btotal due\\b", "\\bwill be debited\\b", "\\bcollect request\\b"
+        "\\bavl lmt\\b", "\\btotal due\\b", "\\bwill be debited\\b", "\\bcollect request\\b",
+        "\\b\\d+(?:\\.\\d+)?\\s*(?:gb|mb|tb)\\s+data\\b",
+        "\\bdata\\s+(?:credited|added|pack|balance|quota|voucher|loan)\\b",
+        "\\b(?:vi|jio|airtel|bsnl)\\s+a/c\\b",
+        "\\bvalidity\\s*[:\\-]?\\s*\\d+\\s*(?:days?|hrs?|hours?|months?)\\b",
+        "\\b(?:reward\\s+points?|supercoins?|loyalty\\s+points?)\\s+(?:credited|added|expiring|worth)\\b",
+        "\\bonelink\\.me\\b"
     ).map { Pattern.compile("(?i)$it") }
 
     // A reversal puts money back into the account. Messages that are both failed and reversed
@@ -235,6 +241,16 @@ object FinancialParser {
 
         val balance = extractBalance(combinedText)
         val amount = extractAmount(combinedText)
+
+        // A message with no monetary amount and no account balance is never a financial transaction
+        if ((amount == null || amount <= 0L) && balance == null && !learnedEval.isConfirmedTransaction) {
+            return createRejected(rawText, "No monetary amount or balance found")
+        }
+        // If promo keywords matched and there is no transaction amount, reject it
+        if (!learnedEval.isConfirmedTransaction && isPromo && (amount == null || amount <= 0L)) {
+            return createRejected(rawText, "Promo message without transaction amount")
+        }
+
         val vpaLearnedPayee = SmsPatternLearner.lookupVpa(combinedText)?.payee
         val rawPayee = vpaLearnedPayee
             ?: extractPayee(cleanedForPayee, title, type ?: TransactionType.DEBIT)
