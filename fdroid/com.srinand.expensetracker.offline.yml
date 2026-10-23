@@ -1,0 +1,23 @@
+Categories:
+  - Money
+License: MIT
+AuthorName: gamehackerever
+AuthorWebSite: https://github.com/gamehackerever
+SourceCode: https://github.com/gamehackerever/app_expense_tracker
+IssueTracker: https://github.com/gamehackerever/app_expense_tracker/issues
+Changelog: https://github.com/gamehackerever/app_expense_tracker/releases
+
+AutoUpdateMode: Version v%v
+UpdateCheckMode: Tags
+UpdateCheckIgnore: '.*(-alpha|-beta|-rc).*'
+
+CurrentVersion: 1.2.0
+CurrentVersionCode: 3
+
+Builds:
+  - versionName: 1.2.0
+    versionCode: 3
+    commit: v1.2.0
+    subdir: app
+    gradle:
+      - foss

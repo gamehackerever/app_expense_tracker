@@ -1,0 +1,11 @@
+Expense Tracker is a 100% offline Android expense tracker built for bank SMS and UPI payment workflows. It automatically captures transactions from bank SMS and payment app notifications, categorizes them using an on-device intelligence engine, and keeps all financial data strictly on your device.
+
+Key Features:
+• Hands-Free Auto-Capture: Bank SMS interceptor and live UPI notification listener (GPay, PhonePe, Paytm, etc.).
+• 90-Day Inbox Scanner: Imports past bank SMS history with duplicate and self-transfer detection.
+• On-Device Financial Intelligence: Contextual payee/amount predictor, Naive Bayes classifier, and automated review queue.
+• Smart Insights & Forecasters: Outlier-dampened spend projections, category breakdowns, and spending rhythm calendar.
+• Budgeting & Sinking Funds: Billing cycle customization, category monthly caps, and recurring bill detection.
+• Thermal Receipt OCR & Bill Splitting: Split expenses equally or by shares, scan multi-line receipt photos offline, and settle debts via UPI QR codes.
+• Privacy & Encrypted Backups: Biometric app lock, local AES-256-GCM encrypted backups, and CSV export/import.
+• Zero Network Usage: No INTERNET permission declared—your financial data never leaves your device.
