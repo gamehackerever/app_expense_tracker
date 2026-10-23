@@ -63,6 +63,16 @@ android {
         buildConfig = true
     }
 
+    flavorDimensions += "version"
+    productFlavors {
+        create("foss") {
+            dimension = "version"
+        }
+        create("full") {
+            dimension = "version"
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -105,7 +115,7 @@ dependencies {
 
     implementation(libs.androidx.glance.appwidget)
     implementation(libs.androidx.documentfile)
-    implementation(libs.text.recognition)
+    "fullImplementation"(libs.text.recognition)
     // Native QR Code generation for one-tap settlement
     implementation(libs.core)
 }
