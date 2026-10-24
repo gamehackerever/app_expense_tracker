@@ -6,6 +6,8 @@ SourceCode: https://github.com/gamehackerever/app_expense_tracker
 IssueTracker: https://github.com/gamehackerever/app_expense_tracker/issues
 Changelog: https://github.com/gamehackerever/app_expense_tracker/releases
 
+AutoName: Expense Tracker
+
 RepoType: git
 Repo: https://github.com/gamehackerever/app_expense_tracker.git
 
