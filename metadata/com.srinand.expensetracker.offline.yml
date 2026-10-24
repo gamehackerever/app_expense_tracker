@@ -1,0 +1,23 @@
+Categories:
+  - Finance Manager
+License: MIT
+AuthorName: gamehackerever
+SourceCode: https://github.com/gamehackerever/app_expense_tracker
+IssueTracker: https://github.com/gamehackerever/app_expense_tracker/issues
+Changelog: https://github.com/gamehackerever/app_expense_tracker/releases
+
+RepoType: git
+Repo: https://github.com/gamehackerever/app_expense_tracker.git
+
+Builds:
+  - versionName: 1.2.0
+    versionCode: 3
+    commit: v1.2.0
+    subdir: app
+    gradle:
+      - foss
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 1.2.0
+CurrentVersionCode: 3

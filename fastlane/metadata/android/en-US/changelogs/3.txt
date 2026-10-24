@@ -1,0 +1,5 @@
+• Enhanced bank SMS & live UPI notification auto-capture engine
+• 90-day past SMS history scanner with smart duplicate filtering
+• Contextual merchant predictor & subword Naive Bayes auto-categorizer
+• Bill splitting, group debt simplification & offline receipt scanner
+• Biometric lock & local AES-256-GCM encrypted backups

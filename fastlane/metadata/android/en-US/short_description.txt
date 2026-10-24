@@ -1,0 +1,1 @@
+Offline expense tracker for bank SMS & UPI with smart auto-categorization
