@@ -244,7 +244,7 @@ fun ItemizedBillSplitCard(
             }
 
             Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().fadingHorizontalScroll(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 people.forEach { person ->

@@ -2,6 +2,7 @@
 
 package com.expensetracker.offline.ui.insights
 
+import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import android.content.Context
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -57,6 +58,8 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.expensetracker.offline.ui.components.BillingCycleDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,21 +70,21 @@ fun InsightsScreen(
     onNavigateToSettings: (String?) -> Unit = {},
     onNavigateToNecessities: () -> Unit = {}
 ) {
-    val allTransactions by viewModel.allTransactionsWithDebts.collectAsState()
-    val linkedAccounts by viewModel.linkedAccounts.collectAsState()
-    val recurringPayments by viewModel.recurringPayments.collectAsState()
+    val allTransactions by viewModel.allTransactionsWithDebts.collectAsStateWithLifecycle()
+    val linkedAccounts by viewModel.linkedAccounts.collectAsStateWithLifecycle()
+    val recurringPayments by viewModel.recurringPayments.collectAsStateWithLifecycle()
 
     val haptic = LocalHapticFeedback.current
 
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
-    val startDayOfMonth by viewModel.startDayOfMonth.collectAsState()
+    val startDayOfMonth by viewModel.startDayOfMonth.collectAsStateWithLifecycle()
     var necessities by remember { mutableStateOf(NecessityManager.loadNecessities(prefs)) }
 
-    val categoryBudgets by viewModel.categoryBudgets.collectAsState()
-    val dismissedCategoryWarningLevels by viewModel.dismissedCategoryWarningLevels.collectAsState()
-    val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsState()
-    val monthlyBudget by viewModel.monthlyBudget.collectAsState()
+    val categoryBudgets by viewModel.categoryBudgets.collectAsStateWithLifecycle()
+    val dismissedCategoryWarningLevels by viewModel.dismissedCategoryWarningLevels.collectAsStateWithLifecycle()
+    val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsStateWithLifecycle()
+    val monthlyBudget by viewModel.monthlyBudget.collectAsStateWithLifecycle()
 
     var showManageCategoryBudgetsSheet by remember { mutableStateOf(false) }
     var initialCategoryForBudgetSheet by remember { mutableStateOf<String?>(null) }
@@ -471,7 +474,7 @@ fun InsightsScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
+                                .fadingHorizontalScroll(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             InsightsAccountChip(
@@ -589,24 +592,43 @@ fun InsightsScreen(
                             MoneyHero(amount = grandTotalDebit / 100.0, fractionDigits = 2, size = 44.sp, sessionKey = "insights_hero_spend")
 
                             Spacer(modifier = Modifier.height(4.dp))
-                            val budgetContextSuffix = if (hasSpending && monthlyBudget > 0L && selectedAccountFilter == null) {
-                                val pctOfBudget = ((grandTotalDebit.toDouble() / (monthlyBudget * 100.0)) * 100.0).roundToInt()
-                                " · $pctOfBudget% of ${formatRupees(monthlyBudget * 100L)} budget"
-                            } else ""
-
                             Text(
                                 if (hasSpending)
-                                    "Your share across $totalTransactions ${if (totalTransactions == 1) "transaction" else "transactions"}$budgetContextSuffix"
+                                    "Your share · $totalTransactions ${if (totalTransactions == 1) "transaction" else "transactions"}"
                                 else if (isCurrent) "No spending yet this cycle" else "No spending in this cycle",
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
+                            if (hasSpending && monthlyBudget > 0L && selectedAccountFilter == null) {
+                                val pctOfBudget = ((grandTotalDebit.toDouble() / (monthlyBudget * 100.0)) * 100.0).roundToInt()
+                                val budgetTint = when {
+                                    pctOfBudget > 100 -> InsightsColors.negative
+                                    pctOfBudget >= 85 -> com.expensetracker.offline.ui.theme.AppColors.warning
+                                    else -> InsightsColors.positive
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(AppRadius.pill),
+                                    color = budgetTint.copy(alpha = 0.12f)
+                                ) {
+                                    Text(
+                                        "$pctOfBudget% of ${formatRupees(monthlyBudget * 100L)} budget",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = budgetTint,
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+
                             // Cycle clock: where we are in the billing cycle
                             Spacer(modifier = Modifier.height(18.dp))
                             InsightsProgressBar(
                                 progress = if (startBarAnimations) cycleProgress else 0f,
-                                color = MaterialTheme.colorScheme.onSurface,
+                                // Deliberately neutral: this is time, not money, and must not read like the tinted budget pill above
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
                                 sessionKey = "insights_cycle_progress_bar"
                             )
                             Spacer(modifier = Modifier.height(8.dp))
@@ -615,7 +637,7 @@ fun InsightsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    if (isCurrent) "Day $elapsedDays of $cycleLengthDays" else "$cycleLengthDays-day cycle",
+                                    if (isCurrent) "Cycle · day $elapsedDays of $cycleLengthDays" else "Cycle · $cycleLengthDays days",
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -793,7 +815,7 @@ fun InsightsScreen(
                 item(key = "multi_cycle_trend") {
                     EntranceItem("multi_cycle_trend", 4, seenSections, Modifier.animateItem(fadeInSpec = null)) {
                         MultiCycleTrendCard(
-                            points = trendPoints,
+                            allPoints = trendPoints,
                             monthlyBudgetPaise = if (selectedAccountFilter == null) monthlyBudget * 100L else 0L,
                             isAnimating = startBarAnimations
                         )
@@ -978,56 +1000,14 @@ fun InsightsScreen(
     }
 
     if (showStartDayDialog) {
-        var tempDay by remember(startDayOfMonth) { mutableFloatStateOf(startDayOfMonth.toFloat()) }
-        AppDialog(
-            title = "Billing Cycle",
-            onDismiss = { haptic.tap(); showStartDayDialog = false },
-            confirmText = "Save",
-            onConfirm = {
-                haptic.confirm()
-                viewModel.updateStartDayOfMonth(tempDay.toInt())
+        BillingCycleDialog(
+            currentDay = startDayOfMonth,
+            onDismiss = { showStartDayDialog = false },
+            onSave = { day ->
+                viewModel.updateStartDayOfMonth(day)
                 showStartDayDialog = false
             }
-        ) {
-            Text(
-                text = "Select the day your monthly spending cycle resets:",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-            Text(
-                text = "Resets on Day: ${tempDay.toInt()}",
-                fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Slider(
-                value = tempDay,
-                onValueChange = { rawValue ->
-                    val snapped = kotlin.math.round(rawValue)
-                    if (tempDay != snapped) {
-                        tempDay = snapped
-                        haptic.tap()
-                    }
-                },
-                valueRange = 1f..28f,
-                colors = SliderDefaults.colors(
-                    thumbColor = MaterialTheme.colorScheme.onSurface,
-                    activeTrackColor = MaterialTheme.colorScheme.onSurface,
-                    inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
-                )
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Capped at the 28th to ensure consistent cycles across short months like February.",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
+        )
     }
 
     val activeTxnForEdit = activeTransactionForEdit

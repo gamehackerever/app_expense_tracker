@@ -41,8 +41,9 @@ class ExpenseTrackerApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // Initialize on-device active SMS/Notification pattern learner
-        SmsPatternLearner.initialize(this)
+        // Loads learned templates from disk, so keep it off the main thread. Anything that parses
+        // messages calls initialize() itself first (it is idempotent and synchronized).
+        appScope.launch { runCatching { SmsPatternLearner.initialize(this@ExpenseTrackerApp) } }
 
         DailySummaryReceiver.cancelLegacyAlarm(this)
         DailyDigestWorker.schedule(this)

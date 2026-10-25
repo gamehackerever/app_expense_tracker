@@ -120,6 +120,8 @@ import kotlin.math.ceil
 import com.expensetracker.offline.util.confirm
 import com.expensetracker.offline.util.delete
 import com.expensetracker.offline.ui.viewmodel.splitRolloverOverspend
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.expensetracker.offline.ui.components.BillingCycleDialog
 
 @Composable
 private fun RolloverOptionCard(
@@ -218,21 +220,21 @@ fun DashboardScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    val linkedAccounts by viewModel.linkedAccounts.collectAsState()
-    val selectedAccount by viewModel.selectedAccount.collectAsState()
+    val linkedAccounts by viewModel.linkedAccounts.collectAsStateWithLifecycle()
+    val selectedAccount by viewModel.selectedAccount.collectAsStateWithLifecycle()
 
     val focusManager = LocalFocusManager.current
 
     var lastBackMs by remember { mutableLongStateOf(0L) }
 
-    val transactionsWithDebts by viewModel.allTransactionsWithDebts.collectAsState()
-    val unsettledSplitsWithDebts by viewModel.unsettledSplitsWithDebts.collectAsState()
-    val moneyOwedToYouState by viewModel.totalMoneyOwed.collectAsState()
+    val transactionsWithDebts by viewModel.allTransactionsWithDebts.collectAsStateWithLifecycle()
+    val unsettledSplitsWithDebts by viewModel.unsettledSplitsWithDebts.collectAsStateWithLifecycle()
+    val moneyOwedToYouState by viewModel.totalMoneyOwed.collectAsStateWithLifecycle()
     val moneyOwedToYou: Long = moneyOwedToYouState ?: 0L
-    val moneyYouOweState by viewModel.totalMoneyYouOwe.collectAsState()
+    val moneyYouOweState by viewModel.totalMoneyYouOwe.collectAsStateWithLifecycle()
     val moneyYouOwe: Long = moneyYouOweState ?: 0L
 
-    val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsState()
+    val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsStateWithLifecycle()
 
     LaunchedEffect(linkedAccounts, selectedAccount) {
         val current = selectedAccount
@@ -244,14 +246,14 @@ fun DashboardScreen(
         }
     }
 
-    val accountBalances by viewModel.accountBalances.collectAsState()
+    val accountBalances by viewModel.accountBalances.collectAsStateWithLifecycle()
     var showAccountsDialog by remember { mutableStateOf(false) }
     var isBalanceRevealed by remember { mutableStateOf(false) }
 
     var isBalanceCardFlipped by remember { mutableStateOf(prefs.getBoolean("key_balance_card_flipped", false)) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
 
-    val currentCycleRolloverDecision by viewModel.currentCycleRolloverDecision.collectAsState()
+    val currentCycleRolloverDecision by viewModel.currentCycleRolloverDecision.collectAsStateWithLifecycle()
 
     fun showSnack(message: String) {
         scope.launch {
@@ -261,11 +263,11 @@ fun DashboardScreen(
     }
 
     val settingsRepo = remember { SettingsRepository(context) }
-    val monthlyBudget by viewModel.monthlyBudget.collectAsState()
-    val activeRolloverAmountPaise by viewModel.activeRolloverAmount.collectAsState()
-    val isBudgetExplicitlySet by viewModel.isBudgetExplicitlySet.collectAsState()
-    val isManualModePreferred by viewModel.isManualModePreferred.collectAsState()
-    val isAutoCaptureBannerDismissed by viewModel.isAutoCaptureBannerDismissed.collectAsState()
+    val monthlyBudget by viewModel.monthlyBudget.collectAsStateWithLifecycle()
+    val activeRolloverAmountPaise by viewModel.activeRolloverAmount.collectAsStateWithLifecycle()
+    val isBudgetExplicitlySet by viewModel.isBudgetExplicitlySet.collectAsStateWithLifecycle()
+    val isManualModePreferred by viewModel.isManualModePreferred.collectAsStateWithLifecycle()
+    val isAutoCaptureBannerDismissed by viewModel.isAutoCaptureBannerDismissed.collectAsStateWithLifecycle()
     var showAutoCaptureSheet by rememberSaveable { mutableStateOf(false) }
     var showDiscardAllReviewsDialog by remember { mutableStateOf(false) }
 
@@ -274,18 +276,18 @@ fun DashboardScreen(
 
     var isSetupScanDone by remember { mutableStateOf(prefs.getBoolean("key_setup_scan_done", false)) }
 
-    val transactions by viewModel.allTransactions.collectAsState()
-    val latestBalance by viewModel.latestBalance.collectAsState()
-    val pendingReviewCount by viewModel.pendingReviewCount.collectAsState()
-    val pendingReviewItems by viewModel.pendingReviewItems.collectAsState()
+    val transactions by viewModel.allTransactions.collectAsStateWithLifecycle()
+    val latestBalance by viewModel.latestBalance.collectAsStateWithLifecycle()
+    val pendingReviewCount by viewModel.pendingReviewCount.collectAsStateWithLifecycle()
+    val pendingReviewItems by viewModel.pendingReviewItems.collectAsStateWithLifecycle()
 
-    val chunkLimit by viewModel.necessityChunkLimit.collectAsState()
+    val chunkLimit by viewModel.necessityChunkLimit.collectAsStateWithLifecycle()
     var showNecessityBreakdownDialog by remember { mutableStateOf(false) }
 
     var isLoadingNecessities by remember { mutableStateOf(true) }
-    val isRolloverEnabled by viewModel.isRolloverEnabled.collectAsState()
+    val isRolloverEnabled by viewModel.isRolloverEnabled.collectAsStateWithLifecycle()
     var showRolloverSheet by rememberSaveable { mutableStateOf(false) }
-    val rolloverMonths by viewModel.rolloverMonths.collectAsState()
+    val rolloverMonths by viewModel.rolloverMonths.collectAsStateWithLifecycle()
 
     var necessitiesList by remember { mutableStateOf(emptyList<NecessityItem>()) }
     LaunchedEffect(Unit) {
@@ -375,8 +377,8 @@ fun DashboardScreen(
 
     var selectedBillImageUri by remember { mutableStateOf<String?>(null) }
 
-    val categoryBudgets by viewModel.categoryBudgets.collectAsState()
-    val dismissedCategoryWarnings by viewModel.dismissedCategoryWarnings.collectAsState()
+    val categoryBudgets by viewModel.categoryBudgets.collectAsStateWithLifecycle()
+    val dismissedCategoryWarnings by viewModel.dismissedCategoryWarnings.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         if (activity?.intent?.getBooleanExtra("OPEN_ADD_EXPENSE", false) == true) {
@@ -419,7 +421,7 @@ fun DashboardScreen(
         }
     }
 
-    val manualSyncBalance by viewModel.manualSyncBalance.collectAsState()
+    val manualSyncBalance by viewModel.manualSyncBalance.collectAsStateWithLifecycle()
     var isRefreshingBalance by remember { mutableStateOf(false) }
     var liveDialogBalance by remember { mutableStateOf<Long?>(null) }
 
@@ -461,7 +463,7 @@ fun DashboardScreen(
 
     var repaymentToUndo by remember { mutableStateOf<TransactionEntity?>(null) }
 
-    val startDayOfMonth by viewModel.startDayOfMonth.collectAsState()
+    val startDayOfMonth by viewModel.startDayOfMonth.collectAsStateWithLifecycle()
 
     val categoryBudgetStatuses = remember(transactionsWithDebts, categoryBudgets, startDayOfMonth, pendingDeleteIds) {
         computeCategoryBudgetStatuses(
@@ -532,7 +534,9 @@ fun DashboardScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val currentMonthName = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date()) }
+    val currentMonthName = remember(startDayOfMonth, java.time.LocalDate.now()) {
+        BillingCycleHelper.getCycleMonthName(startDayOfMonth)
+    }
     val allAvailableCategories by produceState(
         initialValue = (CategoryClassifier.PREDEFINED_CATEGORIES + customCategories).distinct(),
         customCategories, transactions
@@ -623,7 +627,7 @@ fun DashboardScreen(
     }
     val visibleTransactions = remember(filteredTransactions, visibleTransactionCount) { filteredTransactions.take(visibleTransactionCount) }
 
-    val splitLinkInfo by viewModel.splitLinkInfo.collectAsState()
+    val splitLinkInfo by viewModel.splitLinkInfo.collectAsStateWithLifecycle()
 
     val periodSpent = remember(transactionsWithDebts, selectedTimeRange, pendingDeleteIds, startDayOfMonth) {
         val start = startMillisFor(selectedTimeRange, startDayOfMonth)
@@ -780,6 +784,8 @@ fun DashboardScreen(
     val projectedNextBudget = baseMonthlyBudgetPaise - firstInstallmentPaise
     val projectedFollowingBudget = baseMonthlyBudgetPaise - secondInstallmentPaise
 
+    val totalCreditCardDebt by viewModel.totalCreditCardDebt.collectAsStateWithLifecycle()
+
     LaunchedEffect(overspendPaise, isRolloverEnabled, rolloverMonths, isMonthlyView, monthlyBudget, todayKey) {
         if (isMonthlyView && monthlyBudget > 0L) viewModel.syncRollover(overspendPaise)
     }
@@ -787,12 +793,8 @@ fun DashboardScreen(
     LaunchedEffect(todayKey) { viewModel.refreshSettings() }
 
     val (nextCycleLabel, followingCycleLabel) = remember(startDayOfMonth, todayKey) {
-        val end = BillingCycleHelper.getCycleRange(startDayOfMonth).second
-        val fmt = SimpleDateFormat("MMM", Locale.getDefault())
-        val cal = Calendar.getInstance().apply { timeInMillis = end + 86_400_000L }
-        val first = fmt.format(cal.time)
-        cal.add(Calendar.MONTH, 1)
-        first to fmt.format(cal.time)
+        BillingCycleHelper.getCycleMonthName(startDayOfMonth, 1, "MMM") to
+            BillingCycleHelper.getCycleMonthName(startDayOfMonth, 2, "MMM")
     }
 
     val isFabExpanded = filteredTransactions.isEmpty()
@@ -1236,81 +1238,14 @@ fun DashboardScreen(
     }
 
     if (showStartDayDialog) {
-        var tempDay by remember { mutableFloatStateOf(startDayOfMonth.toFloat()) }
-        val previewCycleLabel = remember(tempDay.toInt()) {
-            BillingCycleHelper.getCycleLabel(tempDay.toInt())
-        }
-        AppDialog(
-            title = "Billing Cycle",
-            onDismiss = { haptic.tap(); showStartDayDialog = false },
-            confirmText = "Save",
-            onConfirm = {
-                haptic.confirm()
-                viewModel.updateStartDayOfMonth(tempDay.toInt())
+        BillingCycleDialog(
+            currentDay = startDayOfMonth,
+            onDismiss = { showStartDayDialog = false },
+            onSave = { day ->
+                viewModel.updateStartDayOfMonth(day)
                 showStartDayDialog = false
             }
-        ) {
-            Text(
-                text = "Select the day your monthly spending cycle resets:",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "Resets on Day ${tempDay.toInt()} ($previewCycleLabel)",
-                fontWeight = FontWeight.Bold,
-                fontSize = 17.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
-            if (tempDay.toInt() != 1) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Surface(
-                    shape = RoundedCornerShape(AppRadius.pill),
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .clip(RoundedCornerShape(AppRadius.pill))
-                        .quietClickable {
-                            haptic.tap()
-                            tempDay = 1f
-                        }
-                ) {
-                    Text(
-                        text = "Reset to 1st of month (${BillingCycleHelper.getCycleLabel(1)})",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Slider(
-                value = tempDay,
-                onValueChange = { rawValue ->
-                    val snapped = kotlin.math.round(rawValue)
-                    if (tempDay != snapped) {
-                        tempDay = snapped
-                        haptic.tap()
-                    }
-                },
-                valueRange = 1f..28f,
-                colors = SliderDefaults.colors(
-                    thumbColor = MaterialTheme.colorScheme.onSurface,
-                    activeTrackColor = MaterialTheme.colorScheme.onSurface,
-                    inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
-                )
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Use Day 1 for standard calendar months, or set your salary day (1–28).",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
+        )
     }
 
     if (showNecessityBreakdownDialog) {
@@ -1441,6 +1376,7 @@ fun DashboardScreen(
             contextBalance = effectiveBalance,
             safeToSpendBreakdown = safeToSpendBreakdown,
             transactions = transactions,
+            totalCreditCardDebt = totalCreditCardDebt, // Ensure you are collecting this state from the ViewModel
             onAccountSelected = { selected ->
                 viewModel.selectedAccount.value = selected
             },
@@ -1449,10 +1385,24 @@ fun DashboardScreen(
                 viewModel.syncLatestBalanceFromSms()
                 showSnack("Syncing latest SMS...")
             },
-            onSetManualBalance = { bankName, accountNumber, balancePaise ->
-                haptic.confirm()
-                viewModel.setManualAccountBalance(bankName, accountNumber, balancePaise)
-                showSnack("Updated balance for $bankName")
+            onUpdateBalance = { bank, acc, bal ->
+                // Triggered when fixing an existing account's balance
+                viewModel.setManualAccountBalance(bank, acc, bal)
+            },
+            onSetCreditCard = { bank, acc, enabled ->
+                viewModel.setAccountCreditCard(bank, acc, enabled)
+            },
+            onAddManualAccount = { bank, acc, bal, isCc, limit, stmt, due ->
+                // Triggered from the new "Add Offline Account" dialog
+                viewModel.addManualAccount(
+                    bankName = bank,
+                    accountNumber = acc,
+                    initialBalancePaise = bal,
+                    isCreditCard = isCc,
+                    creditLimitPaise = limit,
+                    statementDay = stmt,
+                    dueDay = due
+                )
             },
             onManageNecessities = {
                 showAccountsDialog = false
@@ -1751,7 +1701,7 @@ fun DashboardScreen(
                     .asSequence()
                     .take(200)
                     .flatMap { it.debts.asSequence() }
-                    .map { it.debtorName.trim() }
+                    .map { com.expensetracker.offline.ui.components.CurrencyFormat.cleanNote(it.debtorName) }
                     .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
                     .distinct()
                     .take(5)
@@ -1778,7 +1728,7 @@ fun DashboardScreen(
                     .take(1000)
                     .filter { it.transaction.payee.equals(targetPayee, ignoreCase = true) }
                     .flatMap { it.debts.asSequence() }
-                    .map { it.debtorName.trim() }
+                    .map { com.expensetracker.offline.ui.components.CurrencyFormat.cleanNote(it.debtorName) }
                     .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
                     .groupingBy { it }
                     .eachCount()
@@ -1794,7 +1744,7 @@ fun DashboardScreen(
                     .asSequence()
                     .take(1000)
                     .flatMap { it.debts.asSequence() }
-                    .map { it.debtorName.trim() }
+                    .map { com.expensetracker.offline.ui.components.CurrencyFormat.cleanNote(it.debtorName) }
                     .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
                     .groupingBy { it }
                     .eachCount()

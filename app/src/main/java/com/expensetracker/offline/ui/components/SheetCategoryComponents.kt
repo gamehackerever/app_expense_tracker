@@ -9,6 +9,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.getCategoryColor
 import com.expensetracker.offline.ui.theme.getCategoryIcon
+import com.expensetracker.offline.ui.theme.hasCategoryIcon
 import com.expensetracker.offline.util.NecessityManager
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -56,13 +59,17 @@ fun SheetCategoryPicker(
                     .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(selectedIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                if (hasCategoryIcon(selected) || isNoCategory(selected)) {
+                    Icon(selectedIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                } else {
+                    Text(categoryInitial(selected), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = getCategoryColor(selected))
+                }
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text("Category", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    selected,
+                    if (isNoCategory(selected)) "No category" else selected,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -92,39 +99,126 @@ fun SheetCategoryPicker(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text(
-                    "Choose category",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = (-0.3).sp,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                FlowRow(
+                var query by remember { mutableStateOf("") }
+                val visible = remember(categories, query) {
+                    val q = query.trim()
+                    if (q.isEmpty()) categories else categories.filter { it.contains(q, ignoreCase = true) }
+                }
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    categories.forEach { cat ->
-                        val isSelected = selected.equals(cat, ignoreCase = true)
-                        SheetChip(
-                            text = cat,
-                            isSelected = isSelected,
-                            onClick = {
-                                onSelect(cat)
-                                showPicker = false
-                            },
-                            accent = getCategoryColor(cat),
-                            icon = if (isSelected) Icons.Default.Check else getCategoryIcon(cat)
-                        )
+                    Text(
+                        "Choose category",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = (-0.3).sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    // Pinned at the top so it never hides below a long list of chips.
+                    TextButton(onClick = {
+                        haptic.tap()
+                        showPicker = false
+                        onAddCustom()
+                    }) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("New", fontWeight = FontWeight.SemiBold)
                     }
-                    SheetChip(
-                        text = "New category",
-                        isSelected = false,
-                        onClick = {
-                            showPicker = false
-                            onAddCustom()
+                }
+                if (categories.size > 8) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it.take(40) },
+                        placeholder = { Text("Search categories") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        trailingIcon = {
+                            if (query.isNotEmpty()) {
+                                IconButton(onClick = { query = "" }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear search")
+                                }
+                            }
                         },
-                        icon = Icons.Default.Add,
+                        singleLine = true,
+                        shape = RoundedCornerShape(AppRadius.small),
+                        colors = sheetFieldColors(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                if (visible.isEmpty()) {
+                    Text(
+                        "No category matches \"${query.trim()}\". Tap New to create it.",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+                val searching = query.isNotBlank()
+                // Input order is most-recently-used first. Show the first few as "Recent", the rest
+                // A-Z, and park "Uncategorized" last as an explicit "No category" option.
+                val named = remember(visible) { visible.filterNot { isNoCategory(it) } }
+                val noneValue = remember(visible) { visible.firstOrNull { isNoCategory(it) } }
+                val recent = remember(named, searching) { if (searching) emptyList() else named.take(RECENT_COUNT) }
+                val rest = remember(named, recent) {
+                    named.drop(recent.size).let { if (searching) it else it.sortedBy { c -> c.lowercase() } }
+                }
+
+                @Composable
+                fun CategoryChip(cat: String) {
+                    val isSelected = selected.equals(cat, ignoreCase = true)
+                    val noIcon = !hasCategoryIcon(cat)
+                    SheetChip(
+                        text = cat,
+                        isSelected = isSelected,
+                        onClick = {
+                            onSelect(cat)
+                            showPicker = false
+                        },
+                        accent = getCategoryColor(cat),
+                        icon = when {
+                            isSelected -> Icons.Default.Check
+                            noIcon -> null
+                            else -> getCategoryIcon(cat)
+                        },
+                        monogram = if (!isSelected && noIcon) categoryInitial(cat) else null
+                    )
+                }
+
+                @Composable
+                fun Section(title: String?, items: List<String>) {
+                    if (items.isEmpty()) return
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (title != null) {
+                            Text(
+                                title,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.6.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) { items.forEach { CategoryChip(it) } }
+                    }
+                }
+
+                Section(if (recent.isNotEmpty()) "RECENT" else null, recent)
+                Section(if (recent.isNotEmpty() && rest.isNotEmpty()) "ALL CATEGORIES" else null, rest)
+
+                if (noneValue != null) {
+                    val noneSelected = isNoCategory(selected)
+                    SheetChip(
+                        text = "No category",
+                        isSelected = noneSelected,
+                        onClick = {
+                            onSelect(noneValue)
+                            showPicker = false
+                        },
+                        icon = if (noneSelected) Icons.Default.Check else Icons.Default.Close,
                         accent = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -132,6 +226,14 @@ fun SheetCategoryPicker(
         }
     }
 }
+
+private fun isNoCategory(c: String) =
+    c.equals("Uncategorized", ignoreCase = true) || c.equals("No category", ignoreCase = true)
+
+private const val RECENT_COUNT = 6
+
+private fun categoryInitial(category: String): String =
+    category.trim().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?"
 
 @Composable
 fun NewCategoryDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {

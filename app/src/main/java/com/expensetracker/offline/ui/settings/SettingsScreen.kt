@@ -165,6 +165,8 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.expensetracker.offline.ui.components.BillingCycleDialog
 
 private const val MIN_BACKUP_PASSPHRASE_LENGTH = 8
 
@@ -184,7 +186,7 @@ fun SettingsScreen(
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
-    val transactions by viewModel.allTransactions.collectAsState()
+    val transactions by viewModel.allTransactions.collectAsStateWithLifecycle()
     val isDebugBuild = remember(context) {
         (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     }
@@ -248,13 +250,13 @@ fun SettingsScreen(
     var isLowBalanceEnabled by remember { mutableStateOf(settingsRepo.lowBalanceAlertEnabled) }
     var isBillRemindersEnabled by remember { mutableStateOf(settingsRepo.billRemindersEnabled) }
     var thresholdText by remember { mutableStateOf(settingsRepo.lowBalanceThreshold.toInt().toString()) }
-    val vmMonthlyBudget by viewModel.monthlyBudget.collectAsState()
-    val allTransactionsWithDebts by viewModel.allTransactionsWithDebts.collectAsState()
-    val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsState()
+    val vmMonthlyBudget by viewModel.monthlyBudget.collectAsStateWithLifecycle()
+    val allTransactionsWithDebts by viewModel.allTransactionsWithDebts.collectAsStateWithLifecycle()
+    val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsStateWithLifecycle()
     var budgetText by remember(vmMonthlyBudget) { mutableStateOf(vmMonthlyBudget.toString()) }
 
     var startDayOfMonth by remember { mutableIntStateOf(settingsRepo.startDayOfMonth) }
-    val isManualModePreferred by viewModel.isManualModePreferred.collectAsState()
+    val isManualModePreferred by viewModel.isManualModePreferred.collectAsStateWithLifecycle()
     var skipReviewQueue by remember { mutableStateOf(settingsRepo.skipReviewQueue) }
     var defaultFallbackPayee by remember { mutableStateOf(settingsRepo.fallbackPayee) }
     var autoSaveUnknown by remember { mutableStateOf(settingsRepo.autoSaveUnknownDeductions) }
@@ -644,40 +646,57 @@ fun SettingsScreen(
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                listOf(
+            val healthIssues = if (isManualModePreferred) 0
+            else listOf(hasSmsPermission, hasNotificationPermission, isIgnoringBatteryOptimizations).count { !it }
+            SettingsStatusStrip(
+                items = listOf(
+                    SettingsStatus(
+                        label = "Capture",
+                        value = if (isManualModePreferred) "Paused" else "Active",
+                        state = if (isManualModePreferred) 1 else 0,
+                        key = "Live"
+                    ),
+                    SettingsStatus(
+                        label = "Backup",
+                        value = when {
+                            autoBackupEnabled && autoBackupStatusFailed -> "Failed"
+                            autoBackupEnabled -> backupFrequency
+                            else -> "Off"
+                        },
+                        state = when {
+                            autoBackupEnabled && autoBackupStatusFailed -> 2
+                            autoBackupEnabled -> 0
+                            else -> 1
+                        },
+                        key = "Backup"
+                    ),
+                    SettingsStatus(
+                        label = "Health",
+                        value = when {
+                            isManualModePreferred -> "Manual mode"
+                            healthIssues == 0 -> "All good"
+                            else -> "$healthIssues to fix"
+                        },
+                        state = if (healthIssues == 0) 0 else 2,
+                        key = "Health"
+                    )
+                ),
+                onClick = { scrollToAndHighlight(it) }
+            )
+
+            SettingsQuickNav(
+                items = listOf(
                     "Budget" to "Cycle",
                     "Capture" to "Live",
-                    "SMS" to "SMS",
+                    "Import" to "SMS",
+                    "Alerts" to "Alerts",
                     "Backup" to "Backup",
-                    "Alerts" to "Alerts"
-                ).forEach { (label, key) ->
-                    val isSelected = highlightedSection == key
-                    Surface(
-                        shape = RoundedCornerShape(AppRadius.pill),
-                        color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
-                        border = if (isSelected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(AppRadius.pill))
-                            .quietClickable { scrollToAndHighlight(key) }
-                    ) {
-                        Text(
-                            text = label,
-                            fontSize = 12.5.sp,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                            color = if (isSelected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
-                        )
-                    }
-                }
-            }
+                    "Appearance" to "Theme",
+                    "Health" to "Health"
+                ),
+                selectedKey = highlightedSection,
+                onSelect = { scrollToAndHighlight(it) }
+            )
 
             AnimatedVisibility(
                 visible = !isProTipsDismissed,
@@ -698,44 +717,6 @@ fun SettingsScreen(
             }
 
             // ─────────────────────────────────────────────────────────────────
-            // 0. Appearance & Theme
-            // ─────────────────────────────────────────────────────────────────
-            SettingsSection(
-                title = "Appearance & Theme",
-                isHighlighted = highlightedSection == "Theme",
-                modifier = Modifier.trackSection("Theme", sectionPositions)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SettingsIcon(Icons.Default.Palette, MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            "App Theme",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            "Choose your preferred theme mode",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                val themeModes = remember { listOf("SYSTEM" to "System", "DARK" to "Dark", "LIGHT" to "Light") }
-                val selectedThemeIndex = themeModes.indexOfFirst { it.first == currentThemeMode }.coerceAtLeast(0)
-                SheetSegmentedControl(
-                    options = themeModes.map { it.second },
-                    selectedIndex = selectedThemeIndex,
-                    onSelect = { idx ->
-                        val mode = themeModes[idx].first
-                        currentThemeMode = mode
-                        settingsRepo.appThemeMode = mode
-                    }
-                )
-            }
-
-            // ─────────────────────────────────────────────────────────────────
             // 1. Budget & Cycle
             // ─────────────────────────────────────────────────────────────────
             SettingsSection(
@@ -743,82 +724,43 @@ fun SettingsScreen(
                 isHighlighted = highlightedSection == "Cycle",
                 modifier = Modifier.trackSection("Cycle", sectionPositions)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SettingsIcon(Icons.Default.Savings, MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            "Target Spending Limit",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            "Powers the monthly gauge on your dashboard",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                SettingsTextField(
-                    value = budgetText,
-                    onValueChange = {
-                        budgetText = it.filter(Char::isDigit).take(9)
-                    },
-                    label = "Target Budget (₹)",
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-                    modifier = Modifier.onFocusLost { commitBudget() }
+                SettingsItem(
+                    icon = Icons.Default.Savings,
+                    title = "Target Spending Limit",
+                    subtitle = "Powers the monthly gauge on your dashboard"
                 )
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-
-                val categoryBudgets by viewModel.categoryBudgets.collectAsState()
-                var showManageCategoryBudgetsDialog by remember { mutableStateOf(false) }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(AppRadius.small))
-                        .quietClickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            showManageCategoryBudgetsDialog = true
-                        }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        SettingsIcon(Icons.Default.Tune, MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                "Category Budgets",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            val totalAllocated = categoryBudgets.values.sum()
-                            Text(
-                                if (categoryBudgets.isEmpty()) "Set spending caps for Food, Shopping, etc."
-                                else "${categoryBudgets.size} ${if (categoryBudgets.size == 1) "limit" else "limits"} active · ${com.expensetracker.offline.ui.components.CurrencyFormat.withSymbol(totalAllocated, 0)} allocated",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Icon(
-                        Icons.Default.ChevronRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
+                SettingsInset {
+                    SettingsTextField(
+                        value = budgetText,
+                        onValueChange = {
+                            budgetText = it.filter(Char::isDigit).take(9)
+                        },
+                        label = "Target Budget (₹)",
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                        modifier = Modifier.onFocusLost { commitBudget() }
                     )
                 }
+
+                SettingsDivider()
+
+                val categoryBudgets by viewModel.categoryBudgets.collectAsStateWithLifecycle()
+                var showManageCategoryBudgetsDialog by remember { mutableStateOf(false) }
+
+                SettingsItem(
+                    icon = Icons.Default.Tune,
+                    title = "Category Budgets",
+                    subtitle = if (categoryBudgets.isEmpty()) "Set spending caps for Food, Shopping, etc."
+                    else "${categoryBudgets.size} ${if (categoryBudgets.size == 1) "limit" else "limits"} active · ${com.expensetracker.offline.ui.components.CurrencyFormat.withSymbol(categoryBudgets.values.sum(), 0)} allocated",
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        showManageCategoryBudgetsDialog = true
+                    }
+                )
 
                 var showManageCategoriesSheet by remember { mutableStateOf(false) }
                 var settingsCategoryToDelete by remember { mutableStateOf<String?>(null) }
@@ -865,48 +807,19 @@ fun SettingsScreen(
                     )
                 }
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                SettingsDivider()
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(AppRadius.small))
-                        .quietClickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            initialCatForSettingsManage = null
-                            showManageCategoriesSheet = true
-                        }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        SettingsIcon(Icons.Default.Category, MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                "Manage Categories",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                if (settingsCustomCategories.isEmpty()) "Add, rename, or merge expense categories"
-                                else "${settingsCustomCategories.size} custom · Rename, merge, or add categories",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                SettingsItem(
+                    icon = Icons.Default.Category,
+                    title = "Manage Categories",
+                    subtitle = if (settingsCustomCategories.isEmpty()) "Add, rename, or merge expense categories"
+                    else "${settingsCustomCategories.size} custom · Rename, merge, or add categories",
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        initialCatForSettingsManage = null
+                        showManageCategoriesSheet = true
                     }
-
-                    Icon(
-                        Icons.Default.ChevronRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+                )
 
                 if (showManageCategoriesSheet) {
                     com.expensetracker.offline.ui.dashboard.ManageCategoriesDialog(
@@ -979,580 +892,382 @@ fun SettingsScreen(
                     )
                 }
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                SettingsDivider()
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(AppRadius.small))
-                        .quietClickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            showStartDayDialog = true
-                        }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        SettingsIcon(Icons.Default.CalendarMonth, MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                "Billing Cycle Reset",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                            Text(
-                                "Current: ${BillingCycleHelper.getCycleLabel(startDayOfMonth)}",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(AppRadius.pill),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                    ) {
-                        Text(
-                            text = "Day $startDayOfMonth",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
-                    }
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(AppRadius.small))
-                        .quietClickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onNavigateToNecessities()
-                        }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        SettingsIcon(Icons.Default.Event, MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                "Fixed Costs & Bills",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                            Text(
-                                "Rent, subscriptions & yearly premiums",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    Icon(
-                        Icons.Default.ChevronRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SettingsIcon(Icons.Default.AccountBalanceWallet, MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            "UPI Settlement",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            "Used when sending split repayment requests",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                SettingsTextField(
-                    value = myUpiInput,
-                    onValueChange = { myUpiInput = it.filter { c -> !c.isWhitespace() }.take(100) },
-                    label = "Your UPI ID (to receive payments)",
-                    placeholder = "e.g., name@okaxis",
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Email,
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-                    modifier = Modifier.onFocusLost { commitMyUpi() }
+                SettingsItem(
+                    icon = Icons.Default.CalendarMonth,
+                    title = "Billing Cycle Reset",
+                    subtitle = "Current: ${BillingCycleHelper.getCycleLabel(startDayOfMonth)}",
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        showStartDayDialog = true
+                    },
+                    trailing = { SettingsValueChip("Day $startDayOfMonth") }
                 )
-            }
 
-            // ─────────────────────────────────────────────────────────────────
-            // 2. Security & Alerts
-            // ─────────────────────────────────────────────────────────────────
-            SettingsSection(
-                title = "Security & Alerts",
-                isHighlighted = highlightedSection == "Alerts",
-                modifier = Modifier.trackSection("Alerts", sectionPositions)
-            ) {
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Box(modifier = Modifier.padding(top = 2.dp)) {
-                        SettingsIcon(Icons.Default.Lock, MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
-                        Text("App Lock", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(
-                            "Require biometric unlock & hide from Recents",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Box(modifier = Modifier.height(44.dp), contentAlignment = Alignment.Center) {
-                        Switch(
-                            checked = isAppLockEnabled,
-                            onCheckedChange = { enabled ->
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                if (enabled) {
-                                    val biometricManager = BiometricManager.from(context)
-                                    val canAuthenticate = biometricManager.canAuthenticate(APP_LOCK_AUTHENTICATORS)
+                SettingsDivider()
 
-                                    if (canAuthenticate == BiometricManager.BIOMETRIC_SUCCESS) {
-                                        isAppLockEnabled = true
-                                        prefs.edit { putBoolean("key_app_lock_enabled", true) }
-                                    } else {
-                                        showSnack("Please set up a device screen lock or fingerprint first.")
-                                    }
-                                } else {
-                                    requireDeviceAuth(
-                                        context = context,
-                                        title = "Turn off App Lock",
-                                        onFailure = { message -> showSnack(message) }
-                                    ) {
-                                        isAppLockEnabled = false
-                                        prefs.edit { putBoolean("key_app_lock_enabled", false) }
-                                    }
-                                }
-                            },
-                            colors = settingsSwitchColors()
-                        )
+                SettingsItem(
+                    icon = Icons.Default.Event,
+                    title = "Fixed Costs & Bills",
+                    subtitle = "Rent, subscriptions & yearly premiums",
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onNavigateToNecessities()
                     }
-                }
+                )
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                SettingsDivider()
 
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Box(modifier = Modifier.padding(top = 2.dp)) {
-                        SettingsIcon(Icons.Default.NotificationsActive, MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
-                        Text("Low Balance Alert", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(
-                            "Warns when bank balance drops low",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Box(modifier = Modifier.height(44.dp), contentAlignment = Alignment.Center) {
-                        Switch(
-                            checked = isLowBalanceEnabled,
-                            onCheckedChange = { enabled ->
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                isLowBalanceEnabled = enabled
-                                prefs.edit { putBoolean("key_low_balance_alert_enabled", enabled) }
-                            },
-                            colors = settingsSwitchColors()
-                        )
-                    }
-                }
+                SettingsItem(
+                    icon = Icons.Default.AccountBalanceWallet,
+                    title = "UPI Settlement",
+                    subtitle = "Used when sending split repayment requests"
+                )
 
-                if (isLowBalanceEnabled) {
+                SettingsInset {
                     SettingsTextField(
-                        value = thresholdText,
-                        onValueChange = { input ->
-                            val digits = input.filter { it in '0'..'9' }.take(9)
-                            thresholdText = digits
-                            digits.toFloatOrNull()?.let {
-                                prefs.edit { putFloat("key_low_balance_threshold", it) }
-                            }
-                        },
-                        label = "Threshold (₹)",
-                        modifier = Modifier.onFocusLost {
-                            if (thresholdText.isBlank()) thresholdText =
-                                prefs.getFloat("key_low_balance_threshold", 1000f).toInt().toString()
-                        },
+                        value = myUpiInput,
+                        onValueChange = { myUpiInput = it.filter { c -> !c.isWhitespace() }.take(100) },
+                        label = "Your UPI ID (to receive payments)",
+                        placeholder = "e.g., name@okaxis",
                         keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Number,
+                            keyboardType = KeyboardType.Email,
                             imeAction = ImeAction.Done
                         ),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                focusManager.clearFocus()
-                                if (thresholdText.isBlank()) thresholdText =
-                                    prefs.getFloat("key_low_balance_threshold", 1000f).toInt().toString()
-                            }
-                        )
+                        keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                        modifier = Modifier.onFocusLost { commitMyUpi() }
                     )
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Box(modifier = Modifier.padding(top = 2.dp)) {
-                        SettingsIcon(Icons.Default.Event, MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
-                        Text("Smart Bill Reminders", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(
-                            "Notify 2 days before fixed costs or subscriptions are due",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Box(modifier = Modifier.height(44.dp), contentAlignment = Alignment.Center) {
-                        Switch(
-                            checked = isBillRemindersEnabled,
-                            onCheckedChange = { enabled ->
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                isBillRemindersEnabled = enabled
-                                settingsRepo.billRemindersEnabled = enabled
-                                if (enabled) {
-                                    coroutineScope.launch(Dispatchers.IO) {
-                                        com.expensetracker.offline.engine.notification.DailySummaryReceiver.checkAndNotifyUpcomingBills(context, transactions)
-                                    }
-                                }
-                            },
-                            colors = settingsSwitchColors()
-                        )
-                    }
                 }
             }
 
             // ─────────────────────────────────────────────────────────────────
-            // 3. Live Capture Automation
+            // 2. Live Capture Automation
             // ─────────────────────────────────────────────────────────────────
             SettingsSection(
                 title = "Live Capture Automation",
                 isHighlighted = highlightedSection == "Live",
                 modifier = Modifier.trackSection("Live", sectionPositions)
             ) {
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Box(modifier = Modifier.padding(top = 2.dp)) {
-                        SettingsIcon(
-                            Icons.Default.FlashOn,
-                            if (!isManualModePreferred) AppColors.positive else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                SettingsSwitchItem(
+                    icon = Icons.Default.FlashOn,
+                    title = "Auto-Capture (SMS & Notifications)",
+                    subtitle = if (!isManualModePreferred) "Active — automatically detects bank SMS & UPI payment alerts."
+                    else "Paused (Manual Mode) — turn on anytime to auto-detect bank & UPI payments.",
+                    iconTint = if (!isManualModePreferred) AppColors.positive else MaterialTheme.colorScheme.onSurfaceVariant,
+                    checked = !isManualModePreferred,
+                    onCheckedChange = { enableAuto ->
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.setManualModePreferred(!enableAuto)
+                        if (enableAuto) {
+                            viewModel.setAutoCaptureBannerDismissed(false)
+                            showSnack("Auto-capture enabled")
+                        } else {
+                            showSnack("Auto-capture paused — switched to Manual Mode")
+                        }
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
-                        Text(
-                            "Auto-Capture (SMS & Notifications)",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            if (!isManualModePreferred) "Active — automatically detects bank SMS & UPI payment alerts."
-                            else "Paused (Manual Mode) — turn on anytime to auto-detect bank & UPI payments.",
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Box(modifier = Modifier.height(44.dp), contentAlignment = Alignment.Center) {
-                        Switch(
-                            checked = !isManualModePreferred,
-                            onCheckedChange = { enableAuto ->
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                viewModel.setManualModePreferred(!enableAuto)
-                                if (enableAuto) {
-                                    viewModel.setAutoCaptureBannerDismissed(false)
-                                    showSnack("Auto-capture enabled")
-                                } else {
-                                    showSnack("Auto-capture paused — switched to Manual Mode")
-                                }
-                            },
-                            colors = settingsSwitchColors()
-                        )
-                    }
-                }
+                )
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), modifier = Modifier.padding(vertical = 4.dp))
+                SettingsDivider()
 
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Box(modifier = Modifier.padding(top = 2.dp)) {
-                        SettingsIcon(Icons.Default.FlashOn, MaterialTheme.colorScheme.onSurfaceVariant)
+                SettingsSwitchItem(
+                    icon = Icons.Default.FlashOn,
+                    title = "Skip Review (Live Captures)",
+                    subtitle = "Skips the Review queue. Misread merchants or amounts get saved as-is.",
+                    checked = skipReviewQueue,
+                    onCheckedChange = { enabled ->
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        skipReviewQueue = enabled
+                        prefs.edit { putBoolean("key_skip_review_queue", enabled) }
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
-                        Text(
-                            "Skip Review (Live Captures)",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            "Skips the Review queue. Misread merchants or amounts get saved as-is.",
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Box(modifier = Modifier.height(44.dp), contentAlignment = Alignment.Center) {
-                        Switch(
-                            checked = skipReviewQueue,
-                            onCheckedChange = { enabled ->
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                skipReviewQueue = enabled
-                                prefs.edit { putBoolean("key_skip_review_queue", enabled) }
-                            },
-                            colors = settingsSwitchColors()
-                        )
-                    }
-                }
+                )
 
                 if (skipReviewQueue) {
-                    SettingsTextField(
-                        value = defaultFallbackPayee,
-                        onValueChange = { input ->
-                            defaultFallbackPayee = input
-                            input.trim().takeIf { it.isNotEmpty() }
-                                ?.let { prefs.edit { putString("key_fallback_payee", it) } }
-                        },
-                        label = "Fallback Payee",
-                        modifier = Modifier.onFocusLost {
-                            if (defaultFallbackPayee.isBlank()) defaultFallbackPayee =
-                                prefs.getString("key_fallback_payee", "UPI Payment") ?: "UPI Payment"
-                        },
-                        placeholder = "e.g., UPI Payment",
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Text,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                focusManager.clearFocus()
-                                if (defaultFallbackPayee.isBlank()) defaultFallbackPayee =
-                                    prefs.getString("key_fallback_payee", "UPI Payment")
-                                        ?: "UPI Payment"
-                            }
-                        )
-                    )
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), modifier = Modifier.padding(vertical = 4.dp))
-
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Box(modifier = Modifier.padding(top = 2.dp)) {
-                        SettingsIcon(Icons.AutoMirrored.Filled.HelpOutline, MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
-                        Text("Auto-save Silent Deductions", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(
-                            "If your bank balance drops without an SMS alert, skip review and auto-log the missing amount.",
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Box(modifier = Modifier.height(44.dp), contentAlignment = Alignment.Center) {
-                        Switch(
-                            checked = autoSaveUnknown,
-                            onCheckedChange = { enabled ->
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                autoSaveUnknown = enabled
-                                prefs.edit { putBoolean("key_autosave_unknown_deductions", enabled) }
+                    SettingsInset {
+                        SettingsTextField(
+                            value = defaultFallbackPayee,
+                            onValueChange = { input ->
+                                defaultFallbackPayee = input
+                                input.trim().takeIf { it.isNotEmpty() }
+                                    ?.let { prefs.edit { putString("key_fallback_payee", it) } }
                             },
-                            colors = settingsSwitchColors()
+                            label = "Fallback Payee",
+                            modifier = Modifier.onFocusLost {
+                                if (defaultFallbackPayee.isBlank()) defaultFallbackPayee =
+                                    prefs.getString("key_fallback_payee", "UPI Payment") ?: "UPI Payment"
+                            },
+                            placeholder = "e.g., UPI Payment",
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    focusManager.clearFocus()
+                                    if (defaultFallbackPayee.isBlank()) defaultFallbackPayee =
+                                        prefs.getString("key_fallback_payee", "UPI Payment")
+                                            ?: "UPI Payment"
+                                }
+                            )
                         )
                     }
                 }
+
+                SettingsDivider()
+
+                SettingsSwitchItem(
+                    icon = Icons.AutoMirrored.Filled.HelpOutline,
+                    title = "Auto-save Silent Deductions",
+                    subtitle = "If your bank balance drops without an SMS alert, skip review and auto-log the missing amount.",
+                    checked = autoSaveUnknown,
+                    onCheckedChange = { enabled ->
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        autoSaveUnknown = enabled
+                        prefs.edit { putBoolean("key_autosave_unknown_deductions", enabled) }
+                    }
+                )
             }
 
             // ─────────────────────────────────────────────────────────────────
-            // 4. Inbox Import & Review
+            // 3. Inbox Import & Review
             // ─────────────────────────────────────────────────────────────────
             SettingsSection(
                 title = "Inbox Import & Review",
                 isHighlighted = highlightedSection == "SMS",
                 modifier = Modifier.trackSection("SMS", sectionPositions)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SettingsIcon(Icons.Default.Sms, MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            "Scan SMS for Current Month",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            text = if (skipScanReview) "Direct import active. Scans from ${
-                                BillingCycleHelper.getCycleStartDateFormatted(
-                                    startDayOfMonth
-                                )
-                            } to now."
-                            else "Scans from ${
-                                BillingCycleHelper.getCycleStartDateFormatted(
-                                    startDayOfMonth
-                                )
-                            }. High values go to Review.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            lineHeight = 16.sp
-                        )
-                    }
-                }
+                SettingsItem(
+                    icon = Icons.Default.Sms,
+                    title = "Scan SMS for Current Month",
+                    subtitle = if (skipScanReview) "Direct import active. Scans from ${BillingCycleHelper.getCycleStartDateFormatted(startDayOfMonth)} to now."
+                    else "Scans from ${BillingCycleHelper.getCycleStartDateFormatted(startDayOfMonth)}. High values go to Review."
+                )
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                SettingsDivider()
 
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Box(modifier = Modifier.padding(top = 2.dp)) {
-                        SettingsIcon(Icons.Default.Bolt, MaterialTheme.colorScheme.onSurfaceVariant)
+                SettingsSwitchItem(
+                    icon = Icons.Default.Bolt,
+                    title = "Skip Review for Inbox Scan",
+                    subtitle = "Skips review for the inbox scan. Check Undo Last Scan if results look off.",
+                    checked = skipScanReview,
+                    onCheckedChange = { enabled ->
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        skipScanReview = enabled
+                        prefs.edit { putBoolean("key_skip_scan_review", enabled) }
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
-                        Text(
-                            "Skip Review for Inbox Scan",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            "Skips review for the inbox scan. Check Undo Last Scan if results look off.",
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Box(modifier = Modifier.height(44.dp), contentAlignment = Alignment.Center) {
-                        Switch(
-                            checked = skipScanReview,
-                            onCheckedChange = { enabled ->
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                skipScanReview = enabled
-                                prefs.edit { putBoolean("key_skip_scan_review", enabled) }
-                            },
-                            colors = settingsSwitchColors()
-                        )
-                    }
-                }
+                )
 
                 if (skipScanReview) {
-                    SettingsTextField(
-                        value = scanFallbackPayee,
-                        onValueChange = { input ->
-                            scanFallbackPayee = input
-                            input.trim().takeIf { it.isNotEmpty() }?.let {
-                                prefs.edit { putString("key_scan_fallback_payee", it) }
-                            }
-                        },
-                        label = "Fallback Payee (Scanned SMS)",
-                        modifier = Modifier.onFocusLost {
-                            if (scanFallbackPayee.isBlank()) scanFallbackPayee =
-                                prefs.getString("key_scan_fallback_payee", "Bank Transfer") ?: "Bank Transfer"
-                        },
-                        placeholder = "e.g., Bank Transfer",
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Text,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                focusManager.clearFocus()
+                    SettingsInset {
+                        SettingsTextField(
+                            value = scanFallbackPayee,
+                            onValueChange = { input ->
+                                scanFallbackPayee = input
+                                input.trim().takeIf { it.isNotEmpty() }?.let {
+                                    prefs.edit { putString("key_scan_fallback_payee", it) }
+                                }
+                            },
+                            label = "Fallback Payee (Scanned SMS)",
+                            modifier = Modifier.onFocusLost {
                                 if (scanFallbackPayee.isBlank()) scanFallbackPayee =
-                                    prefs.getString("key_scan_fallback_payee", "Bank Transfer")
-                                        ?: "Bank Transfer"
-                            }
+                                    prefs.getString("key_scan_fallback_payee", "Bank Transfer") ?: "Bank Transfer"
+                            },
+                            placeholder = "e.g., Bank Transfer",
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    focusManager.clearFocus()
+                                    if (scanFallbackPayee.isBlank()) scanFallbackPayee =
+                                        prefs.getString("key_scan_fallback_payee", "Bank Transfer")
+                                            ?: "Bank Transfer"
+                                }
+                            )
                         )
-                    )
+                    }
                 }
 
-                Button(
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        showScanConfirmDialog = true
-                    },
-                    enabled = !isScanning,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.onSurface,
-                        contentColor = MaterialTheme.colorScheme.surface,
-                        disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f),
-                        disabledContentColor = MaterialTheme.colorScheme.onSurface
-                    ),
-                    shape = RoundedCornerShape(AppRadius.small)
-                ) {
-                    if (isScanning) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Scanning Current Cycle…",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    } else {
-                        Text(
-                            text = "Scan Inbox Now",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                SettingsInset(start = 16.dp, top = 4.dp) {
+                    Button(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            showScanConfirmDialog = true
+                        },
+                        enabled = !isScanning,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.onSurface,
+                            contentColor = MaterialTheme.colorScheme.surface,
+                            disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f),
+                            disabledContentColor = MaterialTheme.colorScheme.onSurface
+                        ),
+                        shape = RoundedCornerShape(AppRadius.small)
+                    ) {
+                        if (isScanning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Scanning Current Cycle…",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        } else {
+                            Text(
+                                text = "Scan Inbox Now",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
 
                 val totalBatchCount = lastImportedTxnIds.size + lastImportedReviewIds.size
                 if (totalBatchCount > 0) {
-                    OutlinedButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            viewModel.undoScan(lastImportedTxnIds, lastImportedReviewIds)
+                    SettingsInset(start = 16.dp, top = 0.dp) {
+                        OutlinedButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                viewModel.undoScan(lastImportedTxnIds, lastImportedReviewIds)
 
-                            val count = lastImportedTxnIds.size + lastImportedReviewIds.size
+                                val count = lastImportedTxnIds.size + lastImportedReviewIds.size
 
-                            lastImportedTxnIds = emptyList()
-                            lastImportedReviewIds = emptyList()
+                                lastImportedTxnIds = emptyList()
+                                lastImportedReviewIds = emptyList()
 
-                            settingsRepo.clearLastScanBatch()
+                                settingsRepo.clearLastScanBatch()
 
-                            showSnack("Scan undone! Removed $count items.")
-                        },
-                        enabled = !isScanning,
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.onSurface
-                        ),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(AppRadius.small)
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Undo,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            "Undo Last Scan ($totalBatchCount items)",
-                            fontWeight = FontWeight.SemiBold
+                                showSnack("Scan undone! Removed $count items.")
+                            },
+                            enabled = !isScanning,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(AppRadius.small)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Undo,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Undo Last Scan ($totalBatchCount items)",
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ─────────────────────────────────────────────────────────────────
+            // 4. Security & Alerts
+            // ─────────────────────────────────────────────────────────────────
+            SettingsSection(
+                title = "Security & Alerts",
+                isHighlighted = highlightedSection == "Alerts",
+                modifier = Modifier.trackSection("Alerts", sectionPositions)
+            ) {
+                SettingsSwitchItem(
+                    icon = Icons.Default.Lock,
+                    title = "App Lock",
+                    subtitle = "Require biometric unlock & hide from Recents",
+                    checked = isAppLockEnabled,
+                    onCheckedChange = { enabled ->
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        if (enabled) {
+                            val biometricManager = BiometricManager.from(context)
+                            val canAuthenticate = biometricManager.canAuthenticate(APP_LOCK_AUTHENTICATORS)
+
+                            if (canAuthenticate == BiometricManager.BIOMETRIC_SUCCESS) {
+                                isAppLockEnabled = true
+                                prefs.edit { putBoolean("key_app_lock_enabled", true) }
+                            } else {
+                                showSnack("Please set up a device screen lock or fingerprint first.")
+                            }
+                        } else {
+                            requireDeviceAuth(
+                                context = context,
+                                title = "Turn off App Lock",
+                                onFailure = { message -> showSnack(message) }
+                            ) {
+                                isAppLockEnabled = false
+                                prefs.edit { putBoolean("key_app_lock_enabled", false) }
+                            }
+                        }
+                    }
+                )
+
+                SettingsDivider()
+
+                SettingsSwitchItem(
+                    icon = Icons.Default.NotificationsActive,
+                    title = "Low Balance Alert",
+                    subtitle = "Warns when bank balance drops low",
+                    checked = isLowBalanceEnabled,
+                    onCheckedChange = { enabled ->
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        isLowBalanceEnabled = enabled
+                        prefs.edit { putBoolean("key_low_balance_alert_enabled", enabled) }
+                    }
+                )
+
+                if (isLowBalanceEnabled) {
+                    SettingsInset {
+                        SettingsTextField(
+                            value = thresholdText,
+                            onValueChange = { input ->
+                                val digits = input.filter { it in '0'..'9' }.take(9)
+                                thresholdText = digits
+                                digits.toFloatOrNull()?.let {
+                                    prefs.edit { putFloat("key_low_balance_threshold", it) }
+                                }
+                            },
+                            label = "Threshold (₹)",
+                            modifier = Modifier.onFocusLost {
+                                if (thresholdText.isBlank()) thresholdText =
+                                    prefs.getFloat("key_low_balance_threshold", 1000f).toInt().toString()
+                            },
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    focusManager.clearFocus()
+                                    if (thresholdText.isBlank()) thresholdText =
+                                        prefs.getFloat("key_low_balance_threshold", 1000f).toInt().toString()
+                                }
+                            )
                         )
                     }
                 }
+
+                SettingsDivider()
+
+                SettingsSwitchItem(
+                    icon = Icons.Default.Event,
+                    title = "Smart Bill Reminders",
+                    subtitle = "Notify 2 days before fixed costs or subscriptions are due",
+                    checked = isBillRemindersEnabled,
+                    onCheckedChange = { enabled ->
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        isBillRemindersEnabled = enabled
+                        settingsRepo.billRemindersEnabled = enabled
+                        if (enabled) {
+                            coroutineScope.launch(Dispatchers.IO) {
+                                com.expensetracker.offline.engine.notification.DailySummaryReceiver.checkAndNotifyUpcomingBills(context, transactions)
+                            }
+                        }
+                    }
+                )
             }
 
             // ─────────────────────────────────────────────────────────────────
@@ -1563,144 +1278,136 @@ fun SettingsScreen(
                 isHighlighted = highlightedSection == "Backup",
                 modifier = Modifier.trackSection("Backup", sectionPositions)
             ) {
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Box(modifier = Modifier.padding(top = 2.dp)) {
-                        SettingsIcon(Icons.Default.CloudSync, MaterialTheme.colorScheme.onSurfaceVariant)
+                SettingsSwitchItem(
+                    icon = Icons.Default.CloudSync,
+                    title = "Auto Backup",
+                    subtitle = "Encrypt and save data automatically",
+                    checked = autoBackupEnabled,
+                    onCheckedChange = { enabled ->
+                        if (enabled && backupFolderUri.isBlank()) {
+                            showSnack("Please select a backup folder first")
+                            pendingAutoBackupEnable = true
+                            folderPickerLauncher.launch(null)
+                        } else if (enabled) {
+                            requestAutoBackupOn()
+                        } else {
+                            autoBackupEnabled = false
+                            prefs.edit { putBoolean("key_auto_backup_enabled", false) }
+                            AutoBackupWorker.schedule(context)
+                        }
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
-                        Text("Auto Backup", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(
-                            "Encrypt and save data automatically",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Box(modifier = Modifier.height(44.dp), contentAlignment = Alignment.Center) {
-                        Switch(
-                            checked = autoBackupEnabled,
-                            onCheckedChange = { enabled ->
-                                if (enabled && backupFolderUri.isBlank()) {
-                                    showSnack("Please select a backup folder first")
-                                    pendingAutoBackupEnable = true
-                                    folderPickerLauncher.launch(null)
-                                } else if (enabled) {
-                                    requestAutoBackupOn()
-                                } else {
-                                    autoBackupEnabled = false
-                                    prefs.edit { putBoolean("key_auto_backup_enabled", false) }
-                                    AutoBackupWorker.schedule(context)
-                                }
-                            },
-                            colors = settingsSwitchColors()
-                        )
-                    }
-                }
+                )
 
                 if (autoBackupEnabled || autoBackupStatus != null) {
-                    Text(
-                        autoBackupStatus ?: "No auto-backup has run yet",
-                        fontSize = 12.sp,
-                        color = if (autoBackupStatusFailed) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    SettingsInset(top = 0.dp, bottom = 14.dp) {
+                        Text(
+                            autoBackupStatus ?: "No auto-backup has run yet",
+                            fontSize = 12.sp,
+                            color = if (autoBackupStatusFailed) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
                 if (autoBackupEnabled) {
-                    PremiumDropdownField(
-                        selectedOption = backupFrequency,
-                        options = listOf("Daily", "Weekly", "Monthly"),
-                        onOptionSelected = {
-                            backupFrequency = it
-                            prefs.edit { putString("key_backup_frequency", it) }
-                            AutoBackupWorker.schedule(context)
-                        }
-                    )
+                    SettingsInset(start = 16.dp) {
+                        PremiumDropdownField(
+                            selectedOption = backupFrequency,
+                            options = listOf("Daily", "Weekly", "Monthly"),
+                            onOptionSelected = {
+                                backupFrequency = it
+                                prefs.edit { putString("key_backup_frequency", it) }
+                                AutoBackupWorker.schedule(context)
+                            }
+                        )
+                    }
                 }
 
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(AppRadius.small))
-                        .quietClickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            folderPickerLauncher.launch(null)
-                        },
-                    shape = RoundedCornerShape(AppRadius.small),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.FolderOpen,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                "Backup Location",
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 14.sp
-                            )
-                        }
-
-                        val locationName = remember(backupFolderUri) {
-                            if (backupFolderUri.isNotBlank()) {
-                                try {
-                                    val decoded = Uri.decode(backupFolderUri)
-                                    val path = decoded.substringAfterLast("tree/", "")
-                                        .replace("primary:", "Internal Storage / ")
-                                        .replace(":", " / ")
-                                    path.ifBlank { "Storage Selected" }
-                                } catch (e: Exception) {
-                                    "Storage Selected"
-                                }
-                            } else ""
-                        }
-
-                        if (backupFolderUri.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Surface(
-                                shape = RoundedCornerShape(AppRadius.small),
-                                color = MaterialTheme.colorScheme.surface,
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = AppColors.positive,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = locationName,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        lineHeight = 18.sp
-                                    )
-                                }
+                SettingsInset(start = 16.dp) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(AppRadius.small))
+                            .quietClickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                folderPickerLauncher.launch(null)
+                            },
+                        shape = RoundedCornerShape(AppRadius.small),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.FolderOpen,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    "Backup Location",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp
+                                )
                             }
-                        } else {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Tap to choose a secure folder",
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(start = 32.dp)
-                            )
+
+                            val locationName = remember(backupFolderUri) {
+                                if (backupFolderUri.isNotBlank()) {
+                                    try {
+                                        val decoded = Uri.decode(backupFolderUri)
+                                        val path = decoded.substringAfterLast("tree/", "")
+                                            .replace("primary:", "Internal Storage / ")
+                                            .replace(":", " / ")
+                                        path.ifBlank { "Storage Selected" }
+                                    } catch (e: Exception) {
+                                        "Storage Selected"
+                                    }
+                                } else ""
+                            }
+
+                            if (backupFolderUri.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(AppRadius.small),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = AppColors.positive,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = locationName,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            lineHeight = 18.sp
+                                        )
+                                    }
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Tap to choose a secure folder",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 32.dp)
+                                )
+                            }
                         }
                     }
                 }
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                SettingsDivider()
 
                 val lastBackupStr = remember(lastBackupTimestamp) {
                     if (lastBackupTimestamp > 0L) {
@@ -1732,414 +1439,403 @@ fun SettingsScreen(
                     } else "Never"
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = if (lastBackupTimestamp > 0L) Icons.Default.CloudDone else Icons.Default.CloudOff,
-                        contentDescription = null,
-                        tint = if (lastBackupTimestamp > 0L) AppColors.positive else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Last backed up: $lastBackupStr",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = if (lastBackupTimestamp > 0L) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            filePickerLauncher.launch("*/*")
-                        },
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.onSurface
-                        ),
-                        shape = RoundedCornerShape(AppRadius.small),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                        modifier = Modifier.weight(1f).height(48.dp)
+                SettingsInset(start = 16.dp, top = 14.dp, bottom = 12.dp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            Icons.Default.Restore,
+                            imageVector = if (lastBackupTimestamp > 0L) Icons.Default.CloudDone else Icons.Default.CloudOff,
                             contentDescription = null,
+                            tint = if (lastBackupTimestamp > 0L) AppColors.positive else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "Restore",
+                            text = "Last backed up: $lastBackupStr",
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    Button(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            if (backupFolderUri.isNotBlank()) {
-                                tempPassphrase = SecurePassphraseStore.load(context).orEmpty()
-                                tempConfirmPassphrase = tempPassphrase
-                                showPassphrase = false
-                                showBackupPassphraseDialog = true
-                            } else {
-                                showSnack("Please select a Backup Location first")
-                            }
-                        },
-                        enabled = !isBackingUp,
-                        shape = RoundedCornerShape(AppRadius.small),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                        modifier = Modifier.weight(1f).height(48.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.onSurface,
-                            contentColor = MaterialTheme.colorScheme.surface
-                        )
-                    ) {
-                        Icon(
-                            Icons.Default.Save,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            "Backup Now",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
+                            fontWeight = FontWeight.Medium,
+                            color = if (lastBackupTimestamp > 0L) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                SettingsInset(start = 16.dp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                filePickerLauncher.launch("*/*")
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            shape = RoundedCornerShape(AppRadius.small),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.weight(1f).height(48.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Restore,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Restore",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SettingsIcon(Icons.Default.TableView, MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("CSV Management", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(
-                            "Full spreadsheet import & export (with splits)",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Button(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                if (backupFolderUri.isNotBlank()) {
+                                    tempPassphrase = SecurePassphraseStore.load(context).orEmpty()
+                                    tempConfirmPassphrase = tempPassphrase
+                                    showPassphrase = false
+                                    showBackupPassphraseDialog = true
+                                } else {
+                                    showSnack("Please select a Backup Location first")
+                                }
+                            },
+                            enabled = !isBackingUp,
+                            shape = RoundedCornerShape(AppRadius.small),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.onSurface,
+                                contentColor = MaterialTheme.colorScheme.surface
+                            )
+                        ) {
+                            Icon(
+                                Icons.Default.Save,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Backup Now",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            csvImportLauncher.launch("text/*")
-                        },
-                        enabled = !isCsvBusy,
-                        shape = RoundedCornerShape(AppRadius.small),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                        modifier = Modifier.weight(1f).height(48.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.onSurface
-                        )
-                    ) {
-                        Icon(
-                            Icons.Default.UploadFile,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            "Import",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                SettingsDivider()
 
-                    Button(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            csvFolderLauncher.launch(null)
-                        },
-                        enabled = !isCsvBusy,
-                        shape = RoundedCornerShape(AppRadius.small),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                        modifier = Modifier.weight(1f).height(48.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.onSurface,
-                            contentColor = MaterialTheme.colorScheme.surface
-                        )
+                SettingsItem(
+                    icon = Icons.Default.TableView,
+                    title = "CSV Management",
+                    subtitle = "Full spreadsheet import & export (with splits)"
+                )
+
+                SettingsInset(start = 16.dp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.InsertDriveFile,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            "Export",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        OutlinedButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                csvImportLauncher.launch("text/*")
+                            },
+                            enabled = !isCsvBusy,
+                            shape = RoundedCornerShape(AppRadius.small),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            )
+                        ) {
+                            Icon(
+                                Icons.Default.UploadFile,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Import",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                csvFolderLauncher.launch(null)
+                            },
+                            enabled = !isCsvBusy,
+                            shape = RoundedCornerShape(AppRadius.small),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.onSurface,
+                                contentColor = MaterialTheme.colorScheme.surface
+                            )
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.InsertDriveFile,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Export",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
 
             // ─────────────────────────────────────────────────────────────────
-            // 6. System Health
+            // 6. Appearance & Theme
+            // ─────────────────────────────────────────────────────────────────
+            SettingsSection(
+                title = "Appearance & Theme",
+                isHighlighted = highlightedSection == "Theme",
+                modifier = Modifier.trackSection("Theme", sectionPositions)
+            ) {
+                SettingsItem(
+                    icon = Icons.Default.Palette,
+                    title = "App Theme",
+                    subtitle = "Choose your preferred theme mode"
+                )
+
+                val themeModes = remember { listOf("SYSTEM" to "System", "DARK" to "Dark", "LIGHT" to "Light") }
+                val selectedThemeIndex = themeModes.indexOfFirst { it.first == currentThemeMode }.coerceAtLeast(0)
+                SettingsInset(start = 16.dp) {
+                    SheetSegmentedControl(
+                        options = themeModes.map { it.second },
+                        selectedIndex = selectedThemeIndex,
+                        onSelect = { idx ->
+                            val mode = themeModes[idx].first
+                            currentThemeMode = mode
+                            settingsRepo.appThemeMode = mode
+                        }
+                    )
+                }
+            }
+
+            // ─────────────────────────────────────────────────────────────────
+            // 7. System Health
             // ─────────────────────────────────────────────────────────────────
             SettingsSection(
                 title = "System Health",
                 isHighlighted = highlightedSection == "Health",
                 modifier = Modifier.trackSection("Health", sectionPositions)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SettingsIcon(
-                        icon = if (hasSmsPermission) Icons.Default.CheckCircle else Icons.Default.Warning,
-                        tint = if (hasSmsPermission) AppColors.positive else MaterialTheme.colorScheme.error
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Bank SMS Access",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            text = if (hasSmsPermission) "Active & Reading Bank SMS Alerts" else "Permission required for bank SMS capture",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                SettingsItem(
+                    icon = if (hasSmsPermission) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    iconTint = if (hasSmsPermission) AppColors.positive else MaterialTheme.colorScheme.error,
+                    title = "Bank SMS Access",
+                    subtitle = if (hasSmsPermission) "Active & Reading Bank SMS Alerts" else "Permission required for bank SMS capture"
+                )
 
                 if (!hasSmsPermission) {
-                    OutlinedButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                data = Uri.fromParts("package", context.packageName, null)
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            }
-                            context.startActivitySafely(intent)
-                        },
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                        shape = RoundedCornerShape(AppRadius.small),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                    ) {
-                        Text("Open App Permissions (SMS)", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    SettingsInset(start = 16.dp) {
+                        OutlinedButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.fromParts("package", context.packageName, null)
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivitySafely(intent)
+                            },
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                            shape = RoundedCornerShape(AppRadius.small),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Text("Open App Permissions (SMS)", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 }
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                SettingsDivider()
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SettingsIcon(
-                        icon = if (hasNotificationPermission) Icons.Default.CheckCircle else Icons.Default.Warning,
-                        tint = if (hasNotificationPermission) AppColors.positive else if (hasSmsPermission) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Notification Interceptor",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            text = if (hasNotificationPermission) "Active & Listening (GPay, PhonePe, etc.)" else "Access required in Android Settings",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                SettingsItem(
+                    icon = if (hasNotificationPermission) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    iconTint = if (hasNotificationPermission) AppColors.positive
+                    else if (hasSmsPermission) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.error,
+                    title = "Notification Interceptor",
+                    subtitle = if (hasNotificationPermission) "Active & Listening (GPay, PhonePe, etc.)" else "Access required in Android Settings"
+                )
 
                 if (!hasNotificationPermission) {
-                    Surface(
-                        shape = RoundedCornerShape(AppRadius.small),
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = "Privacy",
-                                    tint = MaterialTheme.colorScheme.onErrorContainer,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
+                    SettingsInset(start = 16.dp) {
+                        Surface(
+                            shape = RoundedCornerShape(AppRadius.small),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = "Privacy",
+                                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        "Privacy First: Your data never leaves this device. This app has no internet permission.",
+                                        fontSize = 12.sp,
+                                        lineHeight = 16.sp,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(16.dp))
+
                                 Text(
-                                    "Privacy First: Your data never leaves this device. This app has no internet permission.",
-                                    fontSize = 12.sp,
-                                    lineHeight = 16.sp,
+                                    "How to fix:",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
                                     color = MaterialTheme.colorScheme.onErrorContainer
                                 )
-                            }
-                            Spacer(modifier = Modifier.height(16.dp))
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "1. Tap the button below to open Device Access.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Text(
+                                    "2. Find Expense Tracker and toggle Allow.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        context.startActivitySafely(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                    },
+                                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                                    shape = RoundedCornerShape(AppRadius.small),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
+                                ) {
+                                    Text("Open Notification Access", fontWeight = FontWeight.SemiBold)
+                                }
 
-                            Text(
-                                "How to fix:",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                "1. Tap the button below to open Device Access.",
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                            Text(
-                                "2. Find Expense Tracker and toggle Allow.",
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            OutlinedButton(
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    context.startActivitySafely(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                                },
-                                modifier = Modifier.fillMaxWidth().height(44.dp),
-                                shape = RoundedCornerShape(AppRadius.small),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
-                            ) {
-                                Text("Open Notification Access", fontWeight = FontWeight.SemiBold)
-                            }
-
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                "Is it greyed out (Restricted Setting)?",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                "Tap 'Unlock Settings' below, then tap the 3 dots (⋮) in the top right corner and select 'Allow restricted settings'.",
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            OutlinedButton(
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                        data = android.net.Uri.fromParts("package", context.packageName, null)
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                    }
-                                    context.startActivitySafely(intent)
-                                },
-                                modifier = Modifier.fillMaxWidth().height(44.dp),
-                                shape = RoundedCornerShape(AppRadius.small),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
-                            ) {
-                                Text("Unlock Settings", fontWeight = FontWeight.SemiBold)
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    "Is it greyed out (Restricted Setting)?",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "Tap 'Unlock Settings' below, then tap the 3 dots (⋮) in the top right corner and select 'Allow restricted settings'.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                            data = android.net.Uri.fromParts("package", context.packageName, null)
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+                                        context.startActivitySafely(intent)
+                                    },
+                                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                                    shape = RoundedCornerShape(AppRadius.small),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
+                                ) {
+                                    Text("Unlock Settings", fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                     }
                 }
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                SettingsDivider()
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SettingsIcon(
-                        icon = if (isIgnoringBatteryOptimizations) Icons.Default.BatteryFull else Icons.Default.BatteryAlert,
-                        tint = if (isIgnoringBatteryOptimizations) AppColors.positive else MaterialTheme.colorScheme.error
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Battery Optimization", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(
-                            text = if (isIgnoringBatteryOptimizations) "Unrestricted (OS won't kill listener)" else "Restricted (OS may kill background listener)",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                SettingsItem(
+                    icon = if (isIgnoringBatteryOptimizations) Icons.Default.BatteryFull else Icons.Default.BatteryAlert,
+                    iconTint = if (isIgnoringBatteryOptimizations) AppColors.positive else MaterialTheme.colorScheme.error,
+                    title = "Battery Optimization",
+                    subtitle = if (isIgnoringBatteryOptimizations) "Unrestricted (OS won't kill listener)" else "Restricted (OS may kill background listener)"
+                )
 
                 if (!isIgnoringBatteryOptimizations) {
-                    Surface(
-                        shape = RoundedCornerShape(AppRadius.small),
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                "How to fix (Crucial for background sync):",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                "1. Tap the button below to open App Info.",
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                            Text(
-                                "2. Tap 'App battery usage' and select Unrestricted.",
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            OutlinedButton(
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                        data = Uri.parse("package:${context.packageName}")
-                                    }
-                                    val ok = runCatching { context.startActivity(direct); true }.getOrDefault(false)
-                                    if (!ok) {
-                                        val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                            data = Uri.fromParts("package", context.packageName, null)
+                    SettingsInset(start = 16.dp) {
+                        Surface(
+                            shape = RoundedCornerShape(AppRadius.small),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    "How to fix (Crucial for background sync):",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "1. Tap the button below to open App Info.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Text(
+                                    "2. Tap 'App battery usage' and select Unrestricted.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                            data = Uri.parse("package:${context.packageName}")
                                         }
-                                        context.startActivitySafely(fallback)
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth().height(44.dp),
-                                shape = RoundedCornerShape(AppRadius.small),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
-                            ) {
-                                Text("Allow Unrestricted Battery", fontWeight = FontWeight.SemiBold)
+                                        val ok = runCatching { context.startActivity(direct); true }.getOrDefault(false)
+                                        if (!ok) {
+                                            val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                                data = Uri.fromParts("package", context.packageName, null)
+                                            }
+                                            context.startActivitySafely(fallback)
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                                    shape = RoundedCornerShape(AppRadius.small),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
+                                ) {
+                                    Text("Allow Unrestricted Battery", fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                     }
@@ -2147,47 +1843,18 @@ fun SettingsScreen(
             }
 
             // ─────────────────────────────────────────────────────────────────
-            // 7. Developer Sandbox (Strictly gated behind debuggable builds)
+            // 8. Developer Sandbox (Strictly gated behind debuggable builds)
             // ─────────────────────────────────────────────────────────────────
             if (isDebugBuild) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(AppRadius.small))
-                        .quietClickable {
+                SettingsSection(title = "Developer") {
+                    SettingsItem(
+                        icon = Icons.Default.BugReport,
+                        title = "Developer Sandbox",
+                        subtitle = "Live AI/ML telemetry, automated test suite & capture simulator",
+                        onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onNavigateToDebug()
                         }
-                        .padding(vertical = 12.dp, horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.BugReport,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                "Developer Sandbox (Debug Build)",
-                                fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                "Live AI/ML telemetry, automated test suite & capture simulator",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    Icon(
-                        Icons.Default.ChevronRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -2223,54 +1890,16 @@ fun SettingsScreen(
     // CUSTOM DIALOGS
     // ─────────────────────────────────────────────────────────────────────────
     if (showStartDayDialog) {
-        var tempDay by remember { mutableFloatStateOf(startDayOfMonth.toFloat()) }
-        AppDialog(
-            title = "Billing Cycle",
-            onDismiss = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); showStartDayDialog = false },
-            confirmText = "Save",
-            onConfirm = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                startDayOfMonth = tempDay.toInt()
-                viewModel.updateStartDayOfMonth(startDayOfMonth)
+        BillingCycleDialog(
+            currentDay = startDayOfMonth,
+            onDismiss = { showStartDayDialog = false },
+            onSave = { day ->
+                startDayOfMonth = day
+                viewModel.updateStartDayOfMonth(day)
                 runCatching { com.expensetracker.offline.widget.ExpenseWidget.updateAll(context) }
                 showStartDayDialog = false
             }
-        ) {
-            Text("Select the day your monthly spending cycle resets:", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(modifier = Modifier.height(24.dp))
-            Text(
-                text = "Resets on Day: ${tempDay.toInt()}",
-                fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Slider(
-                value = tempDay,
-                onValueChange = { value ->
-                    if (tempDay != value) {
-                        tempDay = value
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    }
-                },
-                valueRange = 1f..28f,
-                steps = 26,
-                colors = SliderDefaults.colors(
-                    thumbColor = MaterialTheme.colorScheme.onSurface,
-                    activeTrackColor = MaterialTheme.colorScheme.onSurface,
-                    inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
-                )
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "Capped at the 28th to ensure consistent cycles across short months like February.",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
+        )
     }
 
     if (showBackupPassphraseDialog) {

@@ -2,6 +2,7 @@
 
 package com.expensetracker.offline.ui.dashboard
 
+import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import android.content.Context
 import android.content.ContextWrapper
 import android.provider.Settings
@@ -404,12 +405,29 @@ fun ManageCategoriesDialog(
                                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.BottomEnd) {
-                                        CategoryBadgeTile(
-                                            category = trimmedInput.ifEmpty { "Category" },
-                                            size = 38.dp,
-                                            cornerRadius = 10.dp,
-                                            iconSize = 18.dp
-                                        )
+                                        if (trimmedInput.isEmpty()) {
+                                            Surface(
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                                modifier = Modifier.size(38.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        Icons.Default.Search,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            CategoryBadgeTile(
+                                                category = trimmedInput,
+                                                size = 38.dp,
+                                                cornerRadius = 10.dp,
+                                                iconSize = 18.dp
+                                            )
+                                        }
                                         if (trimmedInput.isNotEmpty()) {
                                             Box(
                                                 modifier = Modifier
@@ -2076,7 +2094,7 @@ internal fun dayLabel(ts: Long): String {
     return when {
         ts >= todayStart -> "Today"
         ts in yesterdayStart until todayStart -> "Yesterday"
-        else -> dayLabelFormat.format(Date(ts))
+        else -> synchronized(dayLabelFormat) { dayLabelFormat.format(Date(ts)) }
     }
 }
 
@@ -3331,7 +3349,7 @@ private fun CategoryBudgetFormContent(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                        .fadingHorizontalScroll(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     quickPickChips.forEach { (rupeesVal, label) ->

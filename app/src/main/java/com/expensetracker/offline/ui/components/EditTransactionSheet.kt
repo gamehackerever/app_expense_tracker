@@ -261,13 +261,13 @@ fun EditTransactionSheet(
                     .weight(1f, fill = false)
                     .padding(horizontal = 24.dp)
                     .padding(top = 8.dp, bottom = 28.dp)
-                    .verticalScroll(rememberScrollState())
+                    .fadingVerticalScroll()
                     .animateContentSize(),
                 verticalArrangement = Arrangement.spacedBy(13.dp)
             ) {
                 SheetHeader(
                     title = "Edit transaction",
-                    subtitle = "Update details, receipt, or category",
+                    subtitle = "Update details or category",
                     trailing = {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             SheetIconTile(
@@ -424,7 +424,7 @@ fun EditTransactionSheet(
                         value = payee,
                         onValueChange = { payee = it.take(80) },
                         label = if (isTransferSelected) "Destination account / note" else "Payee / store name",
-                        placeholder = if (isTransferSelected) "e.g., Savings A/c, Credit Card Bill" else "e.g., Supermarket, Restaurant, Client",
+                        placeholder = if (isTransferSelected) "e.g., Savings A/c, Credit Card Bill" else "e.g., Supermarket, Restaurant",
                         leadingIcon = Icons.Default.Storefront,
                         singleLine = true
                     )

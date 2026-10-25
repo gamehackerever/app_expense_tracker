@@ -93,6 +93,7 @@ import com.expensetracker.offline.util.NecessityItem
 import com.expensetracker.offline.util.NecessityManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 object AppLockState {
     var isLocked = true
@@ -1257,8 +1258,8 @@ fun AppNavigation(
                 context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
             }
             val initialItems = remember { NecessityManager.loadNecessities(sharedPrefs) }
-            val txns by viewModel.allTransactionsWithDebts.collectAsState()
-            val prefill by viewModel.pendingNecessityPrefill.collectAsState()
+            val txns by viewModel.allTransactionsWithDebts.collectAsStateWithLifecycle()
+            val prefill by viewModel.pendingNecessityPrefill.collectAsStateWithLifecycle()
 
             ManageNecessitiesScreen(
                 items = initialItems,

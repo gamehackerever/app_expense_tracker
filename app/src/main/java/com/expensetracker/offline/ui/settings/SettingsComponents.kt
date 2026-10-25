@@ -3,6 +3,7 @@
 package com.expensetracker.offline.ui.settings
 
 
+import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -73,6 +74,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.ui.theme.AppRadius
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Switch
+import androidx.compose.ui.unit.Dp
+import com.expensetracker.offline.ui.theme.AppColors
 import android.content.ContextWrapper
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
@@ -136,7 +144,7 @@ internal fun ProTipsCarousel(onDismiss: () -> Unit, onTipClick: (String) -> Unit
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
+                .fadingHorizontalScroll()
                 .padding(bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -176,6 +184,17 @@ internal fun ProTipsCarousel(onDismiss: () -> Unit, onTipClick: (String) -> Unit
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Settings design system
+//   SettingsSection  → small caps label + one rounded card
+//   SettingsItem     → icon · title/subtitle · trailing control (the only row layout used)
+//   SettingsInset    → content (fields, buttons) aligned under the row text
+//   SettingsDivider  → hairline inset to the text column
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Left edge of row text: 16dp card padding + 36dp icon tile + 14dp gap. */
+internal val SettingsTextInset = 66.dp
+
 @Composable
 internal fun SettingsSection(
     title: String,
@@ -183,22 +202,24 @@ internal fun SettingsSection(
     isHighlighted: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val scheme = MaterialTheme.colorScheme
     val bgColor by animateColorAsState(
-        targetValue = if (isHighlighted) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f) else MaterialTheme.colorScheme.surface,
+        targetValue = if (isHighlighted) scheme.onSurface.copy(alpha = 0.04f) else scheme.surface,
         animationSpec = tween(500), label = "highlightBg"
     )
     val borderColor by animateColorAsState(
-        targetValue = if (isHighlighted) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+        targetValue = if (isHighlighted) scheme.onSurface else scheme.outlineVariant.copy(alpha = 0.4f),
         animationSpec = tween(500), label = "highlightBorder"
     )
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = title,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(start = 4.dp)
+            text = title.uppercase(),
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.9.sp,
+            color = scheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 6.dp)
         )
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -206,12 +227,7 @@ internal fun SettingsSection(
             color = bgColor,
             border = BorderStroke(1.dp, borderColor)
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                content()
-            }
+            Column(content = content)
         }
     }
 }
@@ -219,17 +235,247 @@ internal fun SettingsSection(
 @Composable
 internal fun SettingsIcon(icon: ImageVector, tint: Color, modifier: Modifier = Modifier) {
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-        modifier = modifier.size(40.dp)
+        shape = RoundedCornerShape(10.dp),
+        color = tint.copy(alpha = 0.12f),
+        modifier = modifier.size(36.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = tint,
+                modifier = Modifier.size(19.dp)
+            )
+        }
+    }
+}
+
+/**
+ * The one row layout for every setting. Pass [onClick] for navigation/action rows (shows a chevron
+ * unless [showChevron] is false) and [trailing] for a switch, value chip or status.
+ */
+@Composable
+internal fun SettingsItem(
+    icon: ImageVector,
+    title: String,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    onClick: (() -> Unit)? = null,
+    showChevron: Boolean = onClick != null,
+    trailing: (@Composable () -> Unit)? = null
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (onClick != null) Modifier.quietClickable(pressedAlpha = 0.6f, pressedScale = 1f, onClick = onClick)
+                else Modifier
+            )
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .heightIn(min = 36.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        SettingsIcon(icon, iconTint)
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = scheme.onSurface
+            )
+            if (subtitle != null) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    fontSize = 12.5.sp,
+                    lineHeight = 17.sp,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+        }
+        if (trailing != null) {
+            Spacer(modifier = Modifier.width(12.dp))
+            trailing()
+        }
+        if (showChevron) {
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = scheme.onSurfaceVariant.copy(alpha = 0.7f),
                 modifier = Modifier.size(20.dp)
             )
+        }
+    }
+}
+
+/** A setting toggled by a switch. The whole row is tappable, not just the thumb. */
+@Composable
+internal fun SettingsSwitchItem(
+    icon: ImageVector,
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant
+) {
+    SettingsItem(
+        icon = icon,
+        title = title,
+        subtitle = subtitle,
+        iconTint = iconTint,
+        modifier = modifier,
+        onClick = { onCheckedChange(!checked) },
+        showChevron = false,
+        trailing = {
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                colors = settingsSwitchColors()
+            )
+        }
+    )
+}
+
+@Composable
+internal fun SettingsDivider(modifier: Modifier = Modifier) {
+    HorizontalDivider(
+        modifier = modifier.padding(start = SettingsTextInset),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+    )
+}
+
+/** Hosts a field/button/panel under a row, aligned to the row text by default. */
+@Composable
+internal fun SettingsInset(
+    modifier: Modifier = Modifier,
+    start: Dp = SettingsTextInset,
+    top: Dp = 0.dp,
+    bottom: Dp = 14.dp,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = start, end = 16.dp, top = top, bottom = bottom),
+        content = content
+    )
+}
+
+/** Small read-only value shown at the end of a row (e.g. "Day 28"). */
+@Composable
+internal fun SettingsValueChip(text: String) {
+    Surface(
+        shape = RoundedCornerShape(AppRadius.pill),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+    ) {
+        Text(
+            text = text,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+        )
+    }
+}
+
+/** state: 0 = good, 1 = needs a look, 2 = broken. */
+internal data class SettingsStatus(val label: String, val value: String, val state: Int, val key: String)
+
+/** At-a-glance health of capture, backup and permissions. Tapping a tile jumps to its section. */
+@Composable
+internal fun SettingsStatusStrip(items: List<SettingsStatus>, onClick: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val tileShape = RoundedCornerShape(AppRadius.medium)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        items.forEach { item ->
+            val dot = when (item.state) {
+                0 -> AppColors.positive
+                1 -> AppColors.warning
+                else -> scheme.error
+            }
+            Surface(
+                shape = tileShape,
+                color = scheme.surface,
+                border = BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.4f)),
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(tileShape)
+                    .quietClickable { onClick(item.key) }
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .background(dot, CircleShape)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = item.label,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = scheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = item.value,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Horizontally scrolling jump-links, in the same order as the sections on the page. */
+@Composable
+internal fun SettingsQuickNav(
+    items: List<Pair<String, String>>,
+    selectedKey: String?,
+    onSelect: (String) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .fadingHorizontalScroll(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items.forEach { (label, key) ->
+            val selected = selectedKey == key
+            Surface(
+                shape = RoundedCornerShape(AppRadius.pill),
+                color = if (selected) scheme.onSurface else scheme.surface,
+                border = if (selected) null else BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.55f)),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(AppRadius.pill))
+                    .quietClickable { onSelect(key) }
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 12.5.sp,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                    color = if (selected) scheme.surface else scheme.onSurface,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                )
+            }
         }
     }
 }

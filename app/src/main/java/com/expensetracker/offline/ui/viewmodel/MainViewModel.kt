@@ -13,6 +13,7 @@ import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.data.repository.CreditCardConfig
 import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.engine.backup.AutoBackupWorker
 import com.expensetracker.offline.engine.backup.SecurePassphraseStore
@@ -162,7 +163,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun getCycleKey(cycleStartMs: Long): String {
-        val sdf = java.text.SimpleDateFormat("MMM_yyyy", java.util.Locale.getDefault())
+        val sdf = java.text.SimpleDateFormat("MMM_yyyy", java.util.Locale.US)
         return sdf.format(java.util.Date(cycleStartMs))
     }
 
@@ -500,6 +501,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
+    val totalCreditCardDebt: StateFlow<Long> = dbEpoch.flatMapLatest {
+        repository.getTotalCreditCardDebtFlow()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val selectedAccountUnbilledSpend: StateFlow<Long?> = combine(selectedAccount, dbEpoch) { account, _ -> account }
+        .flatMapLatest { account ->
+            if (account != null) {
+                val ccConfig = settingsRepo.getCreditCardConfig(account.bankName, account.accountNumber)
+                if (ccConfig?.isCreditCard == true) {
+                    repository.getUnbilledCreditCardSpend(account.bankName, account.accountNumber)
+                } else {
+                    kotlinx.coroutines.flow.flowOf(null)
+                }
+            } else {
+                kotlinx.coroutines.flow.flowOf(null)
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
     val allTransactionsWithDebts = dbEpoch.flatMapLatest { repository.allTransactionsWithDebts }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -516,7 +537,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val linkedDebtIdByCreditId = HashMap<Long, Long>()
         for (i in 0 until creditsWithLinks.size) {
             val txn = creditsWithLinks[i]
-            val debtId = txn.linkedDebtId!!
+            val debtId = txn.linkedDebtId ?: continue
             val subList = (linkedCreditsByDebtId[debtId] as? MutableList<TransactionEntity>) ?: ArrayList<TransactionEntity>().also { linkedCreditsByDebtId[debtId] = it }
             subList.add(txn)
             linkedDebtIdByCreditId[txn.id] = debtId
@@ -542,6 +563,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) { q, c, s, l, _ -> Triple(q, c, Pair(s, l)) }
         .flatMapLatest { (q, c, sl) -> repository.searchAndFilterTransactionsFlow(q, c, sl.first, sl.second) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setAccountCreditCard(bankName: String, accountNumber: String?, enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.setAccountCreditCard(bankName, accountNumber, enabled)
+        }
+    }
 
     fun setManualAccountBalance(bankName: String, accountNumber: String?, newBalancePaise: Long) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -667,15 +694,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         necessityChunkLimit.value = limit
     }
 
+    fun addManualAccount(
+        bankName: String,
+        accountNumber: String?,
+        initialBalancePaise: Long,
+        isCreditCard: Boolean = false,
+        creditLimitPaise: Long = 0L, // 0 = not set
+        statementDay: Int = 15,
+        dueDay: Int = 5
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            // 1. Create the account footprint with an initial balance sync
+            repository.setManualAccountBalance(bankName, accountNumber, initialBalancePaise)
+
+            // 2. If it's a CC, configure its limits/dates and tag it in the database
+            if (isCreditCard) {
+                val config = CreditCardConfig(
+                    accountKey = settingsRepo.accountKey(bankName, accountNumber),
+                    isCreditCard = true,
+                    creditLimitPaise = creditLimitPaise,
+                    statementDay = statementDay,
+                    dueDay = dueDay
+                )
+                settingsRepo.saveCreditCardConfig(bankName, accountNumber, config)
+                repository.markAccountAsCreditCard(bankName, accountNumber) // Assuming you expose the DAO helper in repo
+            }
+        }
+    }
+
     fun addManualExpense(
         amount: Long, payee: String, category: String, type: TransactionType,
         timestamp: Long = System.currentTimeMillis(), itemsSummary: String? = null,
         receiptImageUri: String? = null, bankName: String? = null,
         accountNumber: String? = null, linkedDebtId: Long? = null,
         excludeFromSpend: Boolean = false,
+        isCreditCard: Boolean = false, // Add this new UI toggle parameter
         splitParticipants: List<com.expensetracker.offline.ui.components.SplitParticipant> = emptyList()
     ) {
         viewModelScope.launch(Dispatchers.IO) {
+            val ccConfig = if (bankName != null) settingsRepo.getCreditCardConfig(bankName, accountNumber) else null
+            val isCcAccount = isCreditCard || ccConfig?.isCreditCard == true
+
             val entity = TransactionEntity(
                 amount = amount, payee = payee, category = category, type = type,
                 source = TransactionSource.MANUAL, timestamp = timestamp,
@@ -683,6 +742,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 itemsSummary = itemsSummary, receiptImageUri = receiptImageUri,
                 linkedDebtId = linkedDebtId, bankName = bankName,
                 accountNumber = accountNumber,
+                accountType = if (isCcAccount) "CREDIT_CARD" else "BANK", // Pass the flag
                 excludeFromSpend = excludeFromSpend || category.equals("Transfer", ignoreCase = true)
             )
             val newId = repository.insertTransaction(entity)
@@ -860,8 +920,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         accountNumber: String? = null
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            val needsParse = reviewItem.bankName == null && reviewItem.balance == null && reviewItem.referenceId == null
-            val parsed = if (needsParse) FinancialParser.parse(reviewItem.rawContent, reviewItem.sender, reviewItem.source) else null
+            // Always re-parse: the review row doesn't store accountType / transfer flags, and losing
+            // them turned approved credit-card spends into BANK rows and bill payments into spend.
+            val parsed = FinancialParser.parse(reviewItem.rawContent, reviewItem.sender, reviewItem.source)
+                .takeIf { it.isFinancial }
             val bank = bankName ?: reviewItem.bankName ?: parsed?.bankName
             val account = accountNumber ?: reviewItem.accountNumber ?: parsed?.accountNumber
             val balance = reviewItem.balance ?: parsed?.balance
@@ -881,7 +943,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 source = reviewItem.source,
                 itemsSummary = null,
                 receiptImageUri = null,
-                excludeFromSpend = parsed?.excludeFromSpend ?: category.equals("Transfer", ignoreCase = true)
+                excludeFromSpend = (parsed?.excludeFromSpend ?: false) || category.equals("Transfer", ignoreCase = true),
+                accountType = settingsRepo.resolveAccountType(bank, account, parsed?.accountType)
             )
             repository.approveReviewItem(newTransaction, reviewItem.id)
             repository.learnCategoryRule(payee, category)
@@ -927,7 +990,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (amt > 0L && type != null) {
-                    val category = repository.classifyCategory(payee, item.rawContent, amt, item.timestamp, type)
+                    val category = if (parsed.isTransfer) "Transfer" else repository.classifyCategory(payee, item.rawContent, amt, item.timestamp, type)
                     val bank = item.bankName ?: parsed.bankName
                     val account = item.accountNumber ?: parsed.accountNumber
                     val balance = item.balance ?: parsed.balance
@@ -947,7 +1010,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         source = item.source,
                         itemsSummary = null,
                         receiptImageUri = null,
-                        excludeFromSpend = parsed.excludeFromSpend
+                        excludeFromSpend = parsed.excludeFromSpend,
+                        accountType = settingsRepo.resolveAccountType(bank, account, parsed.accountType)
                     )
 
                     approvals.add(newTransaction to item.id)

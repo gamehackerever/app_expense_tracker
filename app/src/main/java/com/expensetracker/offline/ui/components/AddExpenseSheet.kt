@@ -321,7 +321,7 @@ fun AddExpenseSheet(
                     value = payee,
                     onValueChange = { payee = it.take(80) },
                     label = if (isTransferMode) "Destination account / note" else "Payee / store name",
-                    placeholder = if (isTransferMode) "e.g., Savings A/c, Credit Card Bill" else "e.g., Supermarket, Restaurant, Client",
+                    placeholder = if (isTransferMode) "e.g., Savings A/c, Credit Card Bill" else "e.g., Supermarket, Restaurant",
                     leadingIcon = Icons.Default.Storefront,
                     singleLine = true
                 )
@@ -332,10 +332,9 @@ fun AddExpenseSheet(
                     exit = fadeOut(tween(140)) + shrinkVertically(tween(140))
                 ) {
                     @OptIn(ExperimentalLayoutApi::class)
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().fadingHorizontalScroll(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         smartPredictions.forEach { pred ->
                             val typicalRupees = pred.typicalAmountPaise / 100L

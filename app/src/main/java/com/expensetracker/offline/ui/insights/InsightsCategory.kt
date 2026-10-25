@@ -45,6 +45,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -181,10 +182,12 @@ internal fun CategoryBreakdownCard(
 
                 // Horizontally scrollable category legend pills under the stacked bar for all active categories
                 Spacer(modifier = Modifier.height(10.dp))
+                val legendScroll = rememberScrollState()
+                Box(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                        .horizontalScroll(legendScroll),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -216,6 +219,21 @@ internal fun CategoryBreakdownCard(
                             )
                         }
                     }
+                }
+                // Right-edge fade: hints that more categories are off-screen, disappears once scrolled to the end
+                if (legendScroll.canScrollForward) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .width(36.dp)
+                            .height(24.dp)
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color.Transparent, MaterialTheme.colorScheme.surface)
+                                )
+                            )
+                    )
+                }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))

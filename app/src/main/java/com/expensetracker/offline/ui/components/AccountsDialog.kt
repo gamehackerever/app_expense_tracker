@@ -106,19 +106,24 @@ fun AccountsDialog(
     contextBalance: Long?,
     safeToSpendBreakdown: SafeToSpendBreakdown?,
     transactions: List<TransactionEntity> = emptyList(),
+    totalCreditCardDebt: Long = 0L,
     onAccountSelected: (AccountInfo?) -> Unit,
     onRefresh: () -> Unit,
     onManageNecessities: () -> Unit,
     onDismiss: () -> Unit,
-    onSetManualBalance: ((bankName: String, accountNumber: String?, balancePaise: Long) -> Unit)? = null,
+    onUpdateBalance: ((bankName: String, accountNumber: String?, balancePaise: Long) -> Unit)? = null,
+    onSetCreditCard: ((bankName: String, accountNumber: String?, enabled: Boolean) -> Unit)? = null,
+    onAddManualAccount: ((bankName: String, accountNumber: String?, balancePaise: Long, isCc: Boolean, limitPaise: Long, stmtDay: Int, dueDay: Int) -> Unit)? = null,
     secure: Boolean = true
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val settingsRepo = remember { SettingsRepository(context) }
     var ccConfigVersion by remember { mutableIntStateOf(0) }
-    var editingCcAccount by remember { mutableStateOf<AccountBalanceInsight?>(null) }
-    var showManualBalanceDialog by remember { mutableStateOf(false) }
+
+    // UI States for the two distinct actions
+    var editingAccount by remember { mutableStateOf<AccountBalanceInsight?>(null) }
+    var showAddAccountDialog by remember { mutableStateOf(false) }
 
     val listMaxHeight = minOf(maxOf((LocalConfiguration.current.screenHeightDp * 0.36f).dp, 160.dp), 340.dp)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -187,19 +192,13 @@ fun AccountsDialog(
                         fontWeight = FontWeight.Bold, fontSize = 22.sp, letterSpacing = (-0.3).sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                }
-                if (onSetManualBalance != null) {
-                    IconButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            showManualBalanceDialog = true
-                        }
-                    ) {
-                        Icon(
-                            Icons.Default.Edit,
-                            contentDescription = "Set or update account balance",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
+                    if (totalCreditCardDebt > 0L) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "Total CC Debt: ₹${String.format(Locale.US, "%,.2f", totalCreditCardDebt / 100.0)}",
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AppColors.negative
                         )
                     }
                 }
@@ -249,17 +248,17 @@ fun AccountsDialog(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text("No accounts detected yet.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (onSetManualBalance != null) {
+                    if (onAddManualAccount != null) {
                         OutlinedButton(
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                showManualBalanceDialog = true
+                                showAddAccountDialog = true
                             },
                             shape = RoundedCornerShape(AppRadius.small)
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Add Account / Set Balance", fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                            Text("Add Offline Account", fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
                         }
                     }
                 }
@@ -290,7 +289,7 @@ fun AccountsDialog(
                         val ccUnbilledPaise = remember(account, ccConfig, transactions) {
                             if (ccConfig == null) 0L
                             else {
-                                val (stmtStart, stmtEnd) = BillingCycleHelper.getCycleRange(ccConfig.statementDay)
+                                val (stmtStart, stmtEnd) = BillingCycleHelper.getCreditCardCycleRange(ccConfig.statementDay)
                                 transactions.asSequence()
                                     .filter {
                                         it.type == TransactionType.DEBIT &&
@@ -309,10 +308,12 @@ fun AccountsDialog(
                                 bankName = account.bankName,
                                 accountNumber = account.accountNumber,
                                 ccConfig = ccConfig,
-                                ccUnbilledPaise = ccUnbilledPaise,
+                                ccUnbilledPaise = remember(account, ccConfig, ccUnbilledPaise, transactions) {
+                                    ccConfig?.let { usedFromAvailableLimit(settingsRepo, account.bankName, account.accountNumber, it, ccUnbilledPaise) } ?: ccUnbilledPaise
+                                },
                                 onConfigureCc = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    editingCcAccount = account
+                                    editingAccount = account
                                 }
                             )
                         } else {
@@ -325,7 +326,7 @@ fun AccountsDialog(
                                     .clip(RoundedCornerShape(AppRadius.medium))
                                     .quietClickable {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        editingCcAccount = account
+                                        editingAccount = account
                                     }
                             ) {
                                 Row(
@@ -333,7 +334,7 @@ fun AccountsDialog(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
-                                        Icons.Default.CreditCard,
+                                        Icons.Default.Settings,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(18.dp)
@@ -341,13 +342,13 @@ fun AccountsDialog(
                                     Spacer(Modifier.width(12.dp))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            "Using ${account.bankName} as a credit card?",
+                                            "Settings & Adjustments",
                                             fontSize = 13.5.sp,
                                             fontWeight = FontWeight.SemiBold,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            "Configure credit limit, statement cycle & utilization alerts",
+                                            "Fix balance manually or setup as credit card",
                                             fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -399,7 +400,7 @@ fun AccountsDialog(
                                 val ccUnbilledPaise = remember(account, ccConfig, transactions) {
                                     if (ccConfig == null) 0L
                                     else {
-                                        val (stmtStart, stmtEnd) = BillingCycleHelper.getCycleRange(ccConfig.statementDay)
+                                        val (stmtStart, stmtEnd) = BillingCycleHelper.getCreditCardCycleRange(ccConfig.statementDay)
                                         transactions.asSequence()
                                             .filter {
                                                 it.type == TransactionType.DEBIT &&
@@ -419,16 +420,45 @@ fun AccountsDialog(
                                     isSelected = isSelected,
                                     balance = account.latestBalance,
                                     ccConfig = ccConfig,
-                                    ccUnbilledPaise = ccUnbilledPaise,
+                                    ccUnbilledPaise = remember(account, ccConfig, ccUnbilledPaise, transactions) {
+                                    ccConfig?.let { usedFromAvailableLimit(settingsRepo, account.bankName, account.accountNumber, it, ccUnbilledPaise) } ?: ccUnbilledPaise
+                                },
                                     onConfigureCc = {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        editingCcAccount = account
+                                        editingAccount = account
                                     },
                                     onClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         onAccountSelected(AccountInfo(account.bankName, account.accountNumber))
                                     }
                                 )
+                            }
+                            if (onAddManualAccount != null) {
+                                item(key = "add_account_btn") {
+                                    Surface(
+                                        shape = RoundedCornerShape(AppRadius.medium),
+                                        color = Color.Transparent,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 8.dp)
+                                            .clip(RoundedCornerShape(AppRadius.medium))
+                                            .clickable {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                showAddAccountDialog = true
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(16.dp),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("Add Offline Account", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -437,51 +467,52 @@ fun AccountsDialog(
         }
     }
 
-    if (showManualBalanceDialog && onSetManualBalance != null) {
-        val defaultAccount = selectedAccount ?: accountBalances.firstOrNull()?.let { AccountInfo(it.bankName, it.accountNumber) }
-        var bankInput by remember(defaultAccount) { mutableStateOf(defaultAccount?.bankName ?: "Cash Wallet") }
-        var acctNumInput by remember(defaultAccount) { mutableStateOf(defaultAccount?.accountNumber.orEmpty()) }
-        val existingBalPaise = remember(bankInput, acctNumInput, accountBalances) {
-            accountBalances.firstOrNull {
-                it.bankName.equals(bankInput.trim(), ignoreCase = true) &&
-                        (it.accountNumber ?: "") == acctNumInput.trim()
-            }?.latestBalance
-        }
-        var balanceStr by remember(existingBalPaise) {
-            mutableStateOf(
-                if (existingBalPaise != null && existingBalPaise > 0L)
-                    String.format(Locale.US, "%.2f", existingBalPaise / 100.0).removeSuffix(".00")
-                else ""
-            )
-        }
+    // DIALOG 1: Add a completely new offline account / CC
+    if (showAddAccountDialog && onAddManualAccount != null) {
+        var bankInput by remember { mutableStateOf("") }
+        var acctNumInput by remember { mutableStateOf("") }
+        var balanceStr by remember { mutableStateOf("") }
+
+        var isCcNew by remember { mutableStateOf(false) }
+        var newCcLimitStr by remember { mutableStateOf("") }
+        var newCcStmtDay by remember { mutableIntStateOf(15) }
+        var newCcDueDay by remember { mutableIntStateOf(5) }
+
         val parsedBalancePaise = remember(balanceStr) {
             balanceStr.trim().replace(",", "").toDoubleOrNull()?.takeIf { it >= 0.0 }?.let { (it * 100.0).roundToLong() }
         }
 
         AppDialog(
-            title = "Set Account / Wallet Balance",
+            title = "Add Offline Account",
             onDismiss = {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                showManualBalanceDialog = false
+                showAddAccountDialog = false
             },
-            confirmText = "Save Balance",
+            confirmText = "Add Account",
             confirmEnabled = bankInput.trim().isNotEmpty() && parsedBalancePaise != null,
             onConfirm = {
                 val bal = parsedBalancePaise ?: return@AppDialog
+                val limit = (newCcLimitStr.toLongOrNull() ?: 0L).let { if (it > 0L) it.coerceAtLeast(1000L) * 100L else 0L }
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                onSetManualBalance(
+
+                onAddManualAccount(
                     bankInput.trim(),
                     acctNumInput.trim().takeIf { it.isNotEmpty() },
-                    bal
+                    bal,
+                    isCcNew,
+                    limit,
+                    newCcStmtDay,
+                    newCcDueDay
                 )
-                statusText = "Balance updated for ${bankInput.trim()}"
+
+                statusText = "Account created: ${bankInput.trim()}"
                 statusVisible = true
-                showManualBalanceDialog = false
+                showAddAccountDialog = false
             }
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "Set or adjust the current balance for a bank account or manual wallet. Future manual transactions on this account will automatically update it.",
+                    "Manually track an account or wallet that doesn't receive SMS alerts.",
                     fontSize = 13.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 19.sp
@@ -490,7 +521,7 @@ fun AccountsDialog(
                     value = bankInput,
                     onValueChange = { bankInput = it.take(40) },
                     label = { Text("Account / Wallet Name") },
-                    placeholder = { Text("e.g., Cash Wallet, HDFC Bank") },
+                    placeholder = { Text("e.g., Cash Wallet") },
                     singleLine = true,
                     shape = RoundedCornerShape(AppRadius.small),
                     colors = sheetFieldColors(),
@@ -512,7 +543,7 @@ fun AccountsDialog(
                     OutlinedTextField(
                         value = balanceStr,
                         onValueChange = { balanceStr = it.filter { c -> c.isDigit() || c == '.' }.take(12) },
-                        label = { Text("Current Balance (₹)") },
+                        label = { Text(if (isCcNew) "Current Debt (₹)" else "Starting Balance (₹)") },
                         placeholder = { Text("0.00") },
                         singleLine = true,
                         shape = RoundedCornerShape(AppRadius.small),
@@ -521,54 +552,164 @@ fun AccountsDialog(
                         modifier = Modifier.weight(1.1f)
                     )
                 }
-            }
-        }
-    }
 
-    val ccTarget = editingCcAccount
-    if (ccTarget != null) {
-        val existingConfig = settingsRepo.getCreditCardConfig(ccTarget.bankName, ccTarget.accountNumber)
-        var isCc by remember(ccTarget) { mutableStateOf(existingConfig != null) }
-        var limitRupeesStr by remember(ccTarget) {
-            mutableStateOf(((existingConfig?.creditLimitPaise ?: 10_000_000L) / 100L).toString())
-        }
-        var stmtDay by remember(ccTarget) { mutableIntStateOf(existingConfig?.statementDay ?: 15) }
-        var dueDay by remember(ccTarget) { mutableIntStateOf(existingConfig?.dueDay ?: 5) }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
 
-        AppDialog(
-            title = "${ccTarget.bankName} Settings",
-            onDismiss = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                editingCcAccount = null
-            },
-            confirmText = "Save",
-            onConfirm = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                val limitPaise = ((limitRupeesStr.toLongOrNull() ?: 100_000L).coerceAtLeast(1000L)) * 100L
-                settingsRepo.saveCreditCardConfig(
-                    bankName = ccTarget.bankName,
-                    accountNumber = ccTarget.accountNumber,
-                    config = CreditCardConfig(
-                        accountKey = settingsRepo.accountKey(ccTarget.bankName, ccTarget.accountNumber),
-                        isCreditCard = isCc,
-                        creditLimitPaise = limitPaise,
-                        statementDay = stmtDay,
-                        dueDay = dueDay
-                    )
-                )
-                ccConfigVersion++
-                editingCcAccount = null
-            }
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Track as Credit Card", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-                        Text("Monitor statement cycle spend, credit limit & utilization", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Track as Credit Card", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Text("Sets credit limit & statement dates", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = isCcNew,
+                        onCheckedChange = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            isCcNew = it
+                        },
+                        colors = appSwitchColors()
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = isCcNew,
+                    enter = expandVertically(tween(260), expandFrom = Alignment.Top) + fadeIn(tween(200)),
+                    exit = shrinkVertically(tween(200), shrinkTowards = Alignment.Top) + fadeOut(tween(120))
+                ) {
+                    Column(modifier = Modifier.padding(top = 12.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(
+                            value = newCcLimitStr,
+                            onValueChange = { newCcLimitStr = it.filter { c -> c.isDigit() }.take(9) },
+                            label = { Text("Credit Limit (₹)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(AppRadius.small),
+                            colors = sheetFieldColors(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedTextField(
+                                value = newCcStmtDay.toString(),
+                                onValueChange = { v -> v.toIntOrNull()?.let { newCcStmtDay = it.coerceIn(1, 28) } },
+                                label = { Text("Statement Day") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(AppRadius.small),
+                                colors = sheetFieldColors(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = newCcDueDay.toString(),
+                                onValueChange = { v -> v.toIntOrNull()?.let { newCcDueDay = it.coerceIn(1, 28) } },
+                                label = { Text("Due Day") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(AppRadius.small),
+                                colors = sheetFieldColors(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+                }
+                }
+            }
+        }
+    }
+
+    // DIALOG 2: Settings & Adjustments for an EXISTING account
+    val targetAccount = editingAccount
+    if (targetAccount != null && onUpdateBalance != null) {
+        val existingConfig = settingsRepo.getCreditCardConfig(targetAccount.bankName, targetAccount.accountNumber)
+
+        var balanceStr by remember(targetAccount) {
+            val bal = targetAccount.latestBalance
+            mutableStateOf(
+                if (bal != null && bal > 0L) String.format(Locale.US, "%.2f", bal / 100.0).removeSuffix(".00") else ""
+            )
+        }
+
+        var isCc by remember(targetAccount) { mutableStateOf(existingConfig != null) }
+        var limitRupeesStr by remember(targetAccount) {
+            mutableStateOf(((existingConfig?.creditLimitPaise ?: 0L) / 100L).takeIf { it > 0L }?.toString() ?: "")
+        }
+        var stmtDay by remember(targetAccount) { mutableIntStateOf(existingConfig?.statementDay ?: 15) }
+        var dueDay by remember(targetAccount) { mutableIntStateOf(existingConfig?.dueDay ?: 5) }
+
+        AppDialog(
+            title = "${targetAccount.bankName} Settings",
+            onDismiss = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                editingAccount = null
+            },
+            confirmText = "Save Changes",
+            onConfirm = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+
+                // 1. Update Balance if it changed
+                val newBal = balanceStr.trim().replace(",", "").toDoubleOrNull()?.let { (it * 100.0).roundToLong() } ?: 0L
+                if (newBal != (targetAccount.latestBalance ?: 0L)) {
+                    onUpdateBalance(targetAccount.bankName, targetAccount.accountNumber, newBal)
+                }
+
+                // 2. Update CC settings
+                if (isCc) {
+                    val limitPaise = (limitRupeesStr.toLongOrNull() ?: 0L).let { if (it > 0L) it.coerceAtLeast(1000L) * 100L else 0L }
+                    settingsRepo.saveCreditCardConfig(
+                        bankName = targetAccount.bankName,
+                        accountNumber = targetAccount.accountNumber,
+                        config = CreditCardConfig(
+                            accountKey = settingsRepo.accountKey(targetAccount.bankName, targetAccount.accountNumber),
+                            isCreditCard = true,
+                            creditLimitPaise = limitPaise,
+                            statementDay = stmtDay,
+                            dueDay = dueDay
+                        )
+                    )
+                    onSetCreditCard?.invoke(targetAccount.bankName, targetAccount.accountNumber, true)
+                } else if (existingConfig != null) {
+                    // Switched OFF: persist the choice (so name-based auto-detection can't turn it
+                    // back on) and re-tag this account's transactions as normal bank rows.
+                    onSetCreditCard?.invoke(targetAccount.bankName, targetAccount.accountNumber, false)
+                }
+
+                ccConfigVersion++
+                editingAccount = null
+            }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+
+                // Adjust Balance Section
+                Text("Fix Balance", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                OutlinedTextField(
+                    value = balanceStr,
+                    onValueChange = { balanceStr = it.filter { c -> c.isDigit() || c == '.' }.take(12) },
+                    label = { Text("Current Balance (₹)") },
+                    placeholder = { Text("0.00") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(AppRadius.small),
+                    colors = sheetFieldColors(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                // CC Section
+                Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Track as Credit Card", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Text("Monitor limit & utilization", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
                         checked = isCc,
@@ -580,7 +721,12 @@ fun AccountsDialog(
                     )
                 }
 
-                AnimatedVisibility(visible = isCc) {
+                AnimatedVisibility(
+                    visible = isCc,
+                    enter = expandVertically(tween(260), expandFrom = Alignment.Top) + fadeIn(tween(200)),
+                    exit = shrinkVertically(tween(200), shrinkTowards = Alignment.Top) + fadeOut(tween(120))
+                ) {
+                    Column(modifier = Modifier.padding(top = 12.dp)) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedTextField(
                             value = limitRupeesStr,
@@ -596,7 +742,7 @@ fun AccountsDialog(
                             OutlinedTextField(
                                 value = stmtDay.toString(),
                                 onValueChange = { v -> v.toIntOrNull()?.let { stmtDay = it.coerceIn(1, 28) } },
-                                label = { Text("Statement Day (1-28)") },
+                                label = { Text("Stmt Day") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(AppRadius.small),
                                 colors = sheetFieldColors(),
@@ -606,7 +752,7 @@ fun AccountsDialog(
                             OutlinedTextField(
                                 value = dueDay.toString(),
                                 onValueChange = { v -> v.toIntOrNull()?.let { dueDay = it.coerceIn(1, 28) } },
-                                label = { Text("Bill Due Day (1-28)") },
+                                label = { Text("Due Day") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(AppRadius.small),
                                 colors = sheetFieldColors(),
@@ -616,9 +762,22 @@ fun AccountsDialog(
                         }
                     }
                 }
+                }
+                }
             }
         }
     }
+}
+
+/** Real amount used on a card: limit minus the latest "Avl Lmt" from SMS; falls back to this cycle's tracked spend. */
+private fun usedFromAvailableLimit(
+    settingsRepo: SettingsRepository, bankName: String, accountNumber: String?,
+    config: CreditCardConfig, unbilledPaise: Long
+): Long {
+    val limit = config.creditLimitPaise
+    if (limit <= 0L) return unbilledPaise
+    val available = settingsRepo.getCardAvailableLimit(bankName, accountNumber)?.first ?: return unbilledPaise
+    return (limit - available).coerceAtLeast(0L)
 }
 
 @Composable
@@ -630,9 +789,10 @@ private fun CreditCardUtilizationCard(
     onConfigureCc: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
-    val limit = ccConfig.creditLimitPaise.coerceAtLeast(1L)
-    val utilRatio = (ccUnbilledPaise.toFloat() / limit.toFloat()).coerceIn(0f, 1f)
-    val utilPct = ((ccUnbilledPaise.toDouble() / limit.toDouble()) * 100.0).roundToInt()
+    val limit = ccConfig.creditLimitPaise
+    val hasLimit = limit > 0L
+    val utilRatio = if (hasLimit) (ccUnbilledPaise.toFloat() / limit.toFloat()).coerceIn(0f, 1f) else 0f
+    val utilPct = if (hasLimit) ((ccUnbilledPaise.toDouble() / limit.toDouble()) * 100.0).roundToInt() else 0
     val utilColor = when {
         utilPct >= 70 -> AppColors.negative
         utilPct >= 30 -> AppColors.warning
@@ -672,7 +832,7 @@ private fun CreditCardUtilizationCard(
                     Text("Cycle Unbilled Spend", fontSize = 12.sp, color = scheme.onSurfaceVariant)
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "${CurrencyFormat.withSymbol(ccUnbilledPaise, 0)} / ${CurrencyFormat.withSymbol(limit, 0)}",
+                        text = if (hasLimit) "${CurrencyFormat.withSymbol(ccUnbilledPaise, 0)} / ${CurrencyFormat.withSymbol(limit, 0)}" else "${CurrencyFormat.withSymbol(ccUnbilledPaise, 0)} · limit not set",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = scheme.onSurface
@@ -682,7 +842,7 @@ private fun CreditCardUtilizationCard(
                     Text("Utilization · Due Day ${ccConfig.dueDay}", fontSize = 12.sp, color = scheme.onSurfaceVariant)
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "$utilPct% used · Due in ${daysToDue}d",
+                        text = if (hasLimit) "$utilPct% used · Due in ${daysToDue}d" else "Due in ${daysToDue}d",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = utilColor
@@ -805,6 +965,7 @@ private fun AccountListItem(
                         Text(subtitle, fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
                     }
                 }
+
                 if (balance != null && ccConfig == null) {
                     Text(
                         text = CurrencyFormat.smart(balance),
@@ -813,7 +974,16 @@ private fun AccountListItem(
                         color = if (isSelected) scheme.onSurface else scheme.onSurfaceVariant,
                         modifier = Modifier.padding(end = if (onConfigureCc != null) 4.dp else 0.dp)
                     )
+                } else if (ccConfig != null) {
+                    Text(
+                        text = "Unbilled: ${CurrencyFormat.withSymbol(ccUnbilledPaise, 0)}",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AppColors.negative,
+                        modifier = Modifier.padding(end = if (onConfigureCc != null) 8.dp else 0.dp)
+                    )
                 }
+
                 if (onConfigureCc != null) {
                     IconButton(onClick = onConfigureCc, modifier = Modifier.size(32.dp)) {
                         Icon(
@@ -827,9 +997,10 @@ private fun AccountListItem(
             }
 
             if (ccConfig != null) {
-                val limit = ccConfig.creditLimitPaise.coerceAtLeast(1L)
-                val utilRatio = (ccUnbilledPaise.toFloat() / limit.toFloat()).coerceIn(0f, 1f)
-                val utilPct = ((ccUnbilledPaise.toDouble() / limit.toDouble()) * 100.0).roundToInt()
+                val limit = ccConfig.creditLimitPaise
+    val hasLimit = limit > 0L
+                val utilRatio = if (hasLimit) (ccUnbilledPaise.toFloat() / limit.toFloat()).coerceIn(0f, 1f) else 0f
+                val utilPct = if (hasLimit) ((ccUnbilledPaise.toDouble() / limit.toDouble()) * 100.0).roundToInt() else 0
                 val utilColor = when {
                     utilPct >= 70 -> AppColors.negative
                     utilPct >= 30 -> AppColors.warning
@@ -849,7 +1020,7 @@ private fun AccountListItem(
                         Text("Cycle Unbilled Spend", fontSize = 12.sp, color = scheme.onSurfaceVariant)
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            text = "${CurrencyFormat.withSymbol(ccUnbilledPaise, 0)} / ${CurrencyFormat.withSymbol(limit, 0)}",
+                            text = if (hasLimit) "${CurrencyFormat.withSymbol(ccUnbilledPaise, 0)} / ${CurrencyFormat.withSymbol(limit, 0)}" else "${CurrencyFormat.withSymbol(ccUnbilledPaise, 0)} · limit not set",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = scheme.onSurface
@@ -859,7 +1030,7 @@ private fun AccountListItem(
                         Text("Utilization · Due Day ${ccConfig.dueDay}", fontSize = 12.sp, color = scheme.onSurfaceVariant)
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            text = "$utilPct% used · Due in ${daysToDue}d",
+                            text = if (hasLimit) "$utilPct% used · Due in ${daysToDue}d" else "Due in ${daysToDue}d",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = utilColor

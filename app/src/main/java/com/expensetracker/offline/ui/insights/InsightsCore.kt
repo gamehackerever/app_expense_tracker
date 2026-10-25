@@ -209,6 +209,12 @@ internal fun InsightsProgressBar(
 }
 
 
+/**
+ * Shared header for every section on the Insights page.
+ * Layout: [Title · count] ........ [optional action pill]. The count always sits inline after the title
+ * (never right-aligned), and the row has a fixed minimum height so headers with and without an action
+ * pill line up identically above their cards.
+ */
 @Composable
 internal fun SectionHeader(
     title: String,
@@ -218,7 +224,9 @@ internal fun SectionHeader(
     onActionClick: (() -> Unit)? = null
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 30.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -235,7 +243,7 @@ internal fun SectionHeader(
                 softWrap = false,
                 overflow = TextOverflow.Ellipsis
             )
-            if (trailing != null && actionLabel != null) {
+            if (trailing != null) {
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     "· $trailing",
@@ -243,12 +251,12 @@ internal fun SectionHeader(
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    softWrap = false,
-                    overflow = TextOverflow.Ellipsis
+                    softWrap = false
                 )
             }
         }
         if (actionLabel != null && onActionClick != null) {
+            Spacer(modifier = Modifier.width(8.dp))
             Surface(
                 shape = RoundedCornerShape(AppRadius.pill),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
@@ -274,17 +282,11 @@ internal fun SectionHeader(
                         actionLabel,
                         fontSize = 11.5.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1
                     )
                 }
             }
-        } else if (trailing != null) {
-            Text(
-                trailing,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }
@@ -345,7 +347,12 @@ internal fun MoneyHero(
     Text(
         text = buildAnnotatedString {
             withStyle(small) { append("₹") }
-            append(whole)
+            // Tabular figures only on digits: with "tnum" on the whole string, some fonts give the
+            // comma a full digit-width slot, which shows up as "8, 126".
+            val tabularDigits = SpanStyle(fontFeatureSettings = "tnum")
+            for (ch in whole) {
+                if (ch.isDigit()) withStyle(tabularDigits) { append(ch) } else append(ch)
+            }
             if (fraction.isNotEmpty()) withStyle(small) { append(fraction) }
         },
         modifier = modifier,
@@ -354,8 +361,7 @@ internal fun MoneyHero(
         color = MaterialTheme.colorScheme.onSurface,
         letterSpacing = (-1).sp,
         maxLines = 1,
-        softWrap = false,
-        style = TextStyle(fontFeatureSettings = "tnum")
+        softWrap = false
     )
 }
 

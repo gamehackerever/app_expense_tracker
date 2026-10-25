@@ -297,17 +297,39 @@ internal fun CashFlowSummaryCard(
                 height = 6.dp,
                 sessionKey = "insights_cashflow_bar"
             )
+
+            val overIncome = totalIncomePaise > 0L && discretionarySpendPaise > totalIncomePaise
+            Text(
+                text = when {
+                    totalIncomePaise > 0L -> {
+                        val spentPct = ((discretionarySpendPaise.toDouble() / totalIncomePaise.toDouble()) * 100.0).roundToInt()
+                        if (overIncome) "Spent $spentPct% of income · ${formatRupees(discretionarySpendPaise - totalIncomePaise)} over"
+                        else "Spent $spentPct% of income"
+                    }
+                    totalOutflow > 0L -> "No income recorded · bar shows living expenses as a share of outflow"
+                    else -> "No income or spending yet"
+                },
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (overIncome) InsightsColors.negative else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
 
 @Composable
 internal fun MultiCycleTrendCard(
-    points: List<CycleTrendPoint>,
+    allPoints: List<CycleTrendPoint>,
     monthlyBudgetPaise: Long,
     isAnimating: Boolean
 ) {
-    if (points.isEmpty()) return
+    if (allPoints.isEmpty()) return
+    // Trim leading cycles that predate the user's data (keep the selected cycle even if it is empty),
+    // so a new user sees real bars instead of a card that is mostly empty space.
+    val points = remember(allPoints) {
+        val firstUseful = allPoints.indexOfFirst { it.spentPaise > 0L || it.incomePaise > 0L || it.isSelected }
+        if (firstUseful > 0) allPoints.drop(firstUseful) else allPoints
+    }
     var selectedIdx by remember(points) { mutableIntStateOf(points.indexOfLast { it.isSelected }.coerceAtLeast(0)) }
     val selectedPoint = points.getOrNull(selectedIdx) ?: points.last()
     val maxVal = remember(points) {
@@ -364,7 +386,7 @@ internal fun MultiCycleTrendCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
                 ) {
                     Text(
-                        "6-cycle trend",
+                        if (points.size >= 2) "${points.size}-cycle trend" else "Trend",
                         fontSize = 11.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -416,13 +438,30 @@ internal fun MultiCycleTrendCard(
                                 .fillMaxWidth(),
                             contentAlignment = Alignment.BottomCenter
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(0.68f)
-                                    .fillMaxHeight(animSpend)
-                                    .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
-                                    .background(barColor)
-                            )
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Bottom
+                            ) {
+                                if (hasData) {
+                                    Text(
+                                        text = compactRupees(pt.spentPaise),
+                                        fontSize = 10.sp,
+                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSel) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(bottom = 3.dp)
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.68f)
+                                        .widthIn(max = 48.dp)
+                                        .fillMaxHeight(animSpend * 0.8f)
+                                        .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
+                                        .background(barColor)
+                                )
+                            }
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
@@ -434,6 +473,14 @@ internal fun MultiCycleTrendCard(
                         )
                     }
                 }
+            }
+
+            if (points.size < 6) {
+                Text(
+                    "Earlier cycles will appear as you keep using the app",
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                )
             }
         }
     }
@@ -814,7 +861,7 @@ internal fun SmartInsightsCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
                 ) {
                     Text(
-                        "On-device ML",
+                        "On-device",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -911,5 +958,16 @@ internal fun SmartInsightsCard(
                 }
             }
         }
+    }
+}
+
+
+/** 8,127 paise-rupees -> "₹8.1k"; keeps trend-bar labels short enough for six columns. */
+internal fun compactRupees(paise: Long): String {
+    val rupees = paise / 100.0
+    return when {
+        rupees >= 100_000.0 -> "₹" + String.format(Locale.US, "%.1fL", rupees / 100_000.0)
+        rupees >= 1_000.0 -> "₹" + String.format(Locale.US, "%.1fk", rupees / 1_000.0)
+        else -> "₹" + rupees.toLong()
     }
 }

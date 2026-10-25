@@ -85,11 +85,16 @@ object TimeFormatCache {
     private var cachedTimeFormat: java.text.DateFormat? = null
     private val cachedDateFormat by lazy { java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()) }
 
+    private var cachedIs24h: Boolean? = null
+
     fun get(context: android.content.Context): java.text.DateFormat {
-        if (cachedTimeFormat == null) {
-            cachedTimeFormat = android.text.format.DateFormat.getTimeFormat(context.applicationContext)
+        val is24h = android.text.format.DateFormat.is24HourFormat(context)
+        val cached = cachedTimeFormat
+        if (cached != null && cachedIs24h == is24h) return cached
+        return android.text.format.DateFormat.getTimeFormat(context.applicationContext).also {
+            cachedTimeFormat = it
+            cachedIs24h = is24h
         }
-        return cachedTimeFormat!!
     }
 
     fun getDate(): java.text.DateFormat = cachedDateFormat

@@ -786,6 +786,7 @@ fun MultiSplitShareSheet(
             Column(
                 modifier = Modifier
                     .weight(1f, fill = false)
+                    .fadingEdges(scrollState, vertical = true, edge = 14.dp)
                     .verticalScroll(scrollState)
                     .padding(horizontal = 24.dp)
                     .padding(top = 8.dp, bottom = 24.dp),
@@ -825,7 +826,7 @@ fun MultiSplitShareSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Row(
-                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            modifier = Modifier.fillMaxWidth().fadingHorizontalScroll(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             availablePayers.forEach { payerName ->
@@ -1058,7 +1059,8 @@ fun MultiSplitShareSheet(
                     }
 
                     // User Custom Group Presets
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (userPresets.isNotEmpty() || active.any { !it.isMe && it.name.isNotBlank() }) {
+Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1088,7 +1090,7 @@ fun MultiSplitShareSheet(
 
                         if (userPresets.isNotEmpty()) {
                             Row(
-                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                modifier = Modifier.fillMaxWidth().fadingHorizontalScroll(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 userPresets.forEach { preset ->
@@ -1134,12 +1136,13 @@ fun MultiSplitShareSheet(
                             }
                         } else {
                             Text(
-                                "No presets saved yet. Add members above and tap 'Save as preset'.",
+                                "Tap 'Save as preset' to reuse this group next time.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             )
                         }
                     }
+}
 
                     if (active.size < MAX_PEOPLE && (contextNamesFiltered.isNotEmpty() || recentNamesFiltered.isNotEmpty())) {
                         Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1151,7 +1154,7 @@ fun MultiSplitShareSheet(
                                         Spacer(Modifier.width(6.dp))
                                         Text("Usually splits this", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                                     }
-                                    Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth().fadingHorizontalScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         contextNamesFiltered.forEach { name ->
                                             SheetChip(
                                                 text = name,
@@ -1167,7 +1170,7 @@ fun MultiSplitShareSheet(
                             if (recentNamesFiltered.isNotEmpty()) {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("Recent people", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth().fadingHorizontalScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         recentNamesFiltered.forEach { name ->
                                             SheetChip(
                                                 text = name,
@@ -1216,7 +1219,7 @@ fun MultiSplitShareSheet(
 
                         if (quickFixes.isNotEmpty()) {
                             Row(
-                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                modifier = Modifier.fillMaxWidth().fadingHorizontalScroll(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 quickFixes.forEachIndexed { idx, fix ->

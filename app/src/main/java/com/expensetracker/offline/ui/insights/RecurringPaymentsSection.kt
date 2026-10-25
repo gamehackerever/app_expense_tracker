@@ -218,13 +218,13 @@ private fun RecurringPaymentsContent(
 
             // Monthly cost, and what it adds up to over a year
             Row(verticalAlignment = Alignment.Bottom) {
-                MoneyHero(amount = monthlyTotal, fractionDigits = 0, size = 38.sp, sessionKey = "insights_recurring_hero")
+                MoneyHero(amount = monthlyTotal, fractionDigits = 0, size = 28.sp, sessionKey = "insights_recurring_hero")
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     "/ month",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 6.dp)
+                    modifier = Modifier.padding(bottom = 4.dp)
                 )
             }
 
@@ -256,19 +256,44 @@ private fun RecurringPaymentsContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
-                Text(
-                    "Coming up",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                val upcoming = active.take(UPCOMING_PREVIEW_COUNT)
+                val trackedFlags = upcoming.map { p ->
+                    necessities.any { NecessityManager.matches(it, p.payee, p.category) }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Coming up",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    // One legend for the whole list instead of repeating "Tracked" on every row
+                    if (trackedFlags.any { it }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                "Tracked in fixed costs",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(10.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    active.take(UPCOMING_PREVIEW_COUNT).forEach { payment ->
-                        val isTracked = necessities.any {
-                            NecessityManager.matches(it, payment.payee, payment.category)
-                        }
-                        RecurringCompactRow(payment, now, dateFormat, isTracked)
+                    upcoming.forEachIndexed { i, payment ->
+                        RecurringCompactRow(payment, now, dateFormat, trackedFlags[i])
                     }
                 }
             }
@@ -342,17 +367,29 @@ private fun RecurringCompactRow(
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                payment.payee,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = scheme.onSurface
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    payment.payee,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = scheme.onSurface,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (isTracked) {
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = "Tracked in fixed costs",
+                        tint = scheme.onSurfaceVariant,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+            }
             val baseDue = dueLabel(payment, now, lapsed = false, df = dateFormat)
             Text(
-                if (isTracked) "$baseDue · Tracked" else baseDue,
+                baseDue,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 color = dueColor(payment, now, lapsed = false),

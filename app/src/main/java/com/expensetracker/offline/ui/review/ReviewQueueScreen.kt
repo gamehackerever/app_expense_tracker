@@ -95,6 +95,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.absoluteValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 private enum class CardStage { SWIPING, COLLAPSING_TO_UNDO, UNDO, COLLAPSING_FINAL }
 
@@ -111,9 +112,9 @@ fun ReviewQueueScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit
 ) {
-    val items by viewModel.pendingReviewItems.collectAsState()
-    val linkedAccounts by viewModel.linkedAccounts.collectAsState()
-    val transactionsHistory by viewModel.allTransactions.collectAsState()
+    val items by viewModel.pendingReviewItems.collectAsStateWithLifecycle()
+    val linkedAccounts by viewModel.linkedAccounts.collectAsStateWithLifecycle()
+    val transactionsHistory by viewModel.allTransactions.collectAsStateWithLifecycle()
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }

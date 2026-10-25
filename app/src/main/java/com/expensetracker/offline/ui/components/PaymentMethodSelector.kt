@@ -57,7 +57,7 @@ fun PaymentMethodSelector(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
+                .fadingHorizontalScroll()
                 .selectableGroup(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically

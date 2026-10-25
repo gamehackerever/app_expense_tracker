@@ -62,12 +62,10 @@
         <!-- Interceptor 3: Boot & App-Update Recovery Receiver ("Install and Forget" Reliability) -->
         <receiver
             android:name=".engine.interceptor.SystemBootReceiver"
-            android:directBootAware="true"
             android:enabled="true"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />

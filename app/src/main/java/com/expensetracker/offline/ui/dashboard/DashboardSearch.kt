@@ -1,5 +1,6 @@
 package com.expensetracker.offline.ui.dashboard
 
+import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
@@ -113,7 +114,7 @@ fun DashboardSearchAndFilter(
 
         if (showCategoryChips) {
             Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().fadingHorizontalScroll(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -134,7 +135,7 @@ fun DashboardSearchAndFilter(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                    .fadingHorizontalScroll(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {

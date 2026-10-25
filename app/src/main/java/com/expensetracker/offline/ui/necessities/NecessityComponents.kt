@@ -2,6 +2,7 @@
 
 package com.expensetracker.offline.ui.necessities
 
+import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import android.app.DatePickerDialog
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -570,7 +571,7 @@ internal fun NecessityFormSheet(
 
                 if (suggestions.isNotEmpty()) {
                     Row(
-                        Modifier.horizontalScroll(rememberScrollState()),
+                        Modifier.fadingHorizontalScroll(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         suggestions.forEach { s ->
@@ -794,7 +795,7 @@ internal fun NecessityFormSheet(
                         onSave(
                             (initialItem ?: prefill ?: NecessityItem(UUID.randomUUID().toString(), "", 0L)).copy(
                                 name = nameInput.trim(),
-                                amount = parsedAmount!!,
+                                amount = parsedAmount ?: return@SheetPrimaryButton,
                                 frequency = frequency,
                                 dueTimestamp = dueTimestamp,
                                 isProrated = isProrated,
@@ -935,7 +936,7 @@ internal fun LinkTransactionSheet(
                 )
             } else {
                 Row(
-                    Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 24.dp),
+                    Modifier.fadingHorizontalScroll().padding(horizontal = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     item.aliases.forEach { alias ->

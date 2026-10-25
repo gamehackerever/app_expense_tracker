@@ -20,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -297,7 +298,9 @@ fun SheetChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     accent: Color = MaterialTheme.colorScheme.onSurface,
-    icon: ImageVector? = null
+    icon: ImageVector? = null,
+    /** One-letter monogram shown instead of an icon (custom categories that have no icon). */
+    monogram: String? = null
 ) {
     val haptic = LocalHapticFeedback.current
     val pill = RoundedCornerShape(AppRadius.pill)
@@ -346,7 +349,19 @@ fun SheetChip(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (icon != null) Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(16.dp))
+            if (icon != null) {
+                Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(16.dp))
+            } else if (!monogram.isNullOrEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(accent.copy(alpha = 0.22f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(monogram, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = accent)
+                }
+            }
             Text(
                 text = text,
                 fontSize = 14.sp,
