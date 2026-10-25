@@ -342,7 +342,7 @@ object SmartExpenseEngine {
                 }
             }
             if (exactCounts.isNotEmpty()) {
-                return exactCounts.maxByOrNull { it.value }!!.key
+                exactCounts.maxByOrNull { it.value }?.let { return it.key }
             }
             if (bestSim >= 0.86 && bestFuzzyCat != null) {
                 return bestFuzzyCat
@@ -607,7 +607,7 @@ object SmartExpenseEngine {
                 SmartInsight(
                     kind = InsightKind.HABIT,
                     title = "Top repeat · $merchant",
-                    detail = "$visitCount txns · avg ${formatRupeesFn(avgVisit)} (${formatRupeesFn(merchantTotal)} so far, ~${formatRupeesFn(projectedMonthly)}/mo pace)",
+                    detail = "$visitCount txns · avg ${formatRupeesFn(avgVisit)} (${formatRupeesFn(merchantTotal)} so far · on track for ${formatRupeesFn(projectedMonthly)} this cycle)",
                     badgeText = "${visitCount}× · $cadenceStr",
                     category = merchant
                 )

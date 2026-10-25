@@ -18,13 +18,13 @@ object FinancialParser {
         "\\bdebited\\b", "\\bdebit\\b", "\\bcredited\\b", "\\bcredit\\b", "\\bspent\\b", "\\bpaid\\b",
         "\\btransferred\\b", "\\bsent\\b", "\\breceived\\b", "\\brefunded\\b", "\\bwithdrawn\\b",
         "\\bdeposited\\b", "\\bdeducted\\b", "\\bsent you\\b", "\\bpaid you\\b",
-        "\\bautopay\\b", "\\bmandate\\s+executed\\b", "\\btoll\\s+plaza\\b", "\\bint\\.pd\\b"
+        "\\bautopay\\b", "\\bcharged\\b", "\\bused\\s+(?:for|at)\\b", "\\bpurchase\\b", "\\bmandate\\s+executed\\b", "\\btoll\\s+plaza\\b", "\\bint\\.pd\\b"
     ).map { Pattern.compile("(?i)$it") }
 
     // Reject list for OTPs, limits, failed transactions, future mandate reminders, and telecom data/reward promos
     private val REJECT_PATTERNS = listOf(
         "\\botp\\b", "\\bdeclined\\b", "\\bfailed\\b",
-        "\\bavl lmt\\b", "\\btotal due\\b", "\\bwill be debited\\b", "\\bcollect request\\b",
+        "\\btotal due\\b", "\\bwill be debited\\b", "\\bcollect request\\b",
         "\\b\\d+(?:\\.\\d+)?\\s*(?:gb|mb|tb)\\s+data\\b",
         "\\bdata\\s+(?:credited|added|pack|balance|quota|voucher|loan)\\b",
         "\\b(?:vi|jio|airtel|bsnl)\\s+a/c\\b",
@@ -39,11 +39,16 @@ object FinancialParser {
 
     // Removed "cr." and "dr." from generic matchers to fix the "Dr. Sharma" bug. Prefer verbs.
     private val CREDIT_PATTERN = Pattern.compile("(?i)\\b(credit|credited|received|refunded|deposited|added|sent you|paid you|transfer(?:red)? from|int\\.pd|interest\\s+credited)\\b")
-    private val DEBIT_PATTERN = Pattern.compile("(?i)\\b(debit|debited|spent|paid(?!\\s+you)|deducted|withdrawn|sent(?!\\s+you)|transfer(?:red)? to|autopay|mandate\\s+executed)\\b")
+    private val DEBIT_PATTERN = Pattern.compile("(?i)\\b(debit|debited|spent|paid(?!\\s+you)|deducted|withdrawn|sent(?!\\s+you)|transfer(?:red)? to|autopay|charged|used\\s+(?:for|at)\\s+(?:a\\s+)?(?:transaction|purchase|payment)|purchase\\s+of|mandate\\s+executed)\\b")
     private val CREDIT_CARD_PATTERN = Pattern.compile("(?i)\\bcredit\\s*(?:card|limit|line|bill)\\b")
     private val CC_ACCOUNT_DETECT_PATTERN = Pattern.compile("(?i)\\b(credit\\s*card|cc\\s+xx|cc\\s+ending|onecard|slice\\s+card|amex|american\\s+express|lazypay|simpl)\\b")
-    private val BANK_ACCOUNT_OR_DEBIT_CARD_PATTERN = Pattern.compile("(?i)\\b(debit\\s*card|atm\\s*card|a/c|acct|savings|upi|imps|neft|rtgs|avl\\s*bal|avail\\s*bal|available\\s*balance)\\b")
-    private val CC_BILL_PATTERN = Pattern.compile("(?i)\\b(credit\\s*card\\s*(?:bill|payment)|cc\\s*bill\\s*payment|billdesk\\s*cc)\\b")
+    // NOTE: upi/imps/neft/rtgs are deliberately NOT here. A RuPay credit card used over UPI says
+    // "credit card ... via UPI" and must stay a credit card. Only real bank-account markers count.
+    private val BANK_ACCOUNT_OR_DEBIT_CARD_PATTERN = Pattern.compile("(?i)\\b(debit\\s*card|atm\\s*card|a/c|acct|savings|avl\\s*bal|avail\\s*bal|available\\s*balance)\\b")
+    // "Avl Lmt" / "Available Credit Limit" only ever appears on credit-card alerts.
+    private val CC_LIMIT_SIGNAL_PATTERN = Pattern.compile("(?i)\\b(?:avl|avail(?:able)?)\\.?\\s*(?:cr(?:edit)?\\.?\\s*)?(?:lmt|limit)\\b")
+    // Bank-side or card-side message about paying a card bill (both legs must be excluded from spend).
+    private val CC_BILL_PATTERN = Pattern.compile("(?i)\\b(credit\\s*card\\s*(?:no\\.?\\s*)?[*xX.]*\\d*\\s*(?:bill|payment|pmt|dues?|repayment)|cc\\s*(?:bill\\s*)?payment|billdesk\\s*cc|(?:towards|for|repay(?:ment)?\\s+of)\\s+(?:your\\s+)?(?:[a-z]+\\s+){0,3}credit\\s*card)\\b")
     private val SELF_TRANSFER_PATTERN = Pattern.compile("(?i)\\b(self\\s*transfer|transfer(?:red)?\\s+to\\s+self|to\\s+own\\s+a/c|internal\\s+transfer|auto[-\\s]?sweep|sweep\\s*(?:in|out)|linked\\s+a/c)\\b")
     private val REFUND_FLAG_PATTERN = Pattern.compile("(?i)\\b(refund(?:ed)?|cashback)\\b")
 
@@ -59,6 +64,7 @@ object FinancialParser {
     )
     private val BALANCE_PATTERN = Pattern.compile("(?i)(?:final balance|available balance|avail bal|avl bal|bal(?:ance)?)\\s*(?:is|:|-)?\\s*(?:rs\\.?|inr|₹)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)")
 
+    private val AVAILABLE_LIMIT_VALUE_PATTERN = Pattern.compile("(?i)\\b(?:avl|avail(?:able)?)\\.?\\s*(?:cr(?:edit)?\\.?\\s*)?(?:lmt|limit)\\b[^0-9]{0,14}([0-9][0-9,]*(?:\\.[0-9]{1,2})?)")
     private val BALANCE_SANITIZER_REGEX = BALANCE_PATTERN.toRegex()
     private val QUOTED_NOTE_REGEX = Regex("""["“]([^"”\n\r]{2,80})["”]""")
     private val PREFIX_NOTE_REGEX = Regex("""(?i)(?:note\s*[:\-]\s*|for\s+["']?)([^"'\n\r,]+)(?:["']|\s*(?:using|via|upi|ref|$))""")
@@ -267,7 +273,9 @@ object FinancialParser {
         val rawBankName = extractBankName(combinedText, title)
             ?: (if (source == TransactionSource.SMS) learnedEval.inferredBankName else null)
         val hasBankOrDebitContext = BANK_ACCOUNT_OR_DEBIT_CARD_PATTERN.matcher(combinedText).find()
-        val isCreditCard = CC_ACCOUNT_DETECT_PATTERN.matcher(cleanedForPayee).find() && !hasBankOrDebitContext
+        val hasCcSignal = CC_ACCOUNT_DETECT_PATTERN.matcher(cleanedForPayee).find() ||
+                CC_LIMIT_SIGNAL_PATTERN.matcher(combinedText).find()
+        val isCreditCard = hasCcSignal && !hasBankOrDebitContext
         val normalizedBank = normalizeBankName(rawBankName)
         val bankName = when {
             normalizedBank != null && isCreditCard && !normalizedBank.contains("Card", ignoreCase = true) &&
@@ -279,12 +287,14 @@ object FinancialParser {
         val accountNumber = normalizeAccountNumber(extractAccountNumber(combinedText))
 
         // 3. CC and Self-Transfer Flagging (Note: refunds are NOT excluded so they can offset spend)
-        val isCcPayment = CC_BILL_PATTERN.matcher(combinedText).find()
+        val isReversalText = REVERSAL_PATTERN.matcher(combinedText).find()
+        // On a card, a CREDIT that is not a refund/cashback/reversal is the user paying the bill.
+        val isCcPaymentReceived = isCreditCard && type == TransactionType.CREDIT && !isRefund && !isReversalText
+        val isCcPayment = CC_BILL_PATTERN.matcher(combinedText).find() || isCcPaymentReceived
         val isSelfTransfer = SELF_TRANSFER_PATTERN.matcher(combinedText).find()
         val isTransferFlag = isCcPayment || isSelfTransfer
 
-        val cleanedPayee = cleanPayee(rawPayee) ?: when {
-            isCcPayment -> "Credit Card Bill"
+        val cleanedPayee = if (isCcPayment) "Credit Card Bill" else cleanPayee(rawPayee) ?: when {
             isSelfTransfer -> "Self Transfer"
             else -> null
         }
@@ -304,8 +314,16 @@ object FinancialParser {
             accountType = if (isCreditCard) "CREDIT_CARD" else "BANK",
             isTransfer = isTransferFlag,
             excludeFromSpend = isCcPayment || isRefund || isSelfTransfer,
-            confidence = if (type != null && amount != null) 1.0f else 0.5f
+            confidence = if (type != null && amount != null) 1.0f else 0.5f,
+            availableLimit = if (isCreditCard) extractAvailableLimit(combinedText) else null
         )
+    }
+
+    private fun extractAvailableLimit(text: String): Long? {
+        val m = AVAILABLE_LIMIT_VALUE_PATTERN.matcher(text)
+        if (!m.find()) return null
+        return m.group(1)?.replace(",", "")?.trim()?.toBigDecimalOrNull()
+            ?.multiply(BigDecimal("100"))?.toLong()
     }
 
     fun inferFallbackPayee(
@@ -440,7 +458,8 @@ object FinancialParser {
         val lower = trimmed.lowercase(Locale.ROOT)
         if (lower.contains("block") || lower.contains("call") || lower.contains("sms") ||
             lower.contains("toll free") || lower.contains("final balance") || lower.contains("avl bal") ||
-            lower.contains("avail bal") || lower.contains("upi ref") || lower.contains("ref no")
+            lower.contains("avail bal") || lower.contains("upi ref") || lower.contains("ref no") ||
+            lower.contains("credit card") || lower.contains("debit card")
         ) {
             return true
         }

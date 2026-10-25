@@ -36,6 +36,7 @@ class CaptureWorker(
         val app = applicationContext as? ExpenseTrackerApp ?: return Result.failure()
 
         return try {
+            com.expensetracker.offline.engine.ml.SmsPatternLearner.initialize(applicationContext)
             // One header-aware parse. For SMS the sender header plays the role of the "title".
             val parsed = FinancialParser.parse(
                 rawText = body,

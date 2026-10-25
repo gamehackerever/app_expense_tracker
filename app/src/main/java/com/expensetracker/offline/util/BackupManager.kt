@@ -350,11 +350,12 @@ object BackupManager {
             backupDbFile.delete()
             backupWalFile.delete()
             backupShmFile.delete()
-            if (settingsBytes != null) {
+            val restoredSettings = settingsBytes
+            if (restoredSettings != null) {
                 when (detectedVersion) {
-                    4, 3 -> applySettingsV4(context, settingsBytes!!)
+                    4, 3 -> applySettingsV4(context, restoredSettings)
                     2 -> context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                        .putStringSet("key_custom_categories", deserializeCategories(settingsBytes!!)).commit()
+                        .putStringSet("key_custom_categories", deserializeCategories(restoredSettings)).commit()
                 }
             }
 

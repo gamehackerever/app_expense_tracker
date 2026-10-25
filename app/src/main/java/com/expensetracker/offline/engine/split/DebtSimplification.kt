@@ -52,8 +52,8 @@ object DebtSimplification {
         // 3. Greedily match largest debtor to largest creditor
         val simplifiedTransfers = mutableListOf<Transfer>()
         while (debtors.isNotEmpty() && creditors.isNotEmpty()) {
-            val debtor = debtors.poll()!!
-            val creditor = creditors.poll()!!
+            val debtor = debtors.poll() ?: break
+            val creditor = creditors.poll() ?: break
 
             val amountToSettle = minOf(-debtor.second, creditor.second)
             simplifiedTransfers.add(

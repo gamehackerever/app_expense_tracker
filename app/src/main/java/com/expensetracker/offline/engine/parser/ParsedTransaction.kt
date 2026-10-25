@@ -23,7 +23,9 @@ data class ParsedTransaction(
     val excludeFromSpend: Boolean = false,
     val confidence: Float = 1.0f,
     val rejectReason: String? = null,
-    val parserVersion: Int = 2
+    val parserVersion: Int = 2,
+    /** Credit cards only: "Avl Lmt" from the SMS, in paise. */
+    val availableLimit: Long? = null
 ) {
     val isFullyParsed: Boolean
         get() = isFinancial && amount != null && amount > 0L && type != null && bankName != null

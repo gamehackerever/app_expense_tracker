@@ -71,7 +71,7 @@ object NecessityManager {
 
     fun getMonthlyReserveAmount(item: NecessityItem): Long {
         if (item.frequency == NecessityFrequency.EVERY_N_DAYS && (item.validityDays ?: 0) > 0) {
-            val days = item.validityDays!!
+            val days = (item.validityDays ?: 0)
             return (item.amount * 30.4375 / days).toLong().coerceAtLeast(1L)
         }
         val months = if (item.frequency.months > 0) item.frequency.months else 1
@@ -106,7 +106,7 @@ object NecessityManager {
 
         if (lastTxnTime != null && (manualDue == null || lastTxnTime > manualDue)) {
             return if (item.frequency == NecessityFrequency.EVERY_N_DAYS && (item.validityDays ?: 0) > 0) {
-                lastTxnTime + item.validityDays!! * 86_400_000L
+                lastTxnTime + (item.validityDays ?: 0) * 86_400_000L
             } else {
                 val months = if (item.frequency.months > 0) item.frequency.months else 1
                 Calendar.getInstance().apply {
@@ -118,7 +118,7 @@ object NecessityManager {
 
         if (manualDue != null) {
             if (item.frequency == NecessityFrequency.EVERY_N_DAYS && (item.validityDays ?: 0) > 0) {
-                val cycleMillis = item.validityDays!! * 86_400_000L
+                val cycleMillis = (item.validityDays ?: 0) * 86_400_000L
                 var due = manualDue
                 var guard = 0
                 while (startOfDay(due) < todayStart - cycleMillis && guard++ < 600) {
@@ -141,7 +141,7 @@ object NecessityManager {
         }
 
         if (item.frequency == NecessityFrequency.EVERY_N_DAYS && (item.validityDays ?: 0) > 0) {
-            return now + (item.validityDays!! * 86_400_000L)
+            return now + ((item.validityDays ?: 0) * 86_400_000L)
         } else if (item.frequency != NecessityFrequency.MONTHLY) {
             val c = Calendar.getInstance().apply { timeInMillis = now; add(Calendar.MONTH, item.frequency.months) }
             return c.timeInMillis
@@ -153,7 +153,7 @@ object NecessityManager {
         if (!item.isProrated || item.frequency == NecessityFrequency.MONTHLY) return null
 
         val cycleDays = when {
-            item.frequency == NecessityFrequency.EVERY_N_DAYS && (item.validityDays ?: 0) > 0 -> item.validityDays!!
+            item.frequency == NecessityFrequency.EVERY_N_DAYS && (item.validityDays ?: 0) > 0 -> (item.validityDays ?: 0)
             else -> item.frequency.months * 30
         }
 
@@ -161,7 +161,7 @@ object NecessityManager {
         val due = Calendar.getInstance().apply { timeInMillis = dueTimestamp }
         while (due.timeInMillis < now) {
             if (item.frequency == NecessityFrequency.EVERY_N_DAYS && (item.validityDays ?: 0) > 0) {
-                due.add(Calendar.DAY_OF_YEAR, item.validityDays!!)
+                due.add(Calendar.DAY_OF_YEAR, (item.validityDays ?: 0))
             } else {
                 due.add(Calendar.MONTH, item.frequency.months)
             }

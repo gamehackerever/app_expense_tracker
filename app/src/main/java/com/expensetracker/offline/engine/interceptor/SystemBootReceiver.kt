@@ -29,7 +29,6 @@ class SystemBootReceiver : BroadcastReceiver() {
         private const val CATCHUP_WINDOW_MS = 12L * 60L * 60L * 1000L // 12 hours
         private val BOOT_ACTIONS = setOf(
             Intent.ACTION_BOOT_COMPLETED,
-            Intent.ACTION_LOCKED_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
             "android.intent.action.QUICKBOOT_POWERON",
             "com.htc.intent.action.QUICKBOOT_POWERON"

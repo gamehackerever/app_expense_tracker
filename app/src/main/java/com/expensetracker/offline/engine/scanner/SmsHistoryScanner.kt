@@ -316,7 +316,8 @@ class SmsHistoryScanner(
                                 rawContent = body, category = category, note = parsed.note,
                                 balance = parsed.balance,
                                 bankName = parsed.bankName, accountNumber = parsed.accountNumber,
-                                excludeFromSpend = parsed.excludeFromSpend || isAutoTransfer
+                                excludeFromSpend = parsed.excludeFromSpend || isAutoTransfer,
+                                accountType = settingsRepo.resolveAccountType(parsed.bankName, parsed.accountNumber, parsed.accountType)
                             )
                         )
                     }
@@ -327,6 +328,7 @@ class SmsHistoryScanner(
                 }
 
                 flushBatch()
+                com.expensetracker.offline.util.CardPaymentReconciler.reconcileAll(transactionDao, sinceTimestampMillis - com.expensetracker.offline.util.CardPaymentReconciler.WINDOW_MS)
             }
 
             if (newTransactionIds.isNotEmpty()) runCatching { ExpenseWidget.updateAll(context) }

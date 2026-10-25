@@ -247,7 +247,8 @@ object CsvEngine {
                         bankName = bank,
                         accountNumber = account,
                         excludeFromSpend = excludeFromSpend,
-                        paidBy = paidBy
+                        paidBy = paidBy,
+                        accountType = if (bank?.endsWith(" CC", ignoreCase = true) == true) "CREDIT_CARD" else "BANK"
                     )
                 )
             }
