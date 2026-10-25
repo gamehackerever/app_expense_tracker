@@ -36,5 +36,6 @@ data class TransactionEntity(
     val isNecessity: Boolean = false,
     val excludeFromSpend: Boolean = false,
     val linkedDebtId: Long? = null,
-    val paidBy: String? = "You"
+    val paidBy: String? = "You",
+    val accountType: String = "BANK"
 )

@@ -87,12 +87,13 @@ interface ReviewItemDao {
         UPDATE review_items
         SET bankName = TRIM(SUBSTR(bankName, 1, LENGTH(bankName) - 3))
         WHERE bankName LIKE '% CC'
+          AND LOWER(rawContent) NOT LIKE '%credit card%'
+          AND LOWER(rawContent) NOT LIKE '%avl lmt%'
+          AND LOWER(rawContent) NOT LIKE '%limit%'
           AND (
               bankName LIKE 'South Indian Bank%'
               OR LOWER(rawContent) LIKE '%a/c%'
               OR LOWER(rawContent) LIKE '%acct%'
-              OR LOWER(rawContent) LIKE '%upi%'
-              OR LOWER(rawContent) LIKE '%debit%'
               OR LOWER(rawContent) LIKE '%avl bal%'
               OR LOWER(rawContent) LIKE '%avail bal%'
               OR LOWER(rawContent) LIKE '%balance%'

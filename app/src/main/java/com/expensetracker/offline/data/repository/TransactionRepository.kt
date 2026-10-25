@@ -18,9 +18,21 @@ import com.expensetracker.offline.engine.recurring.RecurringPayment
 import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
 import com.expensetracker.offline.ui.components.deleteReceiptFile
 import com.expensetracker.offline.util.BalanceCache
+import com.expensetracker.offline.util.BillingCycleHelper
+import com.expensetracker.offline.util.CardPaymentReconciler
 import com.expensetracker.offline.widget.ExpenseWidget
 import kotlinx.coroutines.Dispatchers
+import android.content.SharedPreferences
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -45,6 +57,8 @@ class TransactionRepository(
 
     val unsettledSplitsWithDebts: Flow<List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>> =
         splitDebtDao.getUnsettledTransactionsWithDebtsFlow()
+
+    fun getTotalCreditCardDebtFlow(): Flow<Long> = database.transactionDao().getTotalCreditCardDebtFlow()
 
     private fun refreshWidget() {
         context?.let { runCatching { ExpenseWidget.updateAll(it) } }
@@ -370,6 +384,7 @@ class TransactionRepository(
             transactionDao.healFalseCreditCardAccounts()
             transactionDao.normalizeAccountNumbersToLast4()
             reviewItemDao.healFalseCreditCardReviewItems()
+            CardPaymentReconciler.reconcileAll(transactionDao)
 
             val recentAll = transactionDao.getRecentTransactions(5000)
             val byBank = recentAll.filter { !it.bankName.isNullOrBlank() }.groupBy { it.bankName!! }
@@ -454,7 +469,6 @@ class TransactionRepository(
                         else -> currentPayee
                     }
 
-                    val isStillGeneric = CategoryClassifier.isGenericPayee(healedPayee)
                     val currentCat = txn.category.trim()
                     val trueCat = CategoryClassifier.classifySync(healedPayee, txn.rawContent)
 
@@ -643,7 +657,8 @@ class TransactionRepository(
                 balance = balance,
                 bankName = bank,
                 accountNumber = account,
-                excludeFromSpend = parsed.excludeFromSpend || parsed.isTransfer
+                excludeFromSpend = parsed.excludeFromSpend || parsed.isTransfer,
+                accountType = resolveAccountType(bank, account, parsed.accountType)
             )
             approveReviewItem(newTxn, item.id)
             if (balance != null && context != null) {
@@ -756,6 +771,10 @@ class TransactionRepository(
             newId
         }
         refreshWidget()
+        // A CRED / card-bill debit that waited in the review queue can now be paired with its card credit.
+        runCatching {
+            CardPaymentReconciler.reconcileAll(transactionDao, transaction.timestamp - CardPaymentReconciler.WINDOW_MS)
+        }
         return id
     }
 
@@ -784,6 +803,10 @@ class TransactionRepository(
             }
         }
         refreshWidget()
+        runCatching {
+            val since = approvals.minOf { it.first.timestamp } - CardPaymentReconciler.WINDOW_MS
+            CardPaymentReconciler.reconcileAll(transactionDao, since)
+        }
     }
 
     /**
@@ -921,6 +944,27 @@ class TransactionRepository(
         return IngestResult.QueuedForReview(id)
     }
 
+    private fun resolveAccountType(bank: String?, account: String?, parsedType: String?): String =
+        settingsRepo?.resolveAccountType(bank, account, parsedType)
+            ?: if (parsedType.equals("CREDIT_CARD", ignoreCase = true)) "CREDIT_CARD" else "BANK"
+
+    private fun isCompatibleMatch(
+        existing: TransactionEntity,
+        parsed: com.expensetracker.offline.engine.parser.ParsedTransaction,
+        timestamp: Long
+    ): Boolean {
+        if (existing.referenceId != null && existing.referenceId == parsed.referenceId) return true
+        val wildcard = existing.bankName == null || parsed.bankName == null ||
+            existing.accountNumber == null || parsed.accountNumber == null
+        if (!wildcard) return true
+        if (kotlin.math.abs(existing.timestamp - timestamp) > WILDCARD_MATCH_WINDOW_MS) return false
+        val a = existing.payee.trim().lowercase()
+        val b = parsed.payee?.trim()?.lowercase().orEmpty()
+        if (a.isEmpty() || b.isEmpty()) return true
+        if (CategoryClassifier.isGenericPayee(existing.payee) || CategoryClassifier.isGenericPayee(parsed.payee ?: "")) return true
+        return a.contains(b) || b.contains(a)
+    }
+
     suspend fun processIncomingEvent(
         parsed: com.expensetracker.offline.engine.parser.ParsedTransaction,
         sender: String,
@@ -954,11 +998,20 @@ class TransactionRepository(
                 return@withTransaction queueForReview(parsed, sender, timestamp, source)
             }
 
-            val existingMatch = transactionDao.findMatchingTransaction(
+            val rawMatch = transactionDao.findMatchingTransaction(
                 amount = amount, type = type,
                 startTime = timestamp - DEDUPE_WINDOW_MS, endTime = timestamp + DEDUPE_WINDOW_MS,
                 targetTime = timestamp, bankName = parsed.bankName, accountNumber = parsed.accountNumber
             )
+            // Remember the card's latest available limit (true outstanding = limit - available).
+            if (parsed.accountType == "CREDIT_CARD" && parsed.availableLimit != null && parsed.bankName != null) {
+                settingsRepo?.recordCardAvailableLimit(parsed.bankName, parsed.accountNumber, parsed.availableLimit, timestamp)
+            }
+            // The DAO treats a missing bank/account as a wildcard. That is right for "GPay notification
+            // + bank SMS" of ONE payment, but wrong for two different same-amount payments (e.g. a card
+            // spend and a UPI debit). So with a wildcard, only merge if the match is tight in time and
+            // the payees don't contradict each other. Identical reference ids always count.
+            val existingMatch = rawMatch?.takeIf { isCompatibleMatch(it, parsed, timestamp) }
 
             if (existingMatch != null) {
                 val bothRefs = existingMatch.referenceId != null && parsed.referenceId != null
@@ -1017,10 +1070,24 @@ class TransactionRepository(
                 )
             }
 
+            // Card bill payment pairing (CRED / BillDesk / BBPS / "credit card"): only treated as a
+            // transfer when the other leg exists, so a CRED payment for something else stays spend.
+            val isCardPaymentCredit = parsed.accountType == "CREDIT_CARD" && parsed.isTransfer && type == TransactionType.CREDIT
+            val cardBillBankLeg = when {
+                isCardPaymentCredit -> {
+                    CardPaymentReconciler.markBankLeg(transactionDao, amount, timestamp)
+                    false
+                }
+                parsed.accountType != "CREDIT_CARD" && type == TransactionType.DEBIT && !parsed.isTransfer &&
+                    CardPaymentReconciler.looksLikeCardBill(parsed.payee, parsed.rawText) ->
+                    CardPaymentReconciler.hasCardCredit(transactionDao, amount, timestamp)
+                else -> false
+            }
+
             val effectivePayee = parsed.payee?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
                 ?: learnedEval.inferredPayee
 
-            val isAutoTransfer = parsed.isTransfer || oppositeLeg != null
+            val isAutoTransfer = parsed.isTransfer || oppositeLeg != null || cardBillBankLeg
             val isMissingPayee = (effectivePayee.isNullOrBlank() || effectivePayee.equals("Unknown", ignoreCase = true) || effectivePayee.matches(NUMERIC_PAYEE_REGEX)) && !isAutoTransfer
             // If user already approved this template structure, don't force high-value items back into Review Queue
             val isHighValue = type == TransactionType.DEBIT && amount > reviewThreshold && !isAutoTransfer && !learnedEval.isConfirmedTransaction
@@ -1030,6 +1097,7 @@ class TransactionRepository(
             }
 
             val resolvedPayee = when {
+                cardBillBankLeg -> "Credit Card Bill"
                 !effectivePayee.isNullOrBlank() && !effectivePayee.equals("Unknown", ignoreCase = true) -> effectivePayee
                 oppositeLeg != null -> "Transfer (${oppositeLeg.bankName ?: "Own A/c"})"
                 parsed.isTransfer -> "Self Transfer"
@@ -1051,7 +1119,8 @@ class TransactionRepository(
                     source = source, referenceId = parsed.referenceId, rawContent = parsed.rawText,
                     category = category, note = parsed.note ?: if (oppositeLeg != null) "Self-transfer (${oppositeLeg.bankName})" else null,
                     balance = parsed.balance, bankName = parsed.bankName ?: learnedEval.inferredBankName,
-                    accountNumber = parsed.accountNumber, excludeFromSpend = parsed.excludeFromSpend || isAutoTransfer
+                    accountNumber = parsed.accountNumber, excludeFromSpend = parsed.excludeFromSpend || isAutoTransfer,
+                    accountType = resolveAccountType(parsed.bankName ?: learnedEval.inferredBankName, parsed.accountNumber, parsed.accountType)
                 )
             )
             IngestResult.Inserted(id)
@@ -1060,9 +1129,61 @@ class TransactionRepository(
         return result
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun getUnbilledCreditCardSpend(bankName: String, accountNumber: String?): Flow<Long> {
+        val settings = settingsRepo
+        // Re-evaluates when the user edits the card config...
+        val configChanges: Flow<Unit> = if (settings == null) flowOf(Unit) else callbackFlow {
+            val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                if (key == SettingsRepository.KEY_CREDIT_CARD_CONFIGS_JSON) trySend(Unit)
+            }
+            settings.prefs.registerOnSharedPreferenceChangeListener(listener)
+            trySend(Unit)
+            awaitClose { settings.prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+        }
+        // ...and every midnight, so the cycle rolls over on the statement date without a restart.
+        val dayTicks: Flow<Unit> = flow {
+            while (true) {
+                emit(Unit)
+                val now = System.currentTimeMillis()
+                val nextMidnight = java.time.LocalDate.now().plusDays(1)
+                    .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                delay((nextMidnight - now).coerceAtLeast(1_000L) + 1_000L)
+            }
+        }
+        return combine(configChanges, dayTicks) { _, _ -> Unit }
+            .map {
+                val config = settings?.getCreditCardConfig(bankName, accountNumber)
+                    ?: CreditCardConfig(settings?.accountKey(bankName, accountNumber) ?: "")
+                BillingCycleHelper.getCreditCardCycleRange(config.statementDay).first
+            }
+            .distinctUntilChanged()
+            .flatMapLatest { cycleStart ->
+                database.transactionDao().getUnbilledCreditCardSpendFlow(bankName, accountNumber, cycleStart)
+            }
+    }
+
+    /** Turns "Track as Credit Card" on/off for one account: saves the choice AND re-tags its history. */
+    suspend fun setAccountCreditCard(bankName: String, accountNumber: String?, enabled: Boolean) {
+        settingsRepo?.setCreditCardEnabled(bankName, accountNumber, enabled)
+        database.withTransaction {
+            transactionDao.setAccountType(bankName, accountNumber, if (enabled) "CREDIT_CARD" else "BANK")
+        }
+        refreshWidget()
+    }
+
+    suspend fun markAccountAsCreditCard(bankName: String, accountNumber: String?) {
+        database.withTransaction {
+            transactionDao.markAccountAsCreditCard(bankName, accountNumber)
+        }
+        refreshWidget()
+    }
+
+
     companion object {
         const val REVIEW_THRESHOLD_PAISE = 100_000L
         private const val DEDUPE_WINDOW_MS = 300_000L
+        private const val WILDCARD_MATCH_WINDOW_MS = 120_000L
         private val NUMERIC_PAYEE_REGEX = Regex("""^\d{8,12}.*""")
     }
 }

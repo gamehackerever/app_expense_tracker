@@ -6,7 +6,7 @@ import android.content.SharedPreferences
 data class CreditCardConfig(
     val accountKey: String,
     val isCreditCard: Boolean = true,
-    val creditLimitPaise: Long = 10_000_000L, // Default ₹1,00,000
+    val creditLimitPaise: Long = 0L, // 0 = not set by the user (no utilisation % shown)
     val statementDay: Int = 15,
     val dueDay: Int = 5
 )
@@ -489,7 +489,7 @@ class SettingsRepository(context: Context) {
                 map[key] = CreditCardConfig(
                     accountKey = key,
                     isCreditCard = item.optBoolean("isCc", true),
-                    creditLimitPaise = item.optLong("limit", 10_000_000L),
+                    creditLimitPaise = item.optLong("limit", 0L),
                     statementDay = item.optInt("stmtDay", 15).coerceIn(1, 28),
                     dueDay = item.optInt("dueDay", 5).coerceIn(1, 28)
                 )
@@ -505,6 +505,25 @@ class SettingsRepository(context: Context) {
         val stored = getCreditCardConfigs()[key]
         if (stored != null) return if (stored.isCreditCard) stored else null
         return if (isDefaultCreditCard(bankName)) CreditCardConfig(accountKey = key) else null
+    }
+
+    /**
+     * The account type a NEW transaction should get. An explicit user choice for the account
+     * ("Track as Credit Card" on or off) always beats what the SMS parser guessed.
+     */
+    fun resolveAccountType(bankName: String?, accountNumber: String?, parsedType: String?): String {
+        if (bankName != null) {
+            val stored = getCreditCardConfigs()[accountKey(bankName, accountNumber)]
+            if (stored != null) return if (stored.isCreditCard) "CREDIT_CARD" else "BANK"
+        }
+        return if (parsedType.equals("CREDIT_CARD", ignoreCase = true)) "CREDIT_CARD" else "BANK"
+    }
+
+    /** Flips the per-account switch while keeping limit / statement day / due day. */
+    fun setCreditCardEnabled(bankName: String, accountNumber: String?, enabled: Boolean) {
+        val key = accountKey(bankName, accountNumber)
+        val existing = getCreditCardConfigs()[key] ?: CreditCardConfig(accountKey = key)
+        saveCreditCardConfig(bankName, accountNumber, existing.copy(isCreditCard = enabled))
     }
 
     fun saveCreditCardConfig(bankName: String, accountNumber: String?, config: CreditCardConfig) {
@@ -523,6 +542,26 @@ class SettingsRepository(context: Context) {
         prefs.edit().putString(KEY_CREDIT_CARD_CONFIGS_JSON, obj.toString()).apply()
     }
 
+    /** Latest "Avl Lmt" seen in an SMS for a card (paise + SMS time). Older SMS never overwrite newer ones. */
+    fun recordCardAvailableLimit(bankName: String, accountNumber: String?, limitPaise: Long, timestamp: Long) {
+        val key = accountKey(bankName, accountNumber)
+        val obj = try { org.json.JSONObject(prefs.getString(KEY_CARD_AVAILABLE_LIMITS_JSON, "{}") ?: "{}") }
+                  catch (_: Exception) { org.json.JSONObject() }
+        val existing = obj.optJSONObject(key)
+        if (existing != null && existing.optLong("t", 0L) >= timestamp) return
+        obj.put(key, org.json.JSONObject().put("v", limitPaise).put("t", timestamp))
+        prefs.edit().putString(KEY_CARD_AVAILABLE_LIMITS_JSON, obj.toString()).apply()
+    }
+
+    /** @return (available limit paise, SMS timestamp) or null if no SMS ever reported one. */
+    fun getCardAvailableLimit(bankName: String, accountNumber: String?): Pair<Long, Long>? {
+        return try {
+            val obj = org.json.JSONObject(prefs.getString(KEY_CARD_AVAILABLE_LIMITS_JSON, "{}") ?: "{}")
+            val e = obj.optJSONObject(accountKey(bankName, accountNumber)) ?: return null
+            e.getLong("v") to e.optLong("t", 0L)
+        } catch (_: Exception) { null }
+    }
+
     fun clearLastScanBatch() {
         prefs.edit().remove(KEY_LAST_SCAN_TXNS).remove(KEY_LAST_SCAN_REVIEWS).apply()
     }
@@ -538,6 +577,7 @@ class SettingsRepository(context: Context) {
         const val KEY_CATEGORY_BUDGET_SETUP_DISMISSED = "key_category_budget_setup_dismissed"
         const val KEY_DISMISSED_BUDGET_WARNINGS = "key_dismissed_budget_warnings_v2"
         const val KEY_CREDIT_CARD_CONFIGS_JSON = "key_credit_card_configs_json"
+        const val KEY_CARD_AVAILABLE_LIMITS_JSON = "key_card_available_limits_json"
         const val WARNING_LEVEL_NEAR = "NEAR"
         const val WARNING_LEVEL_OVER = "OVER"
         const val KEY_START_DAY_OF_MONTH = "key_start_day_of_month"

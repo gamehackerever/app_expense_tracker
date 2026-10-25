@@ -159,8 +159,58 @@ interface TransactionDao {
         currentAccount: String?
     ): TransactionEntity?
 
+    // Outstanding per card = purchases - (payments + refunds). Every CREDIT counts here (including
+    // rows flagged excludeFromSpend, i.e. bill payments), and a card can't owe less than zero.
+    @Query("""
+    SELECT COALESCE(SUM(MAX(net, 0)), 0) FROM (
+        SELECT SUM(CASE WHEN type = 'DEBIT' THEN amount ELSE -amount END) AS net
+        FROM transactions
+        WHERE accountType = 'CREDIT_CARD'
+        GROUP BY bankName, COALESCE(accountNumber, '')
+    )
+""")
+    fun getTotalCreditCardDebtFlow(): Flow<Long>
+
+    @Query("""
+    SELECT COALESCE(SUM(amount), 0) FROM transactions 
+    WHERE accountType = 'CREDIT_CARD' 
+      AND type = 'DEBIT' 
+      AND excludeFromSpend = 0
+      AND bankName = :bankName 
+      AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL))
+      AND timestamp >= :statementStartMs
+""")
+    fun getUnbilledCreditCardSpendFlow(bankName: String, accountNumber: String?, statementStartMs: Long): Flow<Long>
+
+    @Query("""
+        SELECT * FROM transactions
+        WHERE amount = :amount AND type = :type AND accountType = :accountType
+          AND timestamp BETWEEN :startTime AND :endTime
+        ORDER BY ABS(timestamp - :targetTime)
+        LIMIT 10
+    """)
+    suspend fun findPaymentCounterpartCandidates(
+        amount: Long, type: TransactionType, accountType: String,
+        startTime: Long, endTime: Long, targetTime: Long
+    ): List<TransactionEntity>
+
+    @Query("""
+        SELECT * FROM transactions
+        WHERE accountType = 'CREDIT_CARD' AND type = 'CREDIT'
+          AND excludeFromSpend = 1 AND category = 'Transfer' AND timestamp >= :sinceMs
+    """)
+    suspend fun getCardPaymentCredits(sinceMs: Long): List<TransactionEntity>
+
+    @Query("UPDATE transactions SET accountType = :accountType WHERE bankName = :bankName AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL))")
+    suspend fun setAccountType(bankName: String, accountNumber: String?, accountType: String)
+
+    @Query("UPDATE transactions SET accountType = 'CREDIT_CARD' WHERE bankName = :bankName AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL))")
+    suspend fun markAccountAsCreditCard(bankName: String, accountNumber: String?)
+
     @Query("UPDATE transactions SET payee = :newPayee, category = :newCategory WHERE payee = :oldPayee")
     suspend fun updatePayeeAndCategoryBulk(oldPayee: String, newPayee: String, newCategory: String)
+
+
 
     // Sum of every unsettled debt owed TO YOU (where you paid the bill) minus repayments
     @Query("""
@@ -278,22 +328,19 @@ interface TransactionDao {
 
     @Query("""
         UPDATE transactions
-        SET bankName = TRIM(SUBSTR(bankName, 1, LENGTH(bankName) - 3))
+        SET bankName = TRIM(SUBSTR(bankName, 1, LENGTH(bankName) - 3)),
+            accountType = 'BANK'
         WHERE bankName LIKE '% CC'
+          AND LOWER(rawContent) NOT LIKE '%credit card%'
+          AND LOWER(rawContent) NOT LIKE '%avl lmt%'
+          AND LOWER(rawContent) NOT LIKE '%limit%'
           AND (
               bankName LIKE 'South Indian Bank%'
               OR LOWER(rawContent) LIKE '%a/c%'
               OR LOWER(rawContent) LIKE '%acct%'
-              OR LOWER(rawContent) LIKE '%upi%'
-              OR LOWER(rawContent) LIKE '%debit%'
               OR LOWER(rawContent) LIKE '%avl bal%'
               OR LOWER(rawContent) LIKE '%avail bal%'
               OR LOWER(rawContent) LIKE '%balance%'
-              OR accountNumber IN (
-                  SELECT DISTINCT accountNumber
-                  FROM transactions
-                  WHERE bankName NOT LIKE '% CC' AND accountNumber IS NOT NULL
-              )
           )
     """)
     suspend fun healFalseCreditCardAccounts(): Int
