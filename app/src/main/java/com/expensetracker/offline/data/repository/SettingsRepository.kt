@@ -188,6 +188,83 @@ class SettingsRepository(context: Context) {
         get() = prefs.getString(KEY_LAST_SCAN_REVIEWS, "")?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
         set(value) = prefs.edit().putString(KEY_LAST_SCAN_REVIEWS, value.joinToString(",")).apply()
 
+    val rolloverBudgetMap: Map<String, Long>
+        get() {
+            val jsonStr = prefs.getString("key_rollover_budget_map", "{}") ?: "{}"
+            if (jsonStr.isBlank() || jsonStr == "{}") return emptyMap()
+            return try {
+                val obj = org.json.JSONObject(jsonStr)
+                val map = mutableMapOf<String, Long>()
+                obj.keys().forEach { key ->
+                    map[key] = obj.optLong(key, 0L)
+                }
+                map
+            } catch (e: Exception) {
+                emptyMap()
+            }
+        }
+
+    fun setRolloverBudget(cycleMonthYear: String, amount: Long) {
+        val currentMap = rolloverBudgetMap.toMutableMap()
+        currentMap[cycleMonthYear] = amount
+
+        val obj = org.json.JSONObject()
+        currentMap.forEach { (key, value) ->
+            obj.put(key, value)
+        }
+        prefs.edit().putString("key_rollover_budget_map", obj.toString()).apply()
+    }
+
+    fun getRolloverDecision(cycleMonthYear: String): Boolean? {
+        val jsonStr = prefs.getString("key_rollover_decision_map", "{}") ?: "{}"
+        if (jsonStr.isBlank() || jsonStr == "{}") return null
+        return try {
+            val obj = org.json.JSONObject(jsonStr)
+            if (obj.has(cycleMonthYear)) obj.getBoolean(cycleMonthYear) else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun getRolloverEnabled(cycleMonthYear: String): Boolean {
+        val jsonStr = prefs.getString("key_rollover_decision_map", "{}") ?: "{}"
+        if (jsonStr.isBlank() || jsonStr == "{}") return false
+        return try {
+            val obj = org.json.JSONObject(jsonStr)
+            obj.optBoolean(cycleMonthYear, false)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun setRolloverEnabled(cycleMonthYear: String, enabled: Boolean) {
+        val jsonStr = prefs.getString("key_rollover_decision_map", "{}") ?: "{}"
+        val obj = try {
+            org.json.JSONObject(jsonStr)
+        } catch (e: Exception) {
+            org.json.JSONObject()
+        }
+        obj.put(cycleMonthYear, enabled)
+        prefs.edit().putString("key_rollover_decision_map", obj.toString()).apply()
+    }
+
+    fun markRolloverDecision(cycleMonthYear: String, accepted: Boolean?) {
+        val jsonStr = prefs.getString("key_rollover_decision_map", "{}") ?: "{}"
+        val obj = try {
+            org.json.JSONObject(jsonStr)
+        } catch (e: Exception) {
+            org.json.JSONObject()
+        }
+
+        if (accepted == null) {
+            obj.remove(cycleMonthYear) // Wipes the decision on Undo
+        } else {
+            obj.put(cycleMonthYear, accepted)
+        }
+
+        prefs.edit().putString("key_rollover_decision_map", obj.toString()).apply()
+    }
+
     // ── Soft-Delete Crash Recovery Persistence ───────────────────────────────
     @Synchronized
     fun getPendingDeleteIds(): Set<Long> =

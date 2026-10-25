@@ -61,6 +61,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.focus.FocusRequester
@@ -118,7 +119,86 @@ import kotlin.math.ceil
 
 import com.expensetracker.offline.util.confirm
 import com.expensetracker.offline.util.delete
+import com.expensetracker.offline.ui.viewmodel.splitRolloverOverspend
 
+@Composable
+private fun RolloverOptionCard(
+    title: String,
+    description: String,
+    outcome: String,
+    outcomeDetail: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val borderColor by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+        else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+        tween(160), label = "rolloverBorder"
+    )
+    val fillColor by animateColorAsState(
+// was: alpha = 0.04f
+        if (selected) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f) else Color.Transparent,
+        tween(160), label = "rolloverFill"
+    )
+    val shape = RoundedCornerShape(AppRadius.medium)
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .quietSelectable(selected = selected, role = Role.RadioButton, onClick = onClick),
+        shape = shape,
+        color = fillColor,
+        border = BorderStroke(1.dp, borderColor)
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 4.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioButton(
+                selected = selected,
+                onClick = null,
+                colors = RadioButtonDefaults.colors(
+                    selectedColor = MaterialTheme.colorScheme.onSurface,
+                    unselectedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                    ),
+                modifier = Modifier.padding(horizontal = 10.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    fontSize = 14.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    description,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    outcome,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    outcomeDetail,
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -171,6 +251,8 @@ fun DashboardScreen(
     var isBalanceCardFlipped by remember { mutableStateOf(prefs.getBoolean("key_balance_card_flipped", false)) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
 
+    val currentCycleRolloverDecision by viewModel.currentCycleRolloverDecision.collectAsState()
+
     fun showSnack(message: String) {
         scope.launch {
             snackbarHostState.currentSnackbarData?.dismiss()
@@ -180,6 +262,7 @@ fun DashboardScreen(
 
     val settingsRepo = remember { SettingsRepository(context) }
     val monthlyBudget by viewModel.monthlyBudget.collectAsState()
+    val activeRolloverAmountPaise by viewModel.activeRolloverAmount.collectAsState()
     val isBudgetExplicitlySet by viewModel.isBudgetExplicitlySet.collectAsState()
     val isManualModePreferred by viewModel.isManualModePreferred.collectAsState()
     val isAutoCaptureBannerDismissed by viewModel.isAutoCaptureBannerDismissed.collectAsState()
@@ -200,6 +283,10 @@ fun DashboardScreen(
     var showNecessityBreakdownDialog by remember { mutableStateOf(false) }
 
     var isLoadingNecessities by remember { mutableStateOf(true) }
+    val isRolloverEnabled by viewModel.isRolloverEnabled.collectAsState()
+    var showRolloverSheet by rememberSaveable { mutableStateOf(false) }
+    val rolloverMonths by viewModel.rolloverMonths.collectAsState()
+
     var necessitiesList by remember { mutableStateOf(emptyList<NecessityItem>()) }
     LaunchedEffect(Unit) {
         necessitiesList = withContext(Dispatchers.IO) { NecessityManager.loadNecessities(prefs) }
@@ -353,7 +440,6 @@ fun DashboardScreen(
     var isCheckingBalance by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
-    val isFabExpanded by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
 
     // Hide the FAB while scrolling down so it never sits on top of an amount; it returns on scroll up,
     // at the top of the list, or once the end is reached (the list has bottom padding to clear it).
@@ -367,7 +453,6 @@ fun DashboardScreen(
             }
         }
     }
-    val isFabVisible by remember { derivedStateOf { !isFabScrolledAway || isFabExpanded } }
 
     var hasNotificationPermission by remember { mutableStateOf(isNotificationPermissionGranted(context)) }
 
@@ -632,6 +717,7 @@ fun DashboardScreen(
     }
 
     val anyDialogOpen = showAddExpenseSheet ||
+            showRolloverSheet ||
             showAutoCaptureSheet ||
             showDiscardAllReviewsDialog ||
             showAccountsDialog ||
@@ -679,6 +765,40 @@ fun DashboardScreen(
             else { lastBackMs = now; showSnack("Press back again to exit") }
         }
     }
+
+    val todayKey = (System.currentTimeMillis() + TimeZone.getDefault().rawOffset) / 86_400_000L
+
+    val isMonthlyView = selectedTimeRange == TimeRange.THIS_MONTH
+    val baseMonthlyBudgetPaise = monthlyBudget * 100L
+    val effectiveBudgetPaise = (baseMonthlyBudgetPaise - activeRolloverAmountPaise).coerceAtLeast(0L)
+    val isOverBudget = monthlyBudget > 0L && isMonthlyView && periodSpent > effectiveBudgetPaise
+    val overspendPaise = if (monthlyBudget > 0L) (periodSpent - effectiveBudgetPaise).coerceAtLeast(0L) else 0L
+
+
+    val (firstInstallmentPaise, secondInstallmentPaise) = splitRolloverOverspend(overspendPaise, rolloverMonths)
+    val rolloverDeductionPaise = firstInstallmentPaise
+    val projectedNextBudget = baseMonthlyBudgetPaise - firstInstallmentPaise
+    val projectedFollowingBudget = baseMonthlyBudgetPaise - secondInstallmentPaise
+
+    LaunchedEffect(overspendPaise, isRolloverEnabled, rolloverMonths, isMonthlyView, monthlyBudget, todayKey) {
+        if (isMonthlyView && monthlyBudget > 0L) viewModel.syncRollover(overspendPaise)
+    }
+// Re-read stored rollover state if the cycle changes while the app stays open.
+    LaunchedEffect(todayKey) { viewModel.refreshSettings() }
+
+    val (nextCycleLabel, followingCycleLabel) = remember(startDayOfMonth, todayKey) {
+        val end = BillingCycleHelper.getCycleRange(startDayOfMonth).second
+        val fmt = SimpleDateFormat("MMM", Locale.getDefault())
+        val cal = Calendar.getInstance().apply { timeInMillis = end + 86_400_000L }
+        val first = fmt.format(cal.time)
+        cal.add(Calendar.MONTH, 1)
+        first to fmt.format(cal.time)
+    }
+
+    val isFabExpanded = filteredTransactions.isEmpty()
+    val isAtTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
+    val isFabVisible by remember { derivedStateOf { !isFabScrolledAway || isAtTop } }
+
 
     fun navigateToOriginalDebit(creditTxn: TransactionEntity) {
         val debtId = creditTxn.linkedDebtId
@@ -811,6 +931,82 @@ fun DashboardScreen(
                         )
                     ) { Text("Close", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
                 }
+            }
+        }
+    }
+
+    if (showRolloverSheet && isOverBudget) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val choice = if (isRolloverEnabled) rolloverMonths else 0
+        val (halfFirst, halfSecond) = splitRolloverOverspend(overspendPaise, 2)
+        val select = { picked: Int ->
+            if (picked != choice) {
+                haptic.tap()
+                viewModel.setRolloverChoice(picked, overspendPaise)
+            }
+        }
+
+        ModalBottomSheet(
+            onDismissRequest = { showRolloverSheet = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Handle your overspend", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "You're ${CurrencyFormat.withSymbol(overspendPaise, 0)} over. Choose how it carries into $nextCycleLabel.",
+                    fontSize = 13.5.sp, lineHeight = 19.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "$nextCycleLabel budget",
+                    fontSize = 11.5.sp, fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, end = 17.dp)
+                )
+                RolloverOptionCard(
+                    title = "Start fresh",
+                    description = "Forget it and begin clean.",
+                    outcome = CurrencyFormat.withSymbol(baseMonthlyBudgetPaise, 0),
+                    outcomeDetail = "no change",
+                    selected = choice == 0,
+                    onClick = { select(0) }
+                )
+                RolloverOptionCard(
+                    title = "Deduct in $nextCycleLabel",
+                    description = "Take the full amount next cycle.",
+                    outcome = CurrencyFormat.withSymbol(baseMonthlyBudgetPaise - overspendPaise, 0),
+                    outcomeDetail = "−${CurrencyFormat.withSymbol(overspendPaise, 0)}",
+                    selected = choice == 1,
+                    onClick = { select(1) }
+                )
+                RolloverOptionCard(
+                    title = "Split in two",
+                    description = "Half in $nextCycleLabel, half in $followingCycleLabel.",
+                    outcome = CurrencyFormat.withSymbol(baseMonthlyBudgetPaise - halfFirst, 0),
+                    outcomeDetail = "then ${CurrencyFormat.withSymbol(baseMonthlyBudgetPaise - halfSecond, 0)} in $followingCycleLabel",
+                    selected = choice == 2,
+                    onClick = { select(2) }
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Button(
+                    onClick = {
+                        haptic.tap()
+                        scope.launch { sheetState.hide() }.invokeOnCompletion { showRolloverSheet = false }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    shape = RoundedCornerShape(AppRadius.small),
+                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    )
+                ) { Text("Done", fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
             }
         }
     }
@@ -2034,11 +2230,9 @@ fun DashboardScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    val isMonthlyView = selectedTimeRange == TimeRange.THIS_MONTH
-                    val monthlyBudgetPaise = monthlyBudget * 100L
-                    val budgetProgress = if (monthlyBudgetPaise > 0L && isMonthlyView) (periodSpent.toFloat() / monthlyBudgetPaise.toFloat()).coerceIn(0f, 1f) else 0f
-                    val isOverBudget = monthlyBudgetPaise > 0L && isMonthlyView && periodSpent > monthlyBudgetPaise
-
+                    val budgetProgress = if (isMonthlyView && monthlyBudget > 0L) {
+                        if (effectiveBudgetPaise > 0L) (periodSpent.toFloat() / effectiveBudgetPaise.toFloat()).coerceIn(0f, 1f) else 1f
+                    } else 0f
 
                     val barColor = when {
                         isOverBudget -> AppColors.negative
@@ -2128,7 +2322,7 @@ fun DashboardScreen(
                                 val daysLeft = remember(cycleEnd) {
                                     (ceil((cycleEnd - System.currentTimeMillis()).toDouble() / 86_400_000.0).toInt()).coerceAtLeast(1)
                                 }
-                                val remaining = (monthlyBudgetPaise - periodSpent).coerceAtLeast(0L)
+                                val remaining = (effectiveBudgetPaise - periodSpent).coerceAtLeast(0L)
 
                                 Spacer(modifier = Modifier.height(24.dp))
                                 DashboardProgressBar(
@@ -2141,28 +2335,109 @@ fun DashboardScreen(
 
                                 Spacer(modifier = Modifier.height(14.dp))
 
+                                val usedPct = (budgetProgress * 100f).roundToInt()
+                                val isNearLimit = !isOverBudget && budgetProgress >= 0.85f
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = if (isOverBudget)
-                                            "${CurrencyFormat.withSymbol(periodSpent - monthlyBudgetPaise, 0)} over ${CurrencyFormat.withSymbol(monthlyBudgetPaise, 0)}"
-                                        else
-                                            "${CurrencyFormat.withSymbol(remaining, 0)} left of ${CurrencyFormat.withSymbol(monthlyBudgetPaise, 0)}",
-                                        fontSize = 13.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (isOverBudget) AppColors.negative else MaterialTheme.colorScheme.onSurface
-                                    )
-                                    if (!isOverBudget && daysLeft > 0) {
-                                        Text(
-                                            text = "${CurrencyFormat.withSymbol(remaining / daysLeft, 0)}/day safe pace",
-                                            fontSize = 12.5.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    when {
+                                        isOverBudget -> {
+                                            Surface(shape = RoundedCornerShape(AppRadius.pill), color = AppColors.negative.copy(alpha = 0.10f)) {
+                                                Text(
+                                                    "${CurrencyFormat.withSymbol(overspendPaise, 0)} over budget",
+                                                    fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AppColors.negative,
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                )
+                                            }
+                                            Text(
+                                                "of ${CurrencyFormat.withSymbol(effectiveBudgetPaise, 0)}",
+                                                fontSize = 12.5.sp, fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        isNearLimit -> {
+                                            Surface(shape = RoundedCornerShape(AppRadius.pill), color = AppColors.warning.copy(alpha = 0.14f)) {
+                                                Text(
+                                                    "$usedPct% used · $daysLeft ${if (daysLeft == 1) "day" else "days"} left",
+                                                    fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AppColors.warning,
+                                                    maxLines = 1,
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                )
+                                            }
+                                            Text(
+                                                "${CurrencyFormat.withSymbol(remaining, 0)} left",
+                                                fontSize = 12.5.sp, fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        else -> {
+                                            Text(
+                                                "${CurrencyFormat.withSymbol(remaining, 0)} left",
+                                                fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                "of ${CurrencyFormat.withSymbol(effectiveBudgetPaise, 0)} · ${CurrencyFormat.withSymbol(remaining / daysLeft, 0)}/day",
+                                                fontSize = 12.5.sp, fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (isOverBudget) {
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(AppRadius.small))
+                                            .quietClickable { haptic.tap(); showRolloverSheet = true }
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                when {
+                                                    !isRolloverEnabled -> "Overspend not carried over"
+                                                    rolloverMonths == 2 -> "Carry-over · $nextCycleLabel & $followingCycleLabel"
+                                                    else -> "Carry-over to $nextCycleLabel"
+                                                },
+                                                fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                when {
+                                                    !isRolloverEnabled -> "$nextCycleLabel budget stays ${CurrencyFormat.withSymbol(baseMonthlyBudgetPaise, 0)}"
+                                                    rolloverMonths == 2 -> "$nextCycleLabel ${CurrencyFormat.withSymbol(projectedNextBudget, 0)} · $followingCycleLabel ${CurrencyFormat.withSymbol(projectedFollowingBudget, 0)}"
+                                                    else -> "−${CurrencyFormat.withSymbol(rolloverDeductionPaise, 0)} · $nextCycleLabel budget ${CurrencyFormat.withSymbol(projectedNextBudget, 0)}"
+                                                },
+                                                fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.ArrowForward,
+                                            contentDescription = "Change carry-over",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
+                                }
+
+                                if (activeRolloverAmountPaise > 0L) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "Budget reduced by ${CurrencyFormat.withSymbol(activeRolloverAmountPaise, 0)} due to last cycle's overspend.",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = AppColors.warning
+                                    )
                                 }
 
                                 if (categoryBudgetStatuses.isNotEmpty()) {
@@ -2716,5 +2991,6 @@ fun DashboardScreen(
         }
     }
     }
+
 }
 

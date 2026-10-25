@@ -1,6 +1,7 @@
 package com.expensetracker.offline.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -30,6 +31,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.math.round
 
@@ -44,6 +47,13 @@ data class OnboardingScanSummary(
     val suggestedBudgetRupees: Long = 15000L,
     val permissionGranted: Boolean = false
 )
+
+/** First/second installment. Lossless: first + second == overspend. Months 1 => (all, 0). */
+fun splitRolloverOverspend(overspendPaise: Long, months: Int): Pair<Long, Long> {
+    val total = overspendPaise.coerceAtLeast(0L)
+    return if (months >= 2) (total / 2).let { it to (total - it) } else total to 0L
+}
+
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -70,6 +80,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val categoryBudgets = MutableStateFlow(settingsRepo.getCategoryBudgets())
     val dismissedCategoryWarnings = MutableStateFlow<Set<String>>(emptySet())
     val dismissedCategoryWarningLevels = MutableStateFlow<Map<String, String>>(emptyMap())
+    val activeRolloverAmount = MutableStateFlow(0L)
+    val currentCycleRolloverDecision = MutableStateFlow<Boolean?>(null)
+    val isRolloverEnabled = MutableStateFlow(false)
+    val rolloverMonths = MutableStateFlow(1)
+    private val rolloverMutex = Mutex()
+    private val rolloverPrefs = application.getSharedPreferences("rollover_plans", Context.MODE_PRIVATE)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val unsettledSplitsWithDebts = dbEpoch.flatMapLatest { repository.unsettledSplitsWithDebts }
@@ -83,6 +99,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { repository.syncCategoryRulesFromHistory() }
         }
+        loadRolloverState()
     }
 
     fun setCategoryBudget(category: String, amountInPaise: Long) {
@@ -141,6 +158,113 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val levels = settingsRepo.getDismissedCategoryWarningLevels(cycleStart)
         dismissedCategoryWarningLevels.value = levels
         dismissedCategoryWarnings.value = levels.keys
+        loadRolloverState()
+    }
+
+    private fun getCycleKey(cycleStartMs: Long): String {
+        val sdf = java.text.SimpleDateFormat("MMM_yyyy", java.util.Locale.getDefault())
+        return sdf.format(java.util.Date(cycleStartMs))
+    }
+
+    /** Key of the cycle [offset] months after the current one (0 = current). */
+    private fun cycleKeyAt(offset: Int): String {
+        val (cycleStart, _) = BillingCycleHelper.getCycleRange(settingsRepo.startDayOfMonth)
+        val cal = java.util.Calendar.getInstance().apply {
+            timeInMillis = cycleStart
+            add(java.util.Calendar.MONTH, offset)
+        }
+        return getCycleKey(cal.timeInMillis)
+    }
+
+    private fun loadRolloverState() {
+        val key = cycleKeyAt(0)
+        activeRolloverAmount.value = settingsRepo.rolloverBudgetMap[key] ?: 0L
+        currentCycleRolloverDecision.value = settingsRepo.getRolloverDecision(key)
+        isRolloverEnabled.value = settingsRepo.getRolloverEnabled(key)
+        rolloverMonths.value = rolloverPrefs.getInt("months|$key", 1).coerceIn(1, 2)
+    }
+
+    /**
+     * Writes this cycle's contribution to the next two cycles. Each target's total is
+     * (existing total − this source's previous contribution + new contribution), so
+     * several source cycles can safely feed the same target. Idempotent.
+     * Must be called inside [rolloverMutex] on an IO thread.
+     */
+    private fun writePlan(overspendPaise: Long, months: Int) {
+        val source = cycleKeyAt(0)
+        val (first, second) = splitRolloverOverspend(overspendPaise, months)
+        val totals = settingsRepo.rolloverBudgetMap
+        val edit = rolloverPrefs.edit()
+        listOf(cycleKeyAt(1) to first, cycleKeyAt(2) to second).forEach { (target, amount) ->
+            val planKey = "c|$source|$target"
+            val previous = rolloverPrefs.getLong(planKey, 0L)
+            if (previous != amount) {
+                val total = ((totals[target] ?: 0L) - previous + amount).coerceAtLeast(0L)
+                settingsRepo.setRolloverBudget(target, total)
+                edit.putLong(planKey, amount)
+            }
+        }
+        edit.commit()
+    }
+
+    /** choice: 0 = start fresh, 1 = deduct next cycle, 2 = split across next two cycles. */
+    fun setRolloverChoice(choice: Int, overspendPaise: Long) {
+        val picked = choice.coerceIn(0, 2)
+        isRolloverEnabled.value = picked != 0
+        if (picked != 0) rolloverMonths.value = picked
+        viewModelScope.launch(Dispatchers.IO) {
+            rolloverMutex.withLock {
+                withContext(NonCancellable) {
+                    val key = cycleKeyAt(0)
+                    settingsRepo.setRolloverEnabled(key, picked != 0)
+                    if (picked != 0) rolloverPrefs.edit().putInt("months|$key", picked).commit()
+                    writePlan(if (picked != 0) overspendPaise.coerceAtLeast(0L) else 0L, maxOf(picked, 1))
+                }
+            }
+        }
+    }
+
+    /** Keeps the saved plan in step with live overspend. Reads enabled/months from storage. */
+    fun syncRollover(overspendPaise: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            rolloverMutex.withLock {
+                withContext(NonCancellable) {
+                    val key = cycleKeyAt(0)
+                    val enabled = settingsRepo.getRolloverEnabled(key)
+                    val months = rolloverPrefs.getInt("months|$key", 1).coerceIn(1, 2)
+                    writePlan(if (enabled) overspendPaise.coerceAtLeast(0L) else 0L, months)
+                }
+            }
+        }
+    }
+
+    // Kept so existing callers still compile.
+    fun toggleRollover(enabled: Boolean, currentOverspendPaise: Long) =
+        setRolloverChoice(if (enabled) rolloverMonths.value else 0, currentOverspendPaise)
+
+    fun makeRolloverDecision(accepted: Boolean?, overspendPaise: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            rolloverMutex.withLock {
+                withContext(NonCancellable) {
+                    val key = cycleKeyAt(0)
+                    settingsRepo.markRolloverDecision(key, accepted)
+                    currentCycleRolloverDecision.value = accepted
+                    val months = rolloverPrefs.getInt("months|$key", 1).coerceIn(1, 2)
+                    writePlan(if (accepted == true) overspendPaise.coerceAtLeast(0L) else 0L, months)
+                }
+            }
+        }
+    }
+
+    fun applyBudgetRollover(overspendPaise: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            rolloverMutex.withLock {
+                withContext(NonCancellable) {
+                    val key = cycleKeyAt(0)
+                    writePlan(overspendPaise.coerceAtLeast(0L), rolloverPrefs.getInt("months|$key", 1).coerceIn(1, 2))
+                }
+            }
+        }
     }
 
     fun refreshAfterRestore() {
