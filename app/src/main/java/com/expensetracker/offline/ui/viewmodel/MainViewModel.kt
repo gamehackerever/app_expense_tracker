@@ -32,6 +32,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
+import java.util.Locale
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -574,7 +575,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val cleanAcc = acc.accountNumber?.trim()?.takeLast(4)?.takeIf { it.isNotEmpty() }
                 AccountInfo(cleanBank, cleanAcc)
             }
-            val byBank = normalized.groupBy { it.bankName.lowercase() }
+            val byBank = normalized.groupBy { it.bankName.lowercase(Locale.ROOT) }
             byBank.flatMap { (_, group) ->
                 val withAcc = group.filter { it.accountNumber != null }.distinctBy { it.accountNumber }
                 when {
@@ -594,7 +595,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val cleanAcc = item.accountNumber?.trim()?.takeLast(4)?.takeIf { it.isNotEmpty() }
                 item.copy(bankName = cleanBank, accountNumber = cleanAcc)
             }
-            val byBank = normalized.groupBy { it.bankName.lowercase() }
+            val byBank = normalized.groupBy { it.bankName.lowercase(Locale.ROOT) }
             byBank.flatMap { (_, bankGroup) ->
                 val primaryAcc = bankGroup.mapNotNull { it.accountNumber }.firstOrNull()
                 val unifiedGroup = if (bankGroup.first().bankName.equals("South Indian Bank", ignoreCase = true) && primaryAcc != null) {
@@ -603,7 +604,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     bankGroup.map { if (it.accountNumber == null && primaryAcc != null) it.copy(accountNumber = primaryAcc) else it }
                 }
                 unifiedGroup
-                    .groupBy { "${it.bankName.lowercase()}|${it.accountNumber ?: ""}" }
+                    .groupBy { "${it.bankName.lowercase(Locale.ROOT)}|${it.accountNumber ?: ""}" }
                     .map { (_, g) ->
                         val newestWithBal = g.filter { it.latestBalance != null }.maxByOrNull { it.lastUpdated }
                         val newestOverall = g.maxByOrNull { it.lastUpdated } ?: g.first()

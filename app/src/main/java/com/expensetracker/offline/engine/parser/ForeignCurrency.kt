@@ -2,6 +2,7 @@ package com.expensetracker.offline.engine.parser
 
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.util.Locale
 
 /**
  * International card alerts ("USD 2.12 spent on Kotak Credit Card ... Avl limit INR 38898.03") state the
@@ -23,7 +24,7 @@ object ForeignCurrency {
 
     /** @param amount the foreign amount as written, e.g. "2.12" or "1,250.00". @return paise, or null if unknown. */
     fun approxInrPaise(code: String, amount: String): Long? {
-        val rate = APPROX_INR_PER_UNIT[code.uppercase()]?.let { BigDecimal(it) } ?: return null
+        val rate = APPROX_INR_PER_UNIT[code.uppercase(Locale.ROOT)]?.let { BigDecimal(it) } ?: return null
         val value = amount.replace(",", "").toBigDecimalOrNull() ?: return null
         val paise = value.multiply(rate).multiply(BigDecimal(100)).setScale(0, RoundingMode.HALF_UP).toLong()
         return paise.takeIf { it > 0L }

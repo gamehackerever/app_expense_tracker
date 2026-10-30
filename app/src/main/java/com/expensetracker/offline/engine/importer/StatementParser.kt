@@ -112,8 +112,8 @@ object StatementParser {
             TimeZone.getTimeZone(tzMatch.value.trim().let { if (it.equals("UTC", true)) "UTC" else it })
         } else if (tzMatch != null) TimeZone.getTimeZone("Asia/Kolkata") else zone
         // am/pm in any case, with or without dots: "3:35 pm", "3:35 P.M."
-        s = s.replace(Regex("""(?i)\b([ap])\.?m\.?\b""")) { it.groupValues[1].uppercase() + "M" }
-        s = s.replace(Regex("""(?<=\d)(AM|PM)""", RegexOption.IGNORE_CASE)) { " " + it.value.uppercase() }
+        s = s.replace(Regex("""(?i)\b([ap])\.?m\.?\b""")) { it.groupValues[1].uppercase(Locale.ROOT) + "M" }
+        s = s.replace(Regex("""(?<=\d)(AM|PM)""", RegexOption.IGNORE_CASE)) { " " + it.value.uppercase(Locale.ROOT) }
         for (fmt in DATE_FORMATS) {
             val f = SimpleDateFormat(fmt.pattern, Locale.ENGLISH).apply { timeZone = useZone; isLenient = false }
             val pos = ParsePosition(0)
@@ -128,8 +128,8 @@ object StatementParser {
         if (t.isEmpty()) return t
         val letters = t.filter { it.isLetter() }
         if (letters.isNotEmpty() && letters.all { it.isUpperCase() }) {
-            return t.lowercase().split(' ').filter { it.isNotBlank() }
-                .joinToString(" ") { w -> w.replaceFirstChar { c -> c.uppercase() } }
+            return t.lowercase(Locale.ROOT).split(' ').filter { it.isNotBlank() }
+                .joinToString(" ") { w -> w.replaceFirstChar { c -> c.titlecase(Locale.ROOT) } }
         }
         return t
     }
@@ -142,7 +142,7 @@ object StatementParser {
 
     private fun gpayRow(verb: String, amount: String, rest: String, time: Pair<Long, Boolean>): StatementRow? {
         val paise = toPaise(amount) ?: return null
-        val debit = verb.lowercase().let { it == "paid" || it == "sent" }
+        val debit = verb.lowercase(Locale.ROOT).let { it == "paid" || it == "sent" }
         var payee = rest.trim()
         payee = payee.removePrefix("to ").removePrefix("To ").removePrefix("from ").removePrefix("From ")
         payee = payee.substringBefore(" using ").substringBefore(" via ").trim()
@@ -258,7 +258,7 @@ object StatementParser {
             val amount = MONEY.find(body)?.groupValues?.get(1)?.let { toPaise(it) }
             val whenPair = parseDate(listOfNotNull(b.date, b.time).joinToString(" ")) ?: parseDate(b.date)
             if (amount == null || whenPair == null) { skipped++; continue }
-            val verb = desc.groupValues[1].lowercase()
+            val verb = desc.groupValues[1].lowercase(Locale.ROOT)
             val typeToken = PP_TYPE.find(body)?.groupValues?.get(1)
             val debit = when (typeToken) {
                 "DEBIT" -> true
@@ -309,7 +309,7 @@ object StatementParser {
             val parts = n.split('/', '-').map { it.trim() }
             val pick = parts.firstOrNull { p ->
                 p.length >= 3 && p.any { it.isLetter() } && !p.all { it.isDigit() } &&
-                    p.uppercase() !in SEGMENT_NOISE && !p.contains('@') && !Regex("^[A-Z]{4}\\d{0,3}$").matches(p) &&
+                    p.uppercase(Locale.ROOT) !in SEGMENT_NOISE && !p.contains('@') && !Regex("^[A-Z]{4}\\d{0,3}$").matches(p) &&
                     !Regex("(?i)^(?:upi|imps|neft|rtgs)\\b").containsMatchIn(p)
             }
             if (pick != null) return titleCase(pick)
@@ -367,7 +367,7 @@ object StatementParser {
             } else if (amountI >= 0) {
                 val cell = c.getOrNull(amountI).orEmpty()
                 paise = parseAmountCell(cell)
-                val typeCell = (c.getOrNull(typeI).orEmpty() + " " + cell).lowercase()
+                val typeCell = (c.getOrNull(typeI).orEmpty() + " " + cell).lowercase(Locale.ROOT)
                 debit = when {
                     Regex("\\b(cr|credit|deposit|received)\\b").containsMatchIn(typeCell) -> false
                     Regex("\\b(dr|debit|withdrawal|paid|sent)\\b").containsMatchIn(typeCell) || cell.trim().startsWith("-") -> true

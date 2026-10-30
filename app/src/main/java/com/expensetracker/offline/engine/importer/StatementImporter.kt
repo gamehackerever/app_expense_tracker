@@ -17,12 +17,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.InputStream
+import java.util.Locale
 import java.util.zip.ZipInputStream
 
 /** Thrown when a PDF is picked but no PDF text library is available in the app. */
 class PdfLibraryMissingException : Exception(
     "Reading PDF statements needs the PDFBox-Android library. Add implementation(\"com.tom-roush:pdfbox-android:2.0.27.0\") to the app's build.gradle, or import the CSV / Google Takeout file instead."
 )
+
+private class StatementTooLargeException : Exception("Statement file exceeds the 30 MB import limit.")
 
 /**
  * Reads a payment statement the user picked and adds the payments the app does not already have.
@@ -60,6 +63,8 @@ class StatementImporter(private val context: Context, private val database: AppD
             readText(uri, name)
         } catch (e: PdfLibraryMissingException) {
             return@withContext Outcome.Failed(e.message.orEmpty())
+        } catch (e: StatementTooLargeException) {
+            return@withContext Outcome.Failed(e.message.orEmpty())
         } catch (e: Exception) {
             return@withContext Outcome.Failed("Could not read this file (${e.message ?: e.javaClass.simpleName}). If it is a password-protected PDF, open it elsewhere and export a CSV instead.")
         }
@@ -93,14 +98,18 @@ class StatementImporter(private val context: Context, private val database: AppD
             val (from, to) = if (row.timeKnown) {
                 (row.timestamp - 15 * 60_000L) to (row.timestamp + 15 * 60_000L)
             } else {
-                val dayStart = java.util.Calendar.getInstance().apply {
-                    timeInMillis = row.timestamp
-                    set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
-                    set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
-                }.timeInMillis
-                val dayEnd = java.util.Calendar.getInstance().apply {
-                    timeInMillis = dayStart; add(java.util.Calendar.DAY_OF_MONTH, 1)
-                }.timeInMillis - 1
+                val startCalendar = java.util.Calendar.getInstance()
+                startCalendar.timeInMillis = row.timestamp
+                startCalendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
+                startCalendar.set(java.util.Calendar.MINUTE, 0)
+                startCalendar.set(java.util.Calendar.SECOND, 0)
+                startCalendar.set(java.util.Calendar.MILLISECOND, 0)
+                val dayStart = startCalendar.timeInMillis
+                val endCalendar = java.util.Calendar.getInstance().apply {
+                    timeInMillis = dayStart
+                    add(java.util.Calendar.DAY_OF_MONTH, 1)
+                }
+                val dayEnd = endCalendar.timeInMillis - 1
                 dayStart to dayEnd
             }
             val key = "${row.amountPaise}|$type|${if (row.timeKnown) row.timestamp / (15 * 60_000L) else from}"
@@ -171,7 +180,7 @@ class StatementImporter(private val context: Context, private val database: AppD
 
     private fun readText(uri: Uri, name: String): String {
         val mime = context.contentResolver.getType(uri).orEmpty()
-        val lower = name.lowercase()
+        val lower = name.lowercase(Locale.ROOT)
         val open: () -> InputStream = {
             context.contentResolver.openInputStream(uri) ?: throw IllegalStateException("file not readable")
         }
@@ -189,10 +198,10 @@ class StatementImporter(private val context: Context, private val database: AppD
         ZipInputStream(input).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
-                val n = entry.name.lowercase()
+                val n = entry.name.lowercase(Locale.ROOT)
                 val wanted = !entry.isDirectory && (n.endsWith(".csv") ||
                     ((n.endsWith(".html") || n.endsWith(".json")) && (n.contains("google pay") || n.contains("gpay") || n.contains("my activity"))))
-                if (wanted && totalBytes < MAX_BYTES) {
+                if (wanted) {
                     val bytes = readBounded(zip, MAX_BYTES - totalBytes)
                     totalBytes += bytes.size
                     sb.append(bytes.toString(Charsets.UTF_8)).append('\n')
@@ -212,10 +221,18 @@ class StatementImporter(private val context: Context, private val database: AppD
         while (remaining > 0) {
             val read = input.read(buffer, 0, minOf(buffer.size, remaining))
             if (read < 0) break
-            if (read == 0) continue
+            if (read == 0) {
+                val singleByte = input.read()
+                if (singleByte < 0) break
+                output.write(singleByte)
+                remaining--
+                continue
+            }
             output.write(buffer, 0, read)
             remaining -= read
         }
+        // Don't silently parse/import only the first 30 MB of a larger statement.
+        if (remaining == 0 && input.read() != -1) throw StatementTooLargeException()
         return output.toByteArray()
     }
 

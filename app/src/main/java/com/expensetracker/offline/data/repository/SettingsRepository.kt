@@ -2,6 +2,7 @@ package com.expensetracker.offline.data.repository
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.util.Locale
 
 data class CreditCardConfig(
     val accountKey: String,
@@ -160,13 +161,17 @@ class SettingsRepository(context: Context) {
         if (name.isBlank() || phone.length < 8) return
         val obj = try { org.json.JSONObject(prefs.getString("key_contact_links_json", "{}") ?: "{}") }
                   catch (_: Exception) { org.json.JSONObject() }
-        obj.put(name.trim().lowercase(), phone)
+        obj.put(name.trim().lowercase(Locale.ROOT), phone)
         prefs.edit().putString("key_contact_links_json", obj.toString()).apply()
     }
 
     fun getLinkedPhone(name: String): String? = try {
         org.json.JSONObject(prefs.getString("key_contact_links_json", "{}") ?: "{}")
-            .optString(name.trim().lowercase(), "").takeIf { it.isNotBlank() }
+            .let { obj ->
+                obj.optString(name.trim().lowercase(Locale.ROOT), "")
+                    .ifBlank { obj.optString(name.trim().lowercase(), "") }
+                    .takeIf { it.isNotBlank() }
+            }
     } catch (_: Exception) {
         null
     }
@@ -203,11 +208,16 @@ class SettingsRepository(context: Context) {
         get() = prefs.getStringSet(KEY_CUSTOM_CATEGORIES, emptySet()) ?: emptySet()
         set(value) = prefs.edit().putStringSet(KEY_CUSTOM_CATEGORIES, value).apply()
 
+    private fun merchantAliasKey(payee: String, locale: Locale = Locale.ROOT) =
+        "$MERCHANT_ALIAS_PREFIX${payee.trim().lowercase(locale)}"
+
     fun getMerchantAlias(payee: String): String? =
-        prefs.getString("$MERCHANT_ALIAS_PREFIX${payee.trim().lowercase()}", null)
+        prefs.getString(merchantAliasKey(payee), null)
+            ?: prefs.getString(merchantAliasKey(payee, Locale.getDefault()), null)
 
     fun setMerchantAlias(oldPayee: String, newPayee: String) {
-        prefs.edit().putString("$MERCHANT_ALIAS_PREFIX${oldPayee.trim().lowercase()}", newPayee.trim()).apply()
+        val normalizedKey = merchantAliasKey(oldPayee)
+        prefs.edit().putString(normalizedKey, newPayee.trim()).apply()
     }
 
     /** Recurring-payment keys (see RecurringPaymentDetector.groupKey) the user marked "not recurring". */
@@ -528,10 +538,13 @@ class SettingsRepository(context: Context) {
     // ── Credit Card Cycle & Limit Configurations ─────────────────────────────
 
     fun accountKey(bankName: String, accountNumber: String?): String =
+        "${bankName.trim().lowercase(Locale.ROOT)}|${accountNumber?.trim()?.lowercase(Locale.ROOT) ?: "none"}"
+
+    private fun legacyAccountKey(bankName: String, accountNumber: String?): String =
         "${bankName.trim().lowercase()}|${accountNumber?.trim()?.lowercase() ?: "none"}"
 
     fun isDefaultCreditCard(bankName: String): Boolean {
-        val lower = bankName.lowercase()
+        val lower = bankName.lowercase(Locale.ROOT)
         return lower.endsWith(" cc") || lower.contains("credit card") ||
                 lower in setOf("onecard", "slice", "american express", "amex", "lazypay", "simpl")
     }
@@ -561,7 +574,8 @@ class SettingsRepository(context: Context) {
 
     fun getCreditCardConfig(bankName: String, accountNumber: String?): CreditCardConfig? {
         val key = accountKey(bankName, accountNumber)
-        val stored = getCreditCardConfigs()[key]
+        val configs = getCreditCardConfigs()
+        val stored = configs[key] ?: configs[legacyAccountKey(bankName, accountNumber)]
         if (stored != null) return if (stored.isCreditCard) stored else null
         return if (isDefaultCreditCard(bankName)) CreditCardConfig(accountKey = key) else null
     }
@@ -572,7 +586,9 @@ class SettingsRepository(context: Context) {
      */
     fun resolveAccountType(bankName: String?, accountNumber: String?, parsedType: String?): String {
         if (bankName != null) {
-            val stored = getCreditCardConfigs()[accountKey(bankName, accountNumber)]
+            val configs = getCreditCardConfigs()
+            val stored = configs[accountKey(bankName, accountNumber)]
+                ?: configs[legacyAccountKey(bankName, accountNumber)]
             if (stored != null) return if (stored.isCreditCard) "CREDIT_CARD" else "BANK"
         }
         return if (parsedType.equals("CREDIT_CARD", ignoreCase = true)) "CREDIT_CARD" else "BANK"
@@ -581,13 +597,16 @@ class SettingsRepository(context: Context) {
     /** Flips the per-account switch while keeping limit / statement day / due day. */
     fun setCreditCardEnabled(bankName: String, accountNumber: String?, enabled: Boolean) {
         val key = accountKey(bankName, accountNumber)
-        val existing = getCreditCardConfigs()[key] ?: CreditCardConfig(accountKey = key)
+        val configs = getCreditCardConfigs()
+        val existing = configs[key] ?: configs[legacyAccountKey(bankName, accountNumber)]
+            ?: CreditCardConfig(accountKey = key)
         saveCreditCardConfig(bankName, accountNumber, existing.copy(isCreditCard = enabled))
     }
 
     fun saveCreditCardConfig(bankName: String, accountNumber: String?, config: CreditCardConfig) {
         val key = accountKey(bankName, accountNumber)
         val current = getCreditCardConfigs().toMutableMap()
+        current.remove(legacyAccountKey(bankName, accountNumber))
         current[key] = config.copy(accountKey = key)
         val obj = org.json.JSONObject()
         current.forEach { (k, c) ->
@@ -611,7 +630,7 @@ class SettingsRepository(context: Context) {
         getCreditCardConfigs().values.forEach { c ->
             if (!c.isCreditCard) return@forEach
             c.payeeAliases.split(',', ';', '\n')
-                .map { it.trim().lowercase() }
+                .map { it.trim().lowercase(Locale.ROOT) }
                 .filter { it.length >= 3 }
                 .forEach { out.add(it) }
             val bank = c.accountKey.substringBefore('|').removeSuffix(" cc").trim()

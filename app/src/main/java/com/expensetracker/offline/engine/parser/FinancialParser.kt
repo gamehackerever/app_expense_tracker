@@ -249,7 +249,7 @@ object FinancialParser {
             }
         }
 
-        val lowerText = combinedText.lowercase()
+        val lowerText = combinedText.lowercase(Locale.ROOT)
         val hasTransactionVerb = FINANCIAL_KEYWORDS.any { it.matcher(lowerText).find() }
         val isReversal = REVERSAL_PATTERN.matcher(combinedText).find()
         val detectedType = if (isReversal) TransactionType.CREDIT else detectTransactionType(combinedText)
@@ -363,7 +363,7 @@ object FinancialParser {
         type: TransactionType?,
         userFallback: String = "UPI Payment"
     ): String {
-        val lower = rawText.lowercase()
+        val lower = rawText.lowercase(Locale.ROOT)
         val effectiveDefault = if (userFallback.isBlank() || userFallback.equals("Bank Transfer", ignoreCase = true)) {
             "UPI Payment"
         } else {
@@ -436,7 +436,7 @@ object FinancialParser {
     /** (currency code, amount text) of a foreign-currency amount such as "USD 2.12" or "$2.12", if any. */
     private fun extractForeign(text: String): Pair<String, String>? {
         val sanitized = text.replace(BALANCE_SANITIZER_REGEX, "").replace(LIMIT_SANITIZER_REGEX, "")
-        FOREIGN_AMOUNT_REGEX.find(sanitized)?.let { return it.groupValues[1].uppercase() to it.groupValues[2] }
+        FOREIGN_AMOUNT_REGEX.find(sanitized)?.let { return it.groupValues[1].uppercase(Locale.ROOT) to it.groupValues[2] }
         DOLLAR_AMOUNT_REGEX.find(sanitized)?.let { return "USD" to it.groupValues[1] }
         return null
     }
@@ -509,7 +509,7 @@ object FinancialParser {
     }
 
     private fun isAppNameOrGeneric(title: String): Boolean {
-        val t = title.lowercase().trim()
+        val t = title.lowercase(Locale.ROOT).trim()
         val isGenericApp = t in setOf(
             "google pay", "gpay", "phonepe", "paytm", "bhim", "alert",
             "bank", "credit alert", "debit alert", "amazon pay", "super.money",
@@ -517,7 +517,7 @@ object FinancialParser {
             "cred", "kiwi", "tata neu", "fampay", "whatsapp"
         )
         val isSmsHeader = SMS_HEADER_REGEX.matches(title) || BANK_HEADER_REGEX.matches(title) ||
-                title.uppercase() in setOf(
+                title.uppercase(Locale.ROOT) in setOf(
             "FEDBK", "FEDBNK", "HDFCBK", "SBIINB", "ICICIB",
             "AXISBK", "KOTAKB", "CANBNK", "PNBSMS", "SIBL", "YESBNK", "SIBSMS",
             "BOBTXN", "BOIIND", "IOBCHN", "INDBNK", "CBIN", "UCOBNK", "IDBIBK", "RBLBNK"
@@ -548,8 +548,8 @@ object FinancialParser {
             return null
         }
 
-        val titleCased = cleaned.lowercase().split(" ").filter { it.isNotBlank() }.joinToString(" ") { word ->
-            word.replaceFirstChar { if (it.isLowerCase()) it.uppercase() else it.toString() }
+        val titleCased = cleaned.lowercase(Locale.ROOT).split(" ").filter { it.isNotBlank() }.joinToString(" ") { word ->
+            word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
         }.ifBlank { return null }
 
         return when {
@@ -565,7 +565,7 @@ object FinancialParser {
             }
             val titleMatch = TITLE_BANK_REGEX.find(title)
             if (titleMatch != null) {
-                return titleMatch.groupValues[1].uppercase() + " Bank"
+                return titleMatch.groupValues[1].uppercase(Locale.ROOT) + " Bank"
             }
         }
 
@@ -573,7 +573,7 @@ object FinancialParser {
         if (subtextMatch != null) {
             val rawBank = subtextMatch.groupValues[1].trim()
             if (rawBank.isNotBlank() && rawBank.length > 2 && !rawBank.equals("UPI", ignoreCase = true)) {
-                return rawBank.uppercase() + " Bank"
+                return rawBank.uppercase(Locale.ROOT) + " Bank"
             }
         }
 
@@ -587,7 +587,7 @@ object FinancialParser {
                 val bank = matcher.group(1)?.trim()
                 if (!bank.isNullOrBlank()) {
                     return bank.replace(Regex("(?i)\\s+bank$"), " Bank")
-                        .replaceFirstChar { it.uppercase() }
+                        .replaceFirstChar { it.titlecase(Locale.ROOT) }
                 }
             }
         }
@@ -637,9 +637,9 @@ object FinancialParser {
         }
 
         return trimmed.replace(Regex("\\s+"), " ")
-            .lowercase()
+            .lowercase(Locale.ROOT)
             .split(" ")
-            .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
+            .joinToString(" ") { word -> word.replaceFirstChar { it.titlecase(Locale.ROOT) } }
             .ifBlank { null }
     }
 

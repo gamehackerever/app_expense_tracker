@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import java.io.File
+import java.util.Locale
 
 class TransactionRepository(
     private val database: AppDatabase,
@@ -97,7 +98,7 @@ class TransactionRepository(
             val folded = debts
                 .map { it.copy(debtorName = it.debtorName.trim()) }
                 .filter { it.debtorName.isNotEmpty() && it.amountOwed > 0L }
-                .groupBy { it.debtorName.lowercase() }
+                .groupBy { it.debtorName.lowercase(Locale.ROOT) }
                 .map { (_, group) ->
                     val keep = group.firstOrNull { it.id != 0L && existingMap.containsKey(it.id) } ?: group.first()
                     keep.copy(amountOwed = group.sumOf { it.amountOwed })
@@ -266,21 +267,22 @@ class TransactionRepository(
     }
 
     suspend fun insertTransaction(transaction: TransactionEntity): Long {
+        var derivedBalance: Long? = null
         val id = database.withTransaction {
             val effectiveTxn = if (transaction.balance == null && transaction.bankName != null) {
                 val prevBalance = transactionDao.getLatestBalanceForAccountSync(transaction.bankName, transaction.accountNumber)
-                if (prevBalance != null) {
+                val latestBalanceTimestamp = transactionDao.getLatestBalanceTimestampForAccountSync(
+                    transaction.bankName,
+                    transaction.accountNumber
+                )
+                // A backdated transaction cannot be applied on top of today's balance. Doing so
+                // would make the derived balance look current and corrupt future account totals.
+                if (prevBalance != null &&
+                    (latestBalanceTimestamp == null || transaction.timestamp >= latestBalanceTimestamp)
+                ) {
                     val delta = if (transaction.type == TransactionType.DEBIT) -transaction.amount else transaction.amount
-                    val nextBal = (prevBalance + delta).coerceAtLeast(0L)
-                    context?.let { ctx ->
-                        BalanceCache.updateIfNewer(
-                            BalanceCache.prefs(ctx),
-                            transaction.bankName,
-                            transaction.accountNumber,
-                            nextBal,
-                            maxOf(transaction.timestamp, System.currentTimeMillis())
-                        )
-                    }
+                    val nextBal = prevBalance + delta
+                    derivedBalance = nextBal
                     transaction.copy(balance = nextBal)
                 } else transaction
             } else transaction
@@ -288,6 +290,17 @@ class TransactionRepository(
             val newId = transactionDao.insertTransaction(effectiveTxn)
             effectiveTxn.linkedDebtId?.let { reconcileDebt(it) }
             newId
+        }
+        derivedBalance?.let { balance ->
+            context?.let { ctx ->
+                BalanceCache.updateIfNewer(
+                    BalanceCache.prefs(ctx),
+                    transaction.bankName,
+                    transaction.accountNumber,
+                    balance,
+                    transaction.timestamp
+                )
+            }
         }
         refreshWidget()
         return id
@@ -386,9 +399,7 @@ class TransactionRepository(
 
     suspend fun learnCategoryRule(payee: String, category: String) {
         if (CategoryClassifier.isGenericPayee(payee)) return
-        val pattern = payee.trim().lowercase()
-            .replace("%", "\\%")
-            .replace("_", "\\_")
+        val pattern = payee.trim().lowercase(Locale.ROOT).replace("%", "\\%").replace("_", "\\_")
         if (pattern.length >= 3 &&
             !CategoryClassifier.isGenericPayee(pattern) &&
             !category.equals("Uncategorized", ignoreCase = true) &&
@@ -585,7 +596,9 @@ class TransactionRepository(
                         anyHealed = true
                         continue
                     }
-                    if (revAmt == null || revAmt <= 0L) continue
+                    if (revAmt == null || revAmt <= 0L) {
+                        continue
+                    }
                     val revType = rev.type ?: parsedRev.type ?: continue
                     val alreadyLogged = remainingTxns.any { t ->
                         t.type == revType &&
@@ -604,12 +617,12 @@ class TransactionRepository(
                 refreshWidget()
             }
             settingsRepo?.let { it.lastHealAt = healNow; it.healVersion = HEAL_VERSION }
-            } // healDue
+        } // healDue
         }
 
         val recent = transactionDao.getRecentTransactions(500)
         if (recent.isEmpty()) return
-        val existingRules = categoryRuleDao.getAllRules().associateBy { it.merchantPattern.lowercase() }
+        val existingRules = categoryRuleDao.getAllRules().associateBy { it.merchantPattern.lowercase(Locale.ROOT) }
         val grouped = recent
             .filter {
                 it.type == TransactionType.DEBIT &&
@@ -621,7 +634,7 @@ class TransactionRepository(
                         it.category != "Split Settlement"
             }
             .groupBy {
-                it.payee.trim().lowercase()
+                it.payee.trim().lowercase(Locale.ROOT)
                     .replace("%", "\\%")
                     .replace("_", "\\_")
             }
@@ -695,13 +708,14 @@ class TransactionRepository(
                 continue
             }
 
-            val rawPayee = item.extractedPartialPayee ?: parsed.payee
-            val isMissing = rawPayee.isNullOrBlank() ||
-                rawPayee.equals("Unknown", ignoreCase = true) ||
-                rawPayee.matches(NUMERIC_PAYEE_REGEX)
+            fun usablePayee(candidate: String?): String? = candidate?.trim()?.takeIf {
+                it.isNotBlank() &&
+                    !it.equals("Unknown", ignoreCase = true) &&
+                    !it.matches(NUMERIC_PAYEE_REGEX)
+            }
+            val rawPayee = usablePayee(item.extractedPartialPayee) ?: usablePayee(parsed.payee)
 
-            val resolvedPayee = when {
-                !isMissing && rawPayee != null -> rawPayee
+            val resolvedPayee = rawPayee ?: when {
                 parsed.isTransfer -> "Self Transfer"
                 else -> com.expensetracker.offline.engine.parser.FinancialParser.inferFallbackPayee(
                     item.rawContent,
@@ -1039,8 +1053,8 @@ class TransactionRepository(
             existing.accountNumber == null || parsed.accountNumber == null
         if (!wildcard) return true
         if (kotlin.math.abs(existing.timestamp - timestamp) > WILDCARD_MATCH_WINDOW_MS) return false
-        val a = existing.payee.trim().lowercase()
-        val b = parsed.payee?.trim()?.lowercase().orEmpty()
+        val a = existing.payee.trim().lowercase(Locale.ROOT)
+        val b = parsed.payee?.trim()?.lowercase(Locale.ROOT).orEmpty()
         if (a.isEmpty() || b.isEmpty()) return true
         if (CategoryClassifier.isGenericPayee(existing.payee) || CategoryClassifier.isGenericPayee(parsed.payee ?: "")) return true
         return a.contains(b) || b.contains(a)
@@ -1273,3 +1287,4 @@ class TransactionRepository(
         private val NUMERIC_PAYEE_REGEX = Regex("""^\d{8,12}.*""")
     }
 }
+
