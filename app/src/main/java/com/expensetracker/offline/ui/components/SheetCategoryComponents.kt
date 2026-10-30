@@ -1,5 +1,6 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -52,19 +53,7 @@ fun SheetCategoryPicker(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (hasCategoryIcon(selected) || isNoCategory(selected)) {
-                    Icon(selectedIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
-                } else {
-                    Text(categoryInitial(selected), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = getCategoryColor(selected))
-                }
-            }
+            CategoryAvatar(category = selected, size = 36.dp)
             Column(modifier = Modifier.weight(1f)) {
                 Text("Category", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(2.dp))
@@ -86,7 +75,7 @@ fun SheetCategoryPicker(
     }
 
     if (showPicker) {
-        ModalBottomSheet(
+        ResistantModalBottomSheet(
             onDismissRequest = { showPicker = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = MaterialTheme.colorScheme.background

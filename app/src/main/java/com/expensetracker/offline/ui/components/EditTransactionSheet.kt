@@ -1,5 +1,7 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.util.confirm
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -40,6 +42,8 @@ import com.expensetracker.offline.data.local.dao.AccountInfo
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
+import com.expensetracker.offline.data.repository.CustomBudget
+import com.expensetracker.offline.ui.dashboard.BudgetPickerRow
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.util.NecessityManager
 import kotlinx.coroutines.launch
@@ -70,10 +74,12 @@ fun EditTransactionSheet(
     suggestedSettlementAmount: Long? = null,
     onSettleSuggested: (() -> Unit)? = null,
     initialSplitPeople: List<String> = listOf("You"),
-    onSaveSplit: ((List<SplitParticipant>) -> Unit)? = null
+    onSaveSplit: ((List<SplitParticipant>) -> Unit)? = null,
+    customBudgets: List<CustomBudget> = emptyList()
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    var selectedBudgetId by remember { mutableStateOf(transaction.budgetId) }
     val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
 
@@ -94,7 +100,8 @@ fun EditTransactionSheet(
     }
 
     var payee by rememberSaveable { mutableStateOf(transaction.payee) }
-    var note by rememberSaveable { mutableStateOf(transaction.note.orEmpty()) }
+    val originalNote = transaction.note.orEmpty().takeUnless { com.expensetracker.offline.util.ImportedSource.isSystemNote(it) }.orEmpty()
+    var note by rememberSaveable { mutableStateOf(originalNote) }
 
     var amountStr by rememberSaveable { mutableStateOf(String.format(Locale.US, "%.2f", transaction.amount / 100.0)) }
 
@@ -115,7 +122,7 @@ fun EditTransactionSheet(
     }
 
     val initialNoteText = remember(transaction.itemsSummary, transaction.note) {
-        transaction.itemsSummary?.takeIf { it.isNotBlank() } ?: transaction.note.orEmpty()
+        transaction.itemsSummary?.takeIf { it.isNotBlank() } ?: originalNote
     }
     var itemsSummary by rememberSaveable { mutableStateOf(initialNoteText) }
 
@@ -162,7 +169,7 @@ fun EditTransactionSheet(
                     transactionType != transaction.type ||
                     excludeFromSpend != transaction.excludeFromSpend ||
                     itemsSummary.trim() != initialNoteText.trim() ||
-                    note.trim() != (transaction.note ?: "").trim() ||
+                    note.trim() != originalNote.trim() ||
                     transactionDateMillis != transaction.timestamp ||
                     receiptImageUri != transaction.receiptImageUri ||
                     editedBankName != transaction.bankName ||
@@ -203,7 +210,7 @@ fun EditTransactionSheet(
         AppDialog(
             title = "Discard changes?",
             onDismiss = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                haptic.tap()
                 showUnsavedDialog = false
                 scope.launch { runCatching { sheetState.show() } }
             },
@@ -211,7 +218,7 @@ fun EditTransactionSheet(
             confirmText = "Discard",
             destructive = true,
             onConfirm = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
                 showUnsavedDialog = false
                 receiptImageUri?.takeIf { it != transaction.receiptImageUri }?.let { deleteReceiptFile(context, it) }
                 onDismiss()
@@ -230,7 +237,7 @@ fun EditTransactionSheet(
         NewCategoryDialog(
             onDismiss = { showNewCategoryDialog = false },
             onAdd = { newCategory ->
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                haptic.tap()
                 savedCustomCategories = savedCustomCategories + newCategory
                 prefs.edit().putStringSet("key_custom_categories", savedCustomCategories).apply()
                 selectedCategory = newCategory
@@ -242,7 +249,7 @@ fun EditTransactionSheet(
         )
     }
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = {
             if (hasUnsavedChanges) showUnsavedDialog = true else onDismiss()
         },
@@ -275,7 +282,7 @@ fun EditTransactionSheet(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 contentDescription = "Duplicate",
                                 onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    haptic.tap()
                                     onDuplicate(transaction)
                                 }
                             )
@@ -284,7 +291,7 @@ fun EditTransactionSheet(
                                 tint = MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
                                 contentDescription = "Delete",
                                 onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    haptic.tap()
                                     onDelete(transaction.id)
                                 }
                             )
@@ -318,7 +325,7 @@ fun EditTransactionSheet(
                             Spacer(Modifier.width(12.dp))
                             Button(
                                 onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    haptic.confirm()
                                     onSettleSuggested?.invoke()
                                     onDismiss()
                                 },
@@ -354,7 +361,7 @@ fun EditTransactionSheet(
                         )
                         OutlinedButton(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                haptic.confirm()
                                 onUndoRepayment(transaction.id)
                                 onDismiss()
                             },
@@ -436,7 +443,7 @@ fun EditTransactionSheet(
                     ) {
                         SheetCard(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 applyToAllPast = !applyToAllPast
                             },
                             containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
@@ -457,7 +464,7 @@ fun EditTransactionSheet(
                                 }
                                 Text(
                                     labelText,
-                                    fontSize = 13.5.sp,
+                                    fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.weight(1f).padding(end = 8.dp)
@@ -516,9 +523,20 @@ fun EditTransactionSheet(
                         )
 
                         if (transactionType == TransactionType.DEBIT) {
+                            BudgetPickerRow(
+                                budgets = customBudgets,
+                                selectedId = selectedBudgetId,
+                                onSelect = { id ->
+                                    selectedBudgetId = id
+                                    if (customBudgets.firstOrNull { it.id == id }?.excludeFromMonthly == true) {
+                                        excludeFromSpend = true
+                                        lastNonTransferExclude = true
+                                    }
+                                }
+                            )
                             SheetCard(
                                 onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    haptic.tap()
                                     val next = !excludeFromSpend
                                     excludeFromSpend = next
                                     lastNonTransferExclude = next
@@ -546,7 +564,7 @@ fun EditTransactionSheet(
                                     Switch(
                                         checked = excludeFromSpend,
                                         onCheckedChange = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            haptic.tap()
                                             excludeFromSpend = it
                                             lastNonTransferExclude = it
                                         },
@@ -566,7 +584,7 @@ fun EditTransactionSheet(
                                     containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
                                     borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
                                     onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptic.tap()
                                         onRemoveFromFixedCosts()
                                     }
                                 ) {
@@ -620,7 +638,7 @@ fun EditTransactionSheet(
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         FilledTonalButton(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 if (canSplit) onSplit?.invoke() else onLinkToBill?.invoke()
                             },
                             enabled = !hasUnsavedChanges,
@@ -632,7 +650,7 @@ fun EditTransactionSheet(
                                 disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                             ),
                             border = null,
-                            modifier = Modifier.fillMaxWidth().height(52.dp)
+                            modifier = Modifier.fillMaxWidth().height(48.dp)
                         ) {
                             Icon(
                                 if (canSplit) Icons.AutoMirrored.Filled.CallSplit else Icons.Default.Link,
@@ -699,6 +717,7 @@ fun EditTransactionSheet(
                             category = selectedCategory,
                             type = transactionType,
                             excludeFromSpend = excludeFromSpend,
+                            budgetId = selectedBudgetId,
                             timestamp = transactionDateMillis,
                             note = null,
                             itemsSummary = itemsSummary.trim().ifBlank { null },
@@ -706,7 +725,7 @@ fun EditTransactionSheet(
                             bankName = editedBankName,
                             accountNumber = editedAccountNumber
                         )
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        haptic.confirm()
                         onSave(updatedTxn)
                         if (hasItemizedFriendsAssigned && onSaveSplit != null) {
                             val splitParticipants = itemizedSplitShares.map { (person, paise) ->

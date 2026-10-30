@@ -36,6 +36,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.ShoppingBasket
@@ -77,6 +78,7 @@ import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.getCategoryColor
 import com.expensetracker.offline.ui.theme.getCategoryIcon
 import com.expensetracker.offline.ui.theme.hasCategoryIcon
+import com.expensetracker.offline.util.ImportedSource
 import java.math.BigDecimal
 import java.text.NumberFormat
 import java.util.Locale
@@ -231,15 +233,23 @@ fun DashboardTransactionCard(
 
     val glyphColor = if (colorfulCategories) getCategoryColor(transaction.category) else colors.onSurfaceVariant
     val categoryIcon = getCategoryIcon(transaction.category)
-    val payeeInitial = remember(transaction.payee) {
-        transaction.payee.trim().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()
-    }
 
-    val timeText = remember(transaction.timestamp, showDate) {
-        val time = TimeFormatCache.get(context).format(java.util.Date(transaction.timestamp))
-        if (showDate) {
-            TimeFormatCache.getDate().format(java.util.Date(transaction.timestamp)) + " \u2022 " + time
-        } else time
+    val isPersonPayee = remember(transaction.payee, transaction.category, transaction.type) {
+        transaction.type == TransactionType.DEBIT &&
+            transaction.category.equals("Uncategorized", ignoreCase = true) &&
+            com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(transaction.payee)
+    }
+    val importedLabel = remember(transaction.rawContent) { ImportedSource.shortLabel(transaction.rawContent) }
+    val timeText = remember(transaction.timestamp, showDate, importedLabel) {
+        val date = java.util.Date(transaction.timestamp)
+        // Statements that only carry a date are stored at midnight: don't show a made-up "00:00".
+        val noRealTime = importedLabel != null && ImportedSource.hasNoRealTime(transaction.timestamp)
+        val time = if (noRealTime) "" else TimeFormatCache.get(context).format(date)
+        when {
+            showDate && time.isNotEmpty() -> TimeFormatCache.getDate().format(date) + " \u2022 " + time
+            showDate -> TimeFormatCache.getDate().format(date)
+            else -> time
+        }
     }
 
     val cardInteraction = remember { MutableInteractionSource() }
@@ -293,15 +303,12 @@ fun DashboardTransactionCard(
     val showAutoMarker = sourceMarker == SourceMarker.AUTO && isAuto
 
     val showCategoryText = showCategory || isRepayment
-    val metaTail = buildString {
-        if (showCategoryText) append(" · ")
-        append(timeText)
-        if (showBankBadge && bankText != null) {
-            append(" · ")
-            append(bankText)
-        }
-        if (showManualMarker) append(" · Manual")
+    val tailParts = buildList {
+        if (timeText.isNotEmpty()) add(timeText)
+        if (showBankBadge && bankText != null) add(bankText)
+        if (importedLabel != null) add(importedLabel) else if (showManualMarker) add("Manual")
     }
+    val metaTail = if (tailParts.isEmpty()) "" else (if (showCategoryText) " · " else "") + tailParts.joinToString(" · ")
 
     val positive = AppColors.positive
     val warning = AppColors.warning
@@ -392,10 +399,23 @@ fun DashboardTransactionCard(
 
                 when {
                     isRepayment || (isCredit && transaction.category.equals("Uncategorized", ignoreCase = true)) ->
-                        CategoryBadge(icon = Icons.Default.SouthWest, initial = null, tint = AppColors.positive)
-                    !hasCategoryIcon(transaction.category) && payeeInitial != null ->
-                        CategoryBadge(icon = null, initial = payeeInitial, tint = glyphColor)
-                    else -> CategoryBadge(icon = categoryIcon, initial = null, tint = glyphColor)
+                        CategoryAvatar(
+                            category = transaction.category,
+                            size = 44.dp,
+                            tint = AppColors.positive,
+                            iconOverride = Icons.Default.SouthWest
+                        )
+                    // A UPI payment to an individual: a person glyph reads better than the generic "unknown" shape.
+                    isPersonPayee -> CategoryAvatar(
+                        category = transaction.category,
+                        size = 44.dp,
+                        iconOverride = Icons.Default.Person
+                    )
+                    else -> CategoryAvatar(
+                        category = transaction.category,
+                        size = 44.dp,
+                        tint = if (colorfulCategories) glyphColor else null
+                    )
                 }
 
                 Spacer(Modifier.width(16.dp))
@@ -476,7 +496,7 @@ fun DashboardTransactionCard(
 
                     val detail = remember(transaction.itemsSummary, transaction.note, transaction.rawContent, transaction.source) {
                         val summary = flattenLines(transaction.itemsSummary)
-                        val noteTxt = transaction.note?.trim()?.takeIf { it.isNotBlank() }
+                        val noteTxt = transaction.note?.trim()?.takeIf { it.isNotBlank() && !ImportedSource.isSystemNote(it) }
 
                         val isRawDump = noteTxt != null && transaction.source != TransactionSource.MANUAL && (
                                 noteTxt == transaction.rawContent.trim() ||
@@ -531,27 +551,6 @@ fun DashboardTransactionCard(
                         )
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CategoryBadge(icon: ImageVector?, initial: Char?, tint: Color) {
-    Surface(
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-        modifier = Modifier.size(44.dp)
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            when {
-                icon != null -> Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
-                initial != null -> Text(
-                    text = initial.toString(),
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = tint
-                )
             }
         }
     }

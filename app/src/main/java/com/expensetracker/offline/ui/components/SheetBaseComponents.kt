@@ -1,5 +1,6 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -40,15 +41,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.ui.theme.AppRadius
 
-internal fun HapticFeedback.tap() = performHapticFeedback(HapticFeedbackType.TextHandleMove)
 
 @Composable
 fun appSwitchColors() = SwitchDefaults.colors(
     checkedThumbColor = MaterialTheme.colorScheme.surface,
     checkedTrackColor = MaterialTheme.colorScheme.onSurface,
     uncheckedThumbColor = MaterialTheme.colorScheme.outline,
-    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-    uncheckedBorderColor = Color.Transparent
+    // Visible track + border when off: on a grey card the old transparent track made the switch look like a lone dot.
+    uncheckedTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f),
+    uncheckedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
 )
 
 @Composable
@@ -359,7 +360,7 @@ fun SheetChip(
                         .background(accent.copy(alpha = 0.22f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(monogram, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = accent)
+                    Text(monogram, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = accent)
                 }
             }
             Text(
@@ -504,7 +505,7 @@ fun SheetPrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit) {
     ) {
         Text(
             text = text,
-            fontSize = 15.5.sp,
+            fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             softWrap = false,

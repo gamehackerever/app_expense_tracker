@@ -1,5 +1,10 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.util.confirm
+import com.expensetracker.offline.data.repository.NetWorthMath
+import com.expensetracker.offline.data.repository.ManualAccountStore
+import com.expensetracker.offline.data.repository.ManualAccount
 import android.content.Context
 import android.text.format.DateFormat
 import android.text.format.DateUtils
@@ -125,6 +130,13 @@ fun AccountsDialog(
     var editingAccount by remember { mutableStateOf<AccountBalanceInsight?>(null) }
     var showAddAccountDialog by remember { mutableStateOf(false) }
 
+    // Savings, FDs, investments and loans that never send SMS, plus the net worth they feed.
+    val manualStore = remember { ManualAccountStore(settingsRepo.prefs) }
+    var manualVersion by remember { mutableIntStateOf(0) }
+    val manualAccounts = remember(manualVersion) { manualStore.load() }
+    var showManualDialog by remember { mutableStateOf(false) }
+    var editingManual by remember { mutableStateOf<ManualAccount?>(null) }
+
     val listMaxHeight = minOf(maxOf((LocalConfiguration.current.screenHeightDp * 0.36f).dp, 160.dp), 340.dp)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -155,7 +167,7 @@ fun AccountsDialog(
         label = "syncAngle"
     )
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -176,6 +188,7 @@ fun AccountsDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 24.dp)
         ) {
@@ -196,7 +209,7 @@ fun AccountsDialog(
                         Spacer(Modifier.height(2.dp))
                         Text(
                             "Total CC Debt: ₹${String.format(Locale.US, "%,.2f", totalCreditCardDebt / 100.0)}",
-                            fontSize = 13.5.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = AppColors.negative
                         )
@@ -204,7 +217,7 @@ fun AccountsDialog(
                 }
                 IconButton(
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         syncing = true
                         onRefresh()
                     },
@@ -218,7 +231,7 @@ fun AccountsDialog(
                     )
                 }
                 IconButton(onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    haptic.tap()
                     onDismiss()
                 }) {
                     Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -241,6 +254,34 @@ fun AccountsDialog(
 
             Spacer(Modifier.height(18.dp))
 
+            val netWorth = remember(accountBalances, manualAccounts, totalCreditCardDebt, ccConfigVersion) {
+                NetWorthMath.compute(
+                    bankBalancesPaise = accountBalances
+                        .filter { settingsRepo.getCreditCardConfig(it.bankName, it.accountNumber) == null }
+                        .mapNotNull { it.latestBalance },
+                    manual = manualAccounts,
+                    cardDebtPaise = totalCreditCardDebt
+                )
+            }
+            if (manualAccounts.isNotEmpty() || totalCreditCardDebt > 0L || accountBalances.size > 1) {
+                NetWorthStrip(netWorth)
+                Spacer(Modifier.height(14.dp))
+            }
+            ManualAccountsSection(
+                accounts = manualAccounts,
+                onAdd = {
+                    haptic.tap()
+                    editingManual = null
+                    showManualDialog = true
+                },
+                onEdit = {
+                    haptic.tap()
+                    editingManual = it
+                    showManualDialog = true
+                }
+            )
+            Spacer(Modifier.height(18.dp))
+
             if (accountBalances.isEmpty()) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
@@ -251,14 +292,14 @@ fun AccountsDialog(
                     if (onAddManualAccount != null) {
                         OutlinedButton(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 showAddAccountDialog = true
                             },
                             shape = RoundedCornerShape(AppRadius.small)
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Add Offline Account", fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                            Text("Add Offline Account", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                         }
                     }
                 }
@@ -312,7 +353,7 @@ fun AccountsDialog(
                                     ccConfig?.let { usedFromAvailableLimit(settingsRepo, account.bankName, account.accountNumber, it, ccUnbilledPaise) } ?: ccUnbilledPaise
                                 },
                                 onConfigureCc = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    haptic.tap()
                                     editingAccount = account
                                 }
                             )
@@ -325,7 +366,7 @@ fun AccountsDialog(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(AppRadius.medium))
                                     .quietClickable {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptic.tap()
                                         editingAccount = account
                                     }
                             ) {
@@ -343,7 +384,7 @@ fun AccountsDialog(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             "Settings & Adjustments",
-                                            fontSize = 13.5.sp,
+                                            fontSize = 14.sp,
                                             fontWeight = FontWeight.SemiBold,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
@@ -360,6 +401,14 @@ fun AccountsDialog(
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
+                            }
+                        }
+                        // With exactly one account the list below never shows, so the add button must live here too.
+                        if (onAddManualAccount != null) {
+                            Spacer(Modifier.height(12.dp))
+                            AddAccountButton {
+                                haptic.tap()
+                                showAddAccountDialog = true
                             }
                         }
                     } else {
@@ -387,7 +436,7 @@ fun AccountsDialog(
                                     isSelected = selectedAccount == null,
                                     balance = combinedBal,
                                     onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptic.tap()
                                         onAccountSelected(null)
                                     }
                                 )
@@ -424,11 +473,11 @@ fun AccountsDialog(
                                     ccConfig?.let { usedFromAvailableLimit(settingsRepo, account.bankName, account.accountNumber, it, ccUnbilledPaise) } ?: ccUnbilledPaise
                                 },
                                     onConfigureCc = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptic.tap()
                                         editingAccount = account
                                     },
                                     onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptic.tap()
                                         onAccountSelected(AccountInfo(account.bankName, account.accountNumber))
                                     }
                                 )
@@ -444,7 +493,7 @@ fun AccountsDialog(
                                             .padding(top = 8.dp)
                                             .clip(RoundedCornerShape(AppRadius.medium))
                                             .clickable {
-                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                haptic.tap()
                                                 showAddAccountDialog = true
                                             }
                                     ) {
@@ -467,6 +516,27 @@ fun AccountsDialog(
         }
     }
 
+    if (showManualDialog) {
+        ManualAccountDialog(
+            initial = editingManual,
+            onDismiss = { showManualDialog = false },
+            onSave = { account, addToFixedCosts ->
+                manualStore.upsert(account)
+                if (addToFixedCosts) linkToFixedCosts(settingsRepo, account)
+                manualVersion++
+                showManualDialog = false
+                statusText = "Saved ${account.name}"
+                statusVisible = true
+            },
+            onDelete = { account ->
+                manualStore.delete(account.id)
+                removeFixedCostLink(settingsRepo, account)
+                manualVersion++
+                showManualDialog = false
+            }
+        )
+    }
+
     // DIALOG 1: Add a completely new offline account / CC
     if (showAddAccountDialog && onAddManualAccount != null) {
         var bankInput by remember { mutableStateOf("") }
@@ -485,7 +555,7 @@ fun AccountsDialog(
         AppDialog(
             title = "Add Offline Account",
             onDismiss = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                haptic.tap()
                 showAddAccountDialog = false
             },
             confirmText = "Add Account",
@@ -493,7 +563,7 @@ fun AccountsDialog(
             onConfirm = {
                 val bal = parsedBalancePaise ?: return@AppDialog
                 val limit = (newCcLimitStr.toLongOrNull() ?: 0L).let { if (it > 0L) it.coerceAtLeast(1000L) * 100L else 0L }
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
 
                 onAddManualAccount(
                     bankInput.trim(),
@@ -513,7 +583,7 @@ fun AccountsDialog(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
                     "Manually track an account or wallet that doesn't receive SMS alerts.",
-                    fontSize = 13.5.sp,
+                    fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 19.sp
                 )
@@ -568,7 +638,7 @@ fun AccountsDialog(
                     Switch(
                         checked = isCcNew,
                         onCheckedChange = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             isCcNew = it
                         },
                         colors = appSwitchColors()
@@ -640,16 +710,17 @@ fun AccountsDialog(
         }
         var stmtDay by remember(targetAccount) { mutableIntStateOf(existingConfig?.statementDay ?: 15) }
         var dueDay by remember(targetAccount) { mutableIntStateOf(existingConfig?.dueDay ?: 5) }
+        var aliasesStr by remember(targetAccount) { mutableStateOf(existingConfig?.payeeAliases ?: "") }
 
         AppDialog(
             title = "${targetAccount.bankName} Settings",
             onDismiss = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                haptic.tap()
                 editingAccount = null
             },
             confirmText = "Save Changes",
             onConfirm = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
 
                 // 1. Update Balance if it changed
                 val newBal = balanceStr.trim().replace(",", "").toDoubleOrNull()?.let { (it * 100.0).roundToLong() } ?: 0L
@@ -668,7 +739,8 @@ fun AccountsDialog(
                             isCreditCard = true,
                             creditLimitPaise = limitPaise,
                             statementDay = stmtDay,
-                            dueDay = dueDay
+                            dueDay = dueDay,
+                            payeeAliases = aliasesStr.trim()
                         )
                     )
                     onSetCreditCard?.invoke(targetAccount.bankName, targetAccount.accountNumber, true)
@@ -714,7 +786,7 @@ fun AccountsDialog(
                     Switch(
                         checked = isCc,
                         onCheckedChange = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             isCc = it
                         },
                         colors = appSwitchColors()
@@ -760,6 +832,17 @@ fun AccountsDialog(
                                 modifier = Modifier.weight(1f)
                             )
                         }
+                        OutlinedTextField(
+                            value = aliasesStr,
+                            onValueChange = { aliasesStr = it.take(80) },
+                            label = { Text("Name when paying this card (optional)") },
+                            placeholder = { Text("e.g. RePay, HDFC Regalia") },
+                            supportingText = { Text("Payments to this name are treated as a card bill, not a new expense.") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(AppRadius.small),
+                            colors = sheetFieldColors(),
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
                 }
@@ -940,7 +1023,7 @@ private fun AccountListItem(
                         Text(
                             text = title,
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 15.5.sp,
+                            fontSize = 16.sp,
                             color = scheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -953,7 +1036,7 @@ private fun AccountListItem(
                             ) {
                                 Text(
                                     "Credit Card",
-                                    fontSize = 10.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = scheme.onSurface,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -962,7 +1045,7 @@ private fun AccountListItem(
                         }
                     }
                     if (subtitle != null) {
-                        Text(subtitle, fontSize = 12.5.sp, color = scheme.onSurfaceVariant)
+                        Text(subtitle, fontSize = 13.sp, color = scheme.onSurfaceVariant)
                     }
                 }
 
@@ -1102,7 +1185,7 @@ private fun BalanceFlipCard(
                 onClickLabel = if (isFlipped) "Show balance" else "Show safe to spend",
                 role = Role.Button
             ) {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                haptic.tap()
                 isFlipped = !isFlipped
                 prefs.edit().putBoolean("key_balance_card_flipped", isFlipped).apply()
             },
@@ -1151,7 +1234,7 @@ private fun BalanceFlipCard(
                             color = MaterialTheme.colorScheme.surface,
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                             modifier = Modifier.clip(RoundedCornerShape(AppRadius.pill)).quietClickable {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 onManageNecessities()
                             }
                         ) {
@@ -1210,7 +1293,7 @@ private fun BalanceFlipCard(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
                                     .quietClickable {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptic.tap()
                                         showBills = !showBills
                                     }
                                     .heightIn(min = 36.dp)
@@ -1296,21 +1379,11 @@ private fun HeroAmount(text: String, color: Color) {
 }
 
 @Composable
-private fun Modifier.quietClickable(onClick: () -> Unit): Modifier {
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    val pressAlpha by animateFloatAsState(if (pressed) 0.55f else 1f, tween(100), label = "quietPress")
-    return this
-        .graphicsLayer { alpha = pressAlpha }
-        .clickable(interactionSource = source, indication = null, onClick = onClick)
-}
-
-@Composable
 private fun FlipHint(text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Default.FlipCameraAndroid, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.width(6.dp))
-        Text(text, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -1321,4 +1394,61 @@ private fun formatSyncTime(context: Context, millis: Long): String {
     if (DateUtils.isToday(millis)) return "Today, $time"
     val pattern = DateFormat.getBestDateTimePattern(Locale.getDefault(), "dMMM")
     return "${SimpleDateFormat(pattern, Locale.getDefault()).format(Date(millis))}, $time"
+}
+
+private fun fixedCostId(account: ManualAccount) = "manual-${account.id}"
+
+/** Mirrors a SIP / EMI into Fixed Costs so it is reserved for and reminded about like any other bill. */
+private fun linkToFixedCosts(settingsRepo: SettingsRepository, account: ManualAccount) {
+    if (account.monthlyPaise <= 0L) return
+    val prefs = settingsRepo.prefs
+    val due = java.util.Calendar.getInstance().apply {
+        val day = if (account.dueDay in 1..28) account.dueDay else get(java.util.Calendar.DAY_OF_MONTH).coerceAtMost(28)
+        set(java.util.Calendar.DAY_OF_MONTH, day)
+        set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+        if (timeInMillis < System.currentTimeMillis()) add(java.util.Calendar.MONTH, 1)
+    }.timeInMillis
+    val item = com.expensetracker.offline.util.NecessityItem(
+        id = fixedCostId(account),
+        name = account.name,
+        amount = account.monthlyPaise,
+        frequency = com.expensetracker.offline.util.NecessityFrequency.MONTHLY,
+        dueTimestamp = due
+    )
+    val current = com.expensetracker.offline.util.NecessityManager.loadNecessities(prefs)
+    com.expensetracker.offline.util.NecessityManager.saveNecessities(prefs, current.filter { it.id != item.id } + item)
+}
+
+private fun removeFixedCostLink(settingsRepo: SettingsRepository, account: ManualAccount) {
+    val prefs = settingsRepo.prefs
+    val current = com.expensetracker.offline.util.NecessityManager.loadNecessities(prefs)
+    if (current.any { it.id == fixedCostId(account) }) {
+        com.expensetracker.offline.util.NecessityManager.saveNecessities(prefs, current.filter { it.id != fixedCostId(account) })
+    }
+}
+
+
+/** Outlined "Add Offline Account" row shared by the single-account and empty states. */
+@Composable
+private fun AddAccountButton(onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(AppRadius.medium),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(AppRadius.medium))
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Add Offline Account", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+        }
+    }
 }

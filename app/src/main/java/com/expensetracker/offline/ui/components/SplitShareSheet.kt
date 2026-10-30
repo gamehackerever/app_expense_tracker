@@ -1,5 +1,8 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.util.confirm
+import androidx.compose.material.icons.filled.Contacts
 import android.content.Context
 import android.net.Uri
 import android.widget.Toast
@@ -274,7 +277,7 @@ fun MultiSplitShareSheet(
     var showRemoveDialog by remember { mutableStateOf(false) }
     var isClosing by remember { mutableStateOf(false) }
 
-    fun tick() = haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    fun tick() = haptic.tap()
     fun update(id: String, transform: (SplitParticipant) -> SplitParticipant) {
         participants = participants.map { if (it.id == id) transform(it) else it }
     }
@@ -652,11 +655,41 @@ fun MultiSplitShareSheet(
         fixes
     }
 
+    // Picks one phone number from the system contact picker. The picker hands us read access to just
+    // that entry, so no READ_CONTACTS permission is needed.
+    val splitContext = androidx.compose.ui.platform.LocalContext.current
+    val contactPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val uri = result.data?.data ?: return@rememberLauncherForActivityResult
+        val picked = runCatching {
+            splitContext.contentResolver.query(
+                uri,
+                arrayOf(
+                    android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                    android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER
+                ),
+                null, null, null
+            )?.use { c -> if (c.moveToFirst()) c.getString(0) to c.getString(1) else null }
+        }.getOrNull()
+        if (picked != null) {
+            val contactName = picked.first.orEmpty().trim().replace(Regex("\\s+"), " ").take(MAX_NAME_LENGTH)
+            if (contactName.isNotBlank() && active.none { it.name.trim().equals(contactName, ignoreCase = true) }) {
+                runCatching {
+                    com.expensetracker.offline.data.repository.SettingsRepository(splitContext)
+                        .linkContact(contactName, picked.second.orEmpty())
+                }
+                tick()
+                addPerson(name = contactName)
+            }
+        }
+    }
+
     fun save() {
         if (blocking != null) return
         isClosing = true
         focusManager.clearFocus()
-        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        haptic.confirm()
         val me = participants.first { it.isMe }.let {
             it.copy(name = "You", isIncludedInEqual = includeMe, exactAmountStr = plain(if (includeMe) shares[it.id] ?: 0L else 0L))
         }
@@ -684,7 +717,7 @@ fun MultiSplitShareSheet(
             confirmText = "Save Preset",
             confirmEnabled = newPresetNameInput.isNotBlank() && nonBlankMembers.isNotEmpty(),
             onConfirm = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
                 val newPreset = UserSplitPreset(
                     id = UUID.randomUUID().toString(),
                     name = newPresetNameInput.trim(),
@@ -730,7 +763,7 @@ fun MultiSplitShareSheet(
             destructive = true,
             onConfirm = {
                 isClosing = true
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
                 showDiscardDialog = false
                 onDismiss()
             }
@@ -755,7 +788,7 @@ fun MultiSplitShareSheet(
             destructive = true,
             onConfirm = {
                 isClosing = true
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
                 showRemoveDialog = false
                 onResetSplit?.invoke()
                 onDismiss()
@@ -770,7 +803,7 @@ fun MultiSplitShareSheet(
         }
     }
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = { if (isDirty) showDiscardDialog = true else { isClosing = true; onDismiss() } },
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
@@ -1055,6 +1088,20 @@ fun MultiSplitShareSheet(
                             }
                             HorizontalDivider(modifier = Modifier.padding(start = 66.dp), color = dividerColor)
                             ActionRow(Icons.Default.PersonAdd, if (active.size < MAX_PEOPLE) "Add person" else "Maximum $MAX_PEOPLE people", active.size < MAX_PEOPLE) { tick(); addPerson() }
+                            if (active.size < MAX_PEOPLE) {
+                                HorizontalDivider(modifier = Modifier.padding(start = 66.dp), color = dividerColor)
+                                ActionRow(Icons.Default.Contacts, "Add from contacts", true) {
+                                    tick()
+                                    runCatching {
+                                        contactPicker.launch(
+                                            android.content.Intent(
+                                                android.content.Intent.ACTION_PICK,
+                                                android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+                                            )
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -1082,7 +1129,7 @@ Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     ) {
                                         Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(13.dp))
                                         Spacer(Modifier.width(4.dp))
-                                        Text("Save as preset", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                        Text("Save as preset", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                                     }
                                 }
                             }

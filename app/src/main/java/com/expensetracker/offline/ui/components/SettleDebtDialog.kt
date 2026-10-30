@@ -1,5 +1,7 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.util.confirm
 import android.content.Intent
 import android.graphics.Bitmap
 import android.widget.Toast
@@ -162,7 +164,7 @@ fun SettleDebtDialog(
     )
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -293,7 +295,7 @@ fun SettleDebtDialog(
                                                     )
                                                     Text(
                                                         "Simplified net balances across all payers",
-                                                        fontSize = 11.5.sp,
+                                                        fontSize = 12.sp,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                         maxLines = 2,
                                                         overflow = TextOverflow.Ellipsis
@@ -412,12 +414,19 @@ fun SettleDebtDialog(
                                             val firstName = group.name.split(" ").firstOrNull { it.isNotBlank() } ?: ""
                                             val greeting = if (firstName.isNotBlank() && firstName != "Unspecified") "Hey $firstName! " else "Hey! "
                                             val msg = "${greeting}Just a reminder you owe me ${CurrencyFormat.withSymbol(amount, 0)} for ${debtInfo.parentTransaction.payee}."
+                                            val linkedPhone = settingsRepo.getLinkedPhone(group.name)
+                                            val directChat = linkedPhone?.let {
+                                                Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://wa.me/$it?text=${android.net.Uri.encode(msg)}"))
+                                            }
+                                            val opened = directChat != null && runCatching { context.startActivity(directChat) }.isSuccess
+                                            if (!opened) {
                                             val intent = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, msg); setPackage("com.whatsapp") }
                                             try { context.startActivity(intent) } catch (e: Exception) {
                                                 try { intent.setPackage("com.whatsapp.w4b"); context.startActivity(intent) } catch (e2: Exception) {
                                                     val fallback = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, msg) }
                                                     context.startActivity(Intent.createChooser(fallback, "Share via"))
                                                 }
+                                            }
                                             }
                                         }
                                     },
@@ -667,8 +676,8 @@ private fun DebtCard(
 ) {
     val scheme = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
-    val tap = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
-    val confirm = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) }
+    val tap = { haptic.tap() }
+    val confirm = { haptic.confirm() }
     val progress = if (debtInfo.totalOwed > 0L) (debtInfo.repaidSoFar.toFloat() / debtInfo.totalOwed.toFloat()).coerceIn(0f, 1f) else 0f
 
     val interaction = remember { MutableInteractionSource() }
@@ -717,7 +726,7 @@ private fun DebtCard(
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
                         if (isYouOwe) "YOU OWE" else "OWES",
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 0.8.sp,
                         color = if (isYouOwe) AppColors.warning else scheme.onSurfaceVariant
@@ -828,7 +837,7 @@ private fun DebtCard(
                             ) {
                                 Text(
                                     "Forgive",
-                                    fontSize = 14.5.sp,
+                                    fontSize = 15.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
                                     softWrap = false,
@@ -851,7 +860,7 @@ private fun DebtCard(
                             ) {
                                 Text(
                                     if (isYouOwe) "Record paid" else "Log cash",
-                                    fontSize = 14.5.sp,
+                                    fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
                                     softWrap = false,

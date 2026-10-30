@@ -1,5 +1,6 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -52,7 +53,7 @@ fun PremiumDropdownField(selectedOption: String, options: List<String>, onOption
         expanded = expanded,
         onExpandedChange = {
             expanded = !expanded
-            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            haptic.tap()
         }
     ) {
         Surface(
@@ -103,7 +104,7 @@ fun PremiumDropdownField(selectedOption: String, options: List<String>, onOption
                         { Icon(Icons.Default.Check, contentDescription = null, tint = colors.onSurface, modifier = Modifier.size(18.dp)) }
                     } else null,
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         onOptionSelected(target)
                         expanded = false
                     },
@@ -148,7 +149,7 @@ fun PremiumFilterChip(text: String, isSelected: Boolean, onClick: () -> Unit) {
             .clip(shape)
             .semantics { this.selected = isSelected }
             .clickable(role = Role.Button) {
-                if (!isSelected) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                if (!isSelected) haptic.tap()
                 onClick()
             }
     ) {

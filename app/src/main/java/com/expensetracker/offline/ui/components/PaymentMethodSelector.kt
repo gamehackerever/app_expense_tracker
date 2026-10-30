@@ -1,5 +1,6 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -68,7 +69,7 @@ fun PaymentMethodSelector(
                 icon = Icons.Default.Payments,
                 selected = isNullSelected,
                 onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    haptic.tap()
                     onBankSelected(null, null)
                 }
             )
@@ -81,7 +82,7 @@ fun PaymentMethodSelector(
                     icon = Icons.Default.AccountBalance,
                     selected = isSelected,
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         onBankSelected(account.bankName, account.accountNumber)
                     }
                 )

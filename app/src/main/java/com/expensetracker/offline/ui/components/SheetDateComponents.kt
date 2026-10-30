@@ -1,5 +1,6 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape

@@ -1,5 +1,7 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.util.confirm
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -39,6 +41,8 @@ import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.engine.ml.SmartExpenseEngine
+import com.expensetracker.offline.data.repository.CustomBudget
+import com.expensetracker.offline.ui.dashboard.BudgetPickerRow
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.util.NecessityManager
 import kotlinx.coroutines.Dispatchers
@@ -65,12 +69,16 @@ fun AddExpenseSheet(
         timestamp: Long, itemsSummary: String?, receiptUri: String?,
         bankName: String?, accountNumber: String?, excludeFromSpend: Boolean
     ) -> Unit,
-    onSaveSplit: ((List<SplitParticipant>) -> Unit)? = null
+    onSaveSplit: ((List<SplitParticipant>) -> Unit)? = null,
+    customBudgets: List<CustomBudget> = emptyList(),
+    /** Reports the chosen custom budget (null = plain monthly spending) so the caller can tag the new transaction. */
+    onBudgetSelected: (String?) -> Unit = {}
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
+    var selectedBudgetId by remember { mutableStateOf<String?>(null) }
 
     var savedCustomCategories by remember {
         mutableStateOf(prefs.getStringSet("key_custom_categories", emptySet()) ?: emptySet())
@@ -188,7 +196,7 @@ fun AddExpenseSheet(
         AppDialog(
             title = "Discard transaction?",
             onDismiss = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                haptic.tap()
                 showDiscardDialog = false
                 scope.launch { runCatching { sheetState.show() } }
             },
@@ -196,7 +204,7 @@ fun AddExpenseSheet(
             confirmText = "Discard",
             destructive = true,
             onConfirm = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
                 showDiscardDialog = false
                 deleteReceiptFile(context, receiptImageUri)
                 onDismiss()
@@ -232,7 +240,7 @@ fun AddExpenseSheet(
         NewCategoryDialog(
             onDismiss = { showNewCategoryDialog = false },
             onAdd = { newCategory ->
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                haptic.tap()
                 savedCustomCategories = savedCustomCategories + newCategory
                 prefs.edit().putStringSet("key_custom_categories", savedCustomCategories).apply()
                 selectedCategory = newCategory
@@ -245,7 +253,7 @@ fun AddExpenseSheet(
         )
     }
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = { if (hasUnsavedChanges) showDiscardDialog = true else onDismiss() },
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
@@ -353,7 +361,7 @@ fun AddExpenseSheet(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(AppRadius.pill))
                                     .clickable {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptic.tap()
                                         payee = pred.payee
                                         if (amountStr.isBlank() && pred.typicalAmountPaise > 0L) {
                                             amountStr = if (pred.typicalAmountPaise % 100L == 0L) {
@@ -460,9 +468,21 @@ fun AddExpenseSheet(
                         )
 
                         if (transactionType == TransactionType.DEBIT) {
+                            BudgetPickerRow(
+                                budgets = customBudgets,
+                                selectedId = selectedBudgetId,
+                                onSelect = { id ->
+                                    selectedBudgetId = id
+                                    onBudgetSelected(id)
+                                    if (customBudgets.firstOrNull { it.id == id }?.excludeFromMonthly == true) {
+                                        excludeFromSpend = true
+                                        lastNonTransferExclude = true
+                                    }
+                                }
+                            )
                             SheetCard(
                                 onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    haptic.tap()
                                     val next = !excludeFromSpend
                                     excludeFromSpend = next
                                     lastNonTransferExclude = next
@@ -490,7 +510,7 @@ fun AddExpenseSheet(
                                     Switch(
                                         checked = excludeFromSpend,
                                         onCheckedChange = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            haptic.tap()
                                             excludeFromSpend = it
                                             lastNonTransferExclude = it
                                         },
@@ -564,7 +584,7 @@ fun AddExpenseSheet(
                         val finalExclude = excludeFromSpend || isTransferMode || finalCategory.equals("Transfer", ignoreCase = true)
                         if (finalAmount > 0 && !isSaving) {
                             isSaving = true
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            haptic.confirm()
                             if (hasItemizedFriendsAssigned && onSaveSplit != null) {
                                 val splitParticipants = itemizedSplitShares.map { (person, paise) ->
                                     val isMe = person.equals("You", ignoreCase = true)

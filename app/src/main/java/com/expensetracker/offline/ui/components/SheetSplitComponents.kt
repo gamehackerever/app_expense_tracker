@@ -1,5 +1,6 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -201,7 +202,7 @@ fun ItemizedBillSplitCard(
                 ) {
                     Text(
                         "Use ₹${formatSheetAmount(effectiveBillTotalPaise / 100.0)}",
-                        fontSize = 11.5.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = scheme.surface,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
@@ -238,7 +239,7 @@ fun ItemizedBillSplitCard(
                     ) {
                         Icon(Icons.Default.PersonAdd, contentDescription = null, tint = scheme.onSurface, modifier = Modifier.size(13.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Add person", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = scheme.onSurface)
+                        Text("Add person", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = scheme.onSurface)
                     }
                 }
             }
@@ -382,7 +383,7 @@ fun ItemizedBillSplitCard(
                                 ) {
                                     Text(
                                         text = "All",
-                                        fontSize = 11.5.sp,
+                                        fontSize = 12.sp,
                                         fontWeight = if (allSelected) FontWeight.Bold else FontWeight.Medium,
                                         color = if (allSelected) scheme.surface else scheme.onSurfaceVariant,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -407,7 +408,7 @@ fun ItemizedBillSplitCard(
                                     ) {
                                         Text(
                                             text = person,
-                                            fontSize = 11.5.sp,
+                                            fontSize = 12.sp,
                                             fontWeight = if (isAssigned) FontWeight.Bold else FontWeight.Medium,
                                             color = if (isAssigned) scheme.surface else scheme.onSurfaceVariant,
                                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)

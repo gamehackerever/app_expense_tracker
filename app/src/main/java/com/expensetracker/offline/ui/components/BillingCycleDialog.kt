@@ -205,7 +205,7 @@ fun BillingCycleDialog(
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 text = "Reset to 1st of month",
-                                fontSize = 13.5.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = colors.onSurface
                             )

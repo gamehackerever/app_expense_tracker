@@ -1,5 +1,7 @@
 package com.expensetracker.offline.ui.components
 
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.util.confirm
 import android.app.Activity
 import android.content.ContextWrapper
 import android.view.WindowManager
@@ -105,7 +107,7 @@ fun AppDialog(
                     if (dismissText != null) {
                         FilledTonalButton(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 onDismiss()
                             },
                             shape = buttonShape,
@@ -128,7 +130,7 @@ fun AppDialog(
                     }
                     Button(
                         onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            haptic.confirm()
                             onConfirm()
                         },
                         enabled = confirmEnabled,

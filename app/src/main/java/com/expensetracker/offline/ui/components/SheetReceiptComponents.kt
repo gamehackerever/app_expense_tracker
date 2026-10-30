@@ -1,4 +1,5 @@
 package com.expensetracker.offline.ui.components
+import com.expensetracker.offline.util.tap
 import androidx.compose.ui.text.style.TextOverflow
 
 import android.content.Context
@@ -94,7 +95,7 @@ fun SheetReceiptCard(
                         color = Color.Black.copy(alpha = 0.7f),
                         modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp)
                     ) {
-                        Text("Tap to view full", color = Color.White, fontSize = 11.5.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                        Text("Tap to view full", color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
                     }
                 }
             }
@@ -109,7 +110,7 @@ fun SheetReceiptCard(
                     enabled = !isScanningOcr,
                     shape = RoundedCornerShape(AppRadius.small),
                     elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
-                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.onSurface,
                         contentColor = MaterialTheme.colorScheme.surface
@@ -132,7 +133,7 @@ fun SheetReceiptCard(
                     onClick = { haptic.tap(); onPick() },
                     shape = RoundedCornerShape(AppRadius.small),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    modifier = Modifier.weight(1f).height(44.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
                 ) {
@@ -140,7 +141,7 @@ fun SheetReceiptCard(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         "Change",
-                        fontSize = 13.5.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         softWrap = false,
@@ -151,7 +152,7 @@ fun SheetReceiptCard(
                     onClick = { haptic.tap(); onRemove() },
                     shape = RoundedCornerShape(AppRadius.small),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    modifier = Modifier.weight(1f).height(44.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f))
                 ) {
@@ -160,7 +161,7 @@ fun SheetReceiptCard(
                     Text(
                         "Remove",
                         color = MaterialTheme.colorScheme.error,
-                        fontSize = 13.5.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         softWrap = false,
