@@ -75,7 +75,7 @@ object CategoryClassifier {
             "akshayakalpa", "licious", "freshtohome", "tender cuts", "zappfresh", "star bazaar",
             "spar hypermarket", "kirana", "provisions?", "minimart", "general store",
             "departmental store", "dairy", "milk", "butcher", "fish market", "poultry", "atta chakki",
-            "ma mart", "super mart", "fresh mart"
+            "ma mart", "super mart", "fresh mart", "supermarket"
         ),
         "Food & Dining" to createRegex(
             "starbucks", "swiggy", "zomato", "dineout", "eazy diner", "magicpin", "eatsure",
@@ -95,7 +95,8 @@ object CategoryClassifier {
             "dhaba", "bhojanalaya", "thali", "food court", "momos", "rolls", "kathi", "frankie",
             "chaat", "pani puri", "samosa", "vada pav", "misal", "pav bhaji", "dosa", "idli",
             "parotta", "porotta", "puttu", "thattukada", "tapri", "lassi", "shake", "smoothie",
-            "sweets", "mithai", "namkeen", "farsan", "snacks", "restobar", "pub", "brewery"
+            "sweets", "mithai", "namkeen", "farsan", "snacks", "restobar", "pub", "brewery",
+            "kebab", "tandoori", "chicken", "mutton", "ice cream", "icecream", "kulfi", "falooda", "meals", "bhavan"
         ),
         "Fuel & Fastag" to createRegex(
             "hpcl", "hindustan petroleum", "hp pay", "bpcl", "bharat petroleum", "smartdrive",
@@ -389,8 +390,10 @@ object CategoryClassifier {
         }
 
         if (!generic) {
+            // Fold spelling variants first so "Biriyani" / "Cofee" / "Super Market" hit the same keyword rules.
+            val canonical = PayeeHeuristics.canonicalize(cleanPayee)
             for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(cleanPayee)) {
+                if (regex.containsMatchIn(canonical)) {
                     return category
                 }
             }
@@ -403,6 +406,9 @@ object CategoryClassifier {
                 }
             }
         }
+
+        // Last: generic shop-type words and one-letter typos ("... Foods", "... Medicals", "Restorent").
+        if (!generic) PayeeHeuristics.categoryHint(cleanPayee)?.let { return it }
 
         return "Uncategorized"
     }
@@ -442,9 +448,10 @@ object CategoryClassifier {
                 return learned
             }
 
-            // 2. Known-merchant regex on the payee
+            // 2. Known-merchant regex on the payee (spelling variants folded first)
+            val canonical = PayeeHeuristics.canonicalize(cleanPayee)
             for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(cleanPayee)) {
+                if (regex.containsMatchIn(canonical)) {
                     categoryCache[cleanPayee] = category
                     return category
                 }
@@ -454,6 +461,12 @@ object CategoryClassifier {
             NaiveBayesCategorizer.predict(cleanPayee, ruleDao)?.let {
                 categoryCache[cleanPayee] = it.category
                 return it.category
+            }
+
+            // 3b. Generic shop-type words and typos. Below anything the user taught, above raw SMS text.
+            PayeeHeuristics.categoryHint(cleanPayee)?.let {
+                categoryCache[cleanPayee] = it
+                return it
             }
         }
 
