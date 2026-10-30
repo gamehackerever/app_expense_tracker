@@ -40,6 +40,9 @@ sealed class ScanResponse {
     data class Failed(val message: String) : ScanResponse()
 }
 
+/** A bank-looking SMS the parser could not turn into a transaction. [redactedBody] is safe to share. */
+data class MissedSms(val sender: String, val date: Long, val redactedBody: String, val reason: String)
+
 class SmsHistoryScanner(
     private val context: Context,
     private val database: AppDatabase
@@ -50,6 +53,16 @@ class SmsHistoryScanner(
         private const val SAME_PAYMENT_NO_REF_WINDOW_MS = 90_000L
         private val NUMERIC_PAYEE_REGEX = Regex("""^\d{8,12}.*""")
         private const val BATCH_SIZE = 100
+        private val MISSED_MONEY_HINT = Regex("""(?i)(?:rs\.?|inr|₹)\s*[\d,]+""")
+        private val MISSED_MOVEMENT_HINT = Regex("""(?i)\b(?:debit(?:ed)?|credit(?:ed)?|spent|paid|sent|received|withdrawn|transferred|purchase|txn|transaction|upi)\b""")
+        // OTPs, offers, reminders, future mandates and declined payments are meant to be ignored.
+        private val MISSED_NOISE_HINT = Regex("""(?i)\b(?:otp|one[- ]time|offer|pre-?approved|congratulations|apply now|emi offer|minimum amount due|total amount due|due (?:on|by|date)|statement|will be debited|declined|failed|unsuccessful|reminder|autopay (?:setup|registered))\b""")
+        private val SHARE_VPA = Regex("""[A-Za-z0-9._\-]{2,}@[A-Za-z]{2,}""")
+        private val SHARE_LONG_DIGITS = Regex("""\d{9,}""")
+
+        /** Hides UPI ids and long reference/phone numbers; amounts, dates and last-4 digits stay so the pattern is still useful. */
+        fun redactForSharing(body: String): String =
+            body.replace(SHARE_VPA, "•••@upi").replace(SHARE_LONG_DIGITS, "•••••••••")
         private const val REVIEW_THRESHOLD_PAISE = TransactionRepository.REVIEW_THRESHOLD_PAISE
     }
 
@@ -57,6 +70,47 @@ class SmsHistoryScanner(
     private val reviewItemDao = database.reviewItemDao()
     private val categoryRuleDao = database.categoryRuleDao()
     private val settingsRepo = SettingsRepository(context)
+
+    /**
+     * Messages that look like money movement from a bank-style sender but that the parser could not
+     * fully read. Powers Settings → "Missed bank SMS", so gaps can be seen and shared (redacted) for fixing.
+     */
+    suspend fun findMissedBankSms(sinceMillis: Long, limit: Int = 40): List<MissedSms> = withContext(Dispatchers.IO) {
+        SmsPatternLearner.initialize(context)
+        val out = ArrayList<MissedSms>()
+        runCatching {
+            context.contentResolver.query(
+                Telephony.Sms.Inbox.CONTENT_URI,
+                arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE),
+                "${Telephony.Sms.DATE} >= ?",
+                arrayOf(sinceMillis.toString()),
+                "${Telephony.Sms.DATE} DESC"
+            )?.use { c ->
+                val addressCol = c.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
+                val bodyCol = c.getColumnIndexOrThrow(Telephony.Sms.BODY)
+                val dateCol = c.getColumnIndexOrThrow(Telephony.Sms.DATE)
+                while (c.moveToNext() && out.size < limit) {
+                    currentCoroutineContext().ensureActive()
+                    val address = c.getString(addressCol).orEmpty()
+                    val body = c.getString(bodyCol).orEmpty()
+                    if (body.isBlank() || !SenderFilter.isAllowedSmsSender(address)) continue
+                    if (!MISSED_MONEY_HINT.containsMatchIn(body) || !MISSED_MOVEMENT_HINT.containsMatchIn(body)) continue
+                    if (MISSED_NOISE_HINT.containsMatchIn(body)) continue
+
+                    val p = FinancialParser.parse(rawText = body, title = address)
+                    val reason = when {
+                        !p.isFinancial -> "Not recognised as a transaction"
+                        p.amount == null || p.amount <= 0L -> "Amount not found"
+                        p.type == null -> "Could not tell debit from credit"
+                        p.bankName == null -> "Bank not recognised"
+                        else -> null
+                    }
+                    if (reason != null) out.add(MissedSms(address, c.getLong(dateCol), redactForSharing(body), reason))
+                }
+            }
+        }
+        out
+    }
 
     suspend fun scanSmsSince(sinceTimestampMillis: Long): ScanResponse = withContext(Dispatchers.IO) {
         SmsPatternLearner.initialize(context)

@@ -104,17 +104,20 @@ object RecurringPaymentDetector {
                     !it.category.equals("Transfer", ignoreCase = true) &&
                     it.category != "Split Settlement"
             }
-            .groupBy { normalizeKey(it.payee) }
+            .groupBy { groupKey(it.payee) }
             .filterKeys { it.isNotBlank() && it !in ignoredGenericPayees }
 
         val results = mutableListOf<RecurringPayment>()
 
         for ((_, rawGroup) in byPayee) {
-            val group = dedupeSameCharge(rawGroup.sortedBy { it.timestamp })
-            if (group.isEmpty()) continue
+            val sortedGroup = dedupeSameCharge(rawGroup.sortedBy { it.timestamp })
+            if (sortedGroup.isEmpty()) continue
 
+            val isKnownBrand = KNOWN_SUBSCRIPTION_REGEX.containsMatchIn(sortedGroup.last().payee)
+            // The same subscription seen through two sources (card SMS and a UPI statement) lands a few days
+            // apart; a subscription never bills twice within a week, so treat those as one charge.
+            val group = if (isKnownBrand) collapseNearby(sortedGroup) else sortedGroup
             val latest = group.last()
-            val isKnownBrand = KNOWN_SUBSCRIPTION_REGEX.containsMatchIn(latest.payee)
             val isCommitmentCategory = latest.category.trim().lowercase(Locale.ROOT) in COMMITMENT_CATEGORIES
             val isCasualCategory = !isKnownBrand &&
                 latest.category.trim().lowercase(Locale.ROOT) in CASUAL_EVERYDAY_CATEGORIES
@@ -204,7 +207,7 @@ object RecurringPaymentDetector {
         }
 
         return results
-            .distinctBy { normalizeKey(it.payee) }
+            .distinctBy { groupKey(it.payee) }
             .sortedWith(
                 compareByDescending<RecurringPayment> { it.isActive }.thenByDescending { it.monthlyCost }
             )
@@ -391,6 +394,43 @@ object RecurringPaymentDetector {
             if (kept.isEmpty() || p.timestamp - kept.last().timestamp >= SAME_DAY_COLLAPSE_MS) {
                 kept.add(p)
             }
+        }
+        return kept
+    }
+
+    /** Words that only describe the company, not the brand: "Spotify India Pvt Ltd" is just "Spotify". */
+    private val FILLER_WORDS = setOf(
+        "pvt", "private", "ltd", "limited", "llp", "inc", "corp", "corporation", "india", "indian", "the",
+        "technologies", "technology", "tech", "services", "service", "payments", "payment", "pay", "online",
+        "retail", "digital", "solutions", "subscription", "subscriptions", "autopay", "mandate", "upi", "bill",
+        "billdesk", "www", "com", "in", "co"
+    )
+    private val BRAND_WORDS = setOf(
+        "spotify", "netflix", "youtube", "hotstar", "jiocinema", "zee5", "chatgpt", "openai", "claude", "canva",
+        "notion", "github", "icloud", "jiofiber", "bsnl", "kseb", "ksebl", "bescom", "tneb", "msedcl", "zerodha", "groww"
+    )
+
+    /**
+     * Identity used to decide that two payee spellings are one recurring payment. Public so the UI can
+     * hide a recurring payment under the same key the detector groups it by.
+     */
+    fun groupKey(payee: String): String {
+        val words = normalizeKey(payee).split(' ').filter { it.isNotBlank() }
+        val brand = words.firstOrNull { it in BRAND_WORDS }
+        if (brand != null) return brand
+        val core = words.filterNot { it in FILLER_WORDS }
+        return (core.ifEmpty { words }).joinToString(" ")
+    }
+
+    /** Drops a charge when another one of similar amount happened within 6 days before it (keeps the earlier). */
+    private fun collapseNearby(sorted: List<DebitPoint>): List<DebitPoint> {
+        val kept = mutableListOf<DebitPoint>()
+        for (p in sorted) {
+            val prev = kept.lastOrNull()
+            val closeInTime = prev != null && p.timestamp - prev.timestamp < 6L * DAY_MS
+            val closeInAmount = prev != null && abs(p.amount - prev.amount) <= max(200L, (prev.amount * 0.05).toLong())
+            if (closeInTime && closeInAmount) continue
+            kept.add(p)
         }
         return kept
     }

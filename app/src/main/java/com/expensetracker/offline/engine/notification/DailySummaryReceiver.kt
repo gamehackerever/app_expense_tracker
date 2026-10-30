@@ -33,11 +33,24 @@ class DailySummaryReceiver : BroadcastReceiver() {
             pendingIntent?.let { alarmManager.cancel(it); it.cancel() }
         }
 
-        fun showNotification(context: Context, spentPaise: Long, count: Int) {
-            showNotificationRupees(context, spentPaise / 100.0, count)
+        /** [pendingReviewCount] > 0 adds a "waiting for review" line, so one evening notification covers both. */
+        fun showNotification(context: Context, spentPaise: Long, count: Int, pendingReviewCount: Int = 0) {
+            showNotificationRupees(context, spentPaise / 100.0, count, pendingReviewCount, reviewOnly = false)
         }
 
-        private fun showNotificationRupees(context: Context, spentRupees: Double, count: Int) {
+        /** Used when the spending digest is switched off but transactions still need review. */
+        fun showReviewReminder(context: Context, pendingReviewCount: Int) {
+            if (pendingReviewCount <= 0) return
+            showNotificationRupees(context, 0.0, 0, pendingReviewCount, reviewOnly = true)
+        }
+
+        private fun showNotificationRupees(
+            context: Context,
+            spentRupees: Double,
+            count: Int,
+            pendingReviewCount: Int,
+            reviewOnly: Boolean
+        ) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -62,17 +75,22 @@ class DailySummaryReceiver : BroadcastReceiver() {
 
             val isCaptureHealthy = NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 
-            val message = if (count > 0) {
+            val spendLine = if (count > 0) {
                 "You spent ₹${String.format(Locale.getDefault(), "%,.2f", spentRupees)} across $count transactions today."
             } else if (!isCaptureHealthy) {
                 "Zero expenses recorded today, but Auto-Capture is OFF. Tap to enable it."
             } else {
                 "Zero expenses recorded today! Great job staying on budget."
             }
+            val reviewLine = if (pendingReviewCount > 0) {
+                "$pendingReviewCount transaction${if (pendingReviewCount == 1) " is" else "s are"} waiting for review. It takes under a minute."
+            } else null
+            val message = if (reviewOnly) reviewLine.orEmpty() else listOfNotNull(spendLine, reviewLine).joinToString("\n")
+            val title = if (reviewOnly) "🧾 Quick review" else "🌙 Today's Spending Digest"
 
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_menu_info_details)
-                .setContentTitle("🌙 Today's Spending Digest")
+                .setContentTitle(title)
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
                 .setContentIntent(pendingIntent)
@@ -81,8 +99,8 @@ class DailySummaryReceiver : BroadcastReceiver() {
                 .setPublicVersion(
                     NotificationCompat.Builder(context, CHANNEL_ID)
                         .setSmallIcon(android.R.drawable.ic_menu_info_details)
-                        .setContentTitle("🌙 Today's Spending Digest")
-                        .setContentText("Tap to view your daily summary.")
+                        .setContentTitle(title)
+                        .setContentText(if (reviewOnly) "Tap to review." else "Tap to view your daily summary.")
                         .build()
                 )
                 .build()

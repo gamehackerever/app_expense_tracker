@@ -26,7 +26,14 @@ class DailyDigestWorker(
             DailySummaryReceiver.checkAndNotifyUpcomingBills(applicationContext, recentTxns)
         }
 
-        if (!settingsRepo.dailyDigestEnabled) return Result.success()
+        val pendingReview = runCatching { db.reviewItemDao().getPendingReviewCountSync() }.getOrDefault(0)
+        val reviewForNotification = if (settingsRepo.reviewRemindersEnabled) pendingReview else 0
+
+        if (!settingsRepo.dailyDigestEnabled) {
+            // No spending digest: still nudge once in the evening, but only if something is actually waiting.
+            DailySummaryReceiver.showReviewReminder(applicationContext, reviewForNotification)
+            return Result.success()
+        }
 
         val cal = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0)
@@ -40,7 +47,7 @@ class DailyDigestWorker(
         val spentPaise = dao.getMySpendBetween(startOfDay, endOfDay)
         val count = dao.getMySpendCountBetween(startOfDay, endOfDay)
 
-        DailySummaryReceiver.showNotification(applicationContext, spentPaise, count)
+        DailySummaryReceiver.showNotification(applicationContext, spentPaise, count, reviewForNotification)
 
         return Result.success()
     }
