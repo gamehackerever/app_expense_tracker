@@ -88,6 +88,9 @@ fun InsightsScreen(
     val dismissedCategoryWarningLevels by viewModel.dismissedCategoryWarningLevels.collectAsStateWithLifecycle()
     val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsStateWithLifecycle()
     val monthlyBudget by viewModel.monthlyBudget.collectAsStateWithLifecycle()
+    val baseMonthlyBudget by viewModel.baseMonthlyBudget.collectAsStateWithLifecycle()
+    val activeRolloverAmount by viewModel.activeRolloverAmount.collectAsStateWithLifecycle()
+    val effectiveMonthlyBudgetPaise = ((if (baseMonthlyBudget > 0L) baseMonthlyBudget else monthlyBudget) * 100L - activeRolloverAmount).coerceAtLeast(0L)
 
     var showManageCategoryBudgetsSheet by remember { mutableStateOf(false) }
     var initialCategoryForBudgetSheet by remember { mutableStateOf<String?>(null) }
@@ -603,8 +606,8 @@ fun InsightsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
-                            if (hasSpending && monthlyBudget > 0L && selectedAccountFilter == null) {
-                                val pctOfBudget = ((grandTotalDebit.toDouble() / (monthlyBudget * 100.0)) * 100.0).roundToInt()
+                            if (hasSpending && effectiveMonthlyBudgetPaise > 0L && selectedAccountFilter == null) {
+                                val pctOfBudget = ((grandTotalDebit.toDouble() / (effectiveMonthlyBudgetPaise.toDouble())) * 100.0).roundToInt()
                                 val budgetTint = when {
                                     pctOfBudget > 100 -> InsightsColors.negative
                                     pctOfBudget >= 85 -> com.expensetracker.offline.ui.theme.AppColors.warning
@@ -616,7 +619,7 @@ fun InsightsScreen(
                                     color = budgetTint.copy(alpha = 0.12f)
                                 ) {
                                     Text(
-                                        "$pctOfBudget% of ${formatRupees(monthlyBudget * 100L)} budget",
+                                        "$pctOfBudget% of ${formatRupees(effectiveMonthlyBudgetPaise)} budget",
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = budgetTint,
@@ -657,7 +660,7 @@ fun InsightsScreen(
                                 )
                             }
 
-                            val monthlyBudgetPaise = monthlyBudget * 100L
+                            val monthlyBudgetPaise = effectiveMonthlyBudgetPaise
                             val hasActiveBudgetHere = monthlyBudgetPaise > 0L && selectedAccountFilter == null
                             val showProjected = hasSpending && isCurrent && daysLeft > 0 && elapsedDays >= 3
                             val showSafeAllowance = hasSpending && isCurrent && hasActiveBudgetHere && daysLeft > 0
@@ -819,7 +822,7 @@ fun InsightsScreen(
                     EntranceItem("multi_cycle_trend", 4, seenSections, Modifier.animateItem(fadeInSpec = null)) {
                         MultiCycleTrendCard(
                             allPoints = trendPoints,
-                            monthlyBudgetPaise = if (selectedAccountFilter == null) monthlyBudget * 100L else 0L,
+                            monthlyBudgetPaise = if (selectedAccountFilter == null) effectiveMonthlyBudgetPaise else 0L,
                             isAnimating = startBarAnimations
                         )
                     }
@@ -1124,7 +1127,7 @@ fun InsightsScreen(
             initialCategory = initialCategoryForBudgetSheet,
             transactions = allTransactions,
             pendingDeleteIds = pendingDeleteIds.keys,
-            monthlyBudgetPaise = monthlyBudget * 100L,
+            monthlyBudgetPaise = effectiveMonthlyBudgetPaise,
             startDayOfMonth = startDayOfMonth
         )
     }
