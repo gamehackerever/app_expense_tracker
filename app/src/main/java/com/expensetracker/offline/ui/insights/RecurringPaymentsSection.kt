@@ -718,16 +718,23 @@ private fun RecurringPaymentCard(
                         color = dueColor(payment, now, lapsed)
                     )
                     // Low-emphasis escape hatch for a wrongly detected payment.
-                    Text(
-                        "Not recurring",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(AppRadius.pill))
-                            .quietClickable { haptic.tap(); onHide() }
-                            .padding(horizontal = 8.dp, vertical = 6.dp)
-                    )
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            "Hide",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(AppRadius.pill))
+                                .quietClickable { haptic.tap(); onHide() }
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        )
+                        Text(
+                            "Not recurring",
+                            fontSize = 10.sp,
+                            color = scheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
                 }
             }
 

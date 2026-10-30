@@ -32,6 +32,8 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -331,7 +333,8 @@ fun AddExpenseSheet(
                     label = if (isTransferMode) "Destination account / note" else "Payee / store name",
                     placeholder = if (isTransferMode) "e.g., Savings A/c, Credit Card Bill" else "e.g., Supermarket, Restaurant",
                     leadingIcon = Icons.Default.Storefront,
-                    singleLine = true
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words)
                 )
 
                 AnimatedVisibility(

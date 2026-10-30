@@ -36,6 +36,8 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.dao.AccountInfo
@@ -465,7 +467,8 @@ fun EditTransactionSheet(
                         label = if (isTransferSelected) "Destination account / note" else "Payee / store name",
                         placeholder = if (isTransferSelected) "e.g., Savings A/c, Credit Card Bill" else "e.g., Supermarket, Restaurant",
                         leadingIcon = Icons.Default.Storefront,
-                        singleLine = true
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words)
                     )
 
                     AnimatedVisibility(
