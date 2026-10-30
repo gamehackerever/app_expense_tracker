@@ -19,6 +19,7 @@ import com.expensetracker.offline.engine.backup.AutoBackupWorker
 import com.expensetracker.offline.engine.backup.SecurePassphraseStore
 import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.engine.recurring.RecurringPayment
+import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
 import com.expensetracker.offline.ui.dashboard.SplitLinkInfo
 import com.expensetracker.offline.util.BackupManager
 import com.expensetracker.offline.util.BackupResult
@@ -66,7 +67,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val settingsRepo = SettingsRepository(application.applicationContext)
 
-    val monthlyBudget = MutableStateFlow(settingsRepo.monthlyBudget)
+    /** Budget the dashboard measures against: this cycle's one-off budget if set, else the usual one. */
+    val monthlyBudget = MutableStateFlow(settingsRepo.effectiveMonthlyBudget)
+    /** The usual (every-month) budget, shown and edited in Settings. */
+    val baseMonthlyBudget = MutableStateFlow(settingsRepo.monthlyBudget)
+    /** One-off budget for the current cycle, or null. */
+    val cycleBudgetOverride = MutableStateFlow(settingsRepo.currentCycleBudgetOverride())
     val startDayOfMonth = MutableStateFlow(settingsRepo.startDayOfMonth)
     val necessityChunkLimit = MutableStateFlow(settingsRepo.necessityChunkLimit)
     val isBudgetExplicitlySet = MutableStateFlow(settingsRepo.isBudgetExplicitlySet)
@@ -82,6 +88,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val dismissedCategoryWarnings = MutableStateFlow<Set<String>>(emptySet())
     val dismissedCategoryWarningLevels = MutableStateFlow<Map<String, String>>(emptyMap())
     val activeRolloverAmount = MutableStateFlow(0L)
+    /** What last cycle's overspend originally deducted from THIS cycle, and how much of it the user moved on to the next cycle. */
+    val incomingRolloverOriginal = MutableStateFlow(0L)
+    val incomingRolloverMoved = MutableStateFlow(0L)
     val currentCycleRolloverDecision = MutableStateFlow<Boolean?>(null)
     val isRolloverEnabled = MutableStateFlow(false)
     val rolloverMonths = MutableStateFlow(1)
@@ -139,16 +148,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dismissedCategoryWarnings.value = levels.keys
     }
 
-    fun updateMonthlyBudget(newBudget: Long) {
+    /** @param clearOverride true when the user says "every month": a leftover one-off must not hide the new number. */
+    fun updateMonthlyBudget(newBudget: Long, clearOverride: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
             settingsRepo.monthlyBudget = newBudget
+            if (clearOverride) settingsRepo.setCurrentCycleBudgetOverride(null)
         }
-        monthlyBudget.value = newBudget
+        baseMonthlyBudget.value = newBudget
+        if (clearOverride) cycleBudgetOverride.value = null
+        monthlyBudget.value = cycleBudgetOverride.value ?: newBudget
         isBudgetExplicitlySet.value = true
     }
 
+    /** Unforeseen month: change this cycle's budget only. The usual budget returns automatically next cycle. */
+    fun setBudgetForThisCycle(rupees: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.setCurrentCycleBudgetOverride(rupees)
+        }
+        cycleBudgetOverride.value = rupees
+        monthlyBudget.value = rupees
+        isBudgetExplicitlySet.value = true
+    }
+
+    fun clearBudgetOverride() {
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.setCurrentCycleBudgetOverride(null)
+        }
+        cycleBudgetOverride.value = null
+        monthlyBudget.value = baseMonthlyBudget.value
+    }
+
     fun refreshSettings() {
-        monthlyBudget.value = settingsRepo.monthlyBudget
+        baseMonthlyBudget.value = settingsRepo.monthlyBudget
+        cycleBudgetOverride.value = settingsRepo.currentCycleBudgetOverride()
+        monthlyBudget.value = settingsRepo.effectiveMonthlyBudget
         startDayOfMonth.value = settingsRepo.startDayOfMonth
         necessityChunkLimit.value = settingsRepo.necessityChunkLimit
         isBudgetExplicitlySet.value = settingsRepo.isBudgetExplicitlySet
@@ -180,6 +213,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadRolloverState() {
         val key = cycleKeyAt(0)
         activeRolloverAmount.value = settingsRepo.rolloverBudgetMap[key] ?: 0L
+        incomingRolloverOriginal.value = rolloverPrefs.getLong("orig|$key", -1L).let { if (it < 0L) activeRolloverAmount.value else it }
+        incomingRolloverMoved.value = rolloverPrefs.getLong("moved|$key", 0L)
         currentCycleRolloverDecision.value = settingsRepo.getRolloverDecision(key)
         isRolloverEnabled.value = settingsRepo.getRolloverEnabled(key)
         rolloverMonths.value = rolloverPrefs.getInt("months|$key", 1).coerceIn(1, 2)
@@ -263,6 +298,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(NonCancellable) {
                     val key = cycleKeyAt(0)
                     writePlan(overspendPaise.coerceAtLeast(0L), rolloverPrefs.getInt("months|$key", 1).coerceIn(1, 2))
+                }
+            }
+        }
+    }
+
+    /**
+     * Changes how much of LAST cycle's overspend is deducted from THIS cycle's budget, after the fact.
+     * mode 0 = start fresh (deduct nothing), 1 = deduct all of it, 2 = deduct half now and carry the other half
+     * into the next cycle. Fully reversible: the original amount is remembered.
+     */
+    fun adjustIncomingRollover(mode: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            rolloverMutex.withLock {
+                withContext(NonCancellable) {
+                    val key = cycleKeyAt(0)
+                    val nextKey = cycleKeyAt(1)
+                    val totals = settingsRepo.rolloverBudgetMap
+                    val current = totals[key] ?: 0L
+                    val original = rolloverPrefs.getLong("orig|$key", -1L).let { if (it < 0L) current else it }
+                    val previouslyMoved = rolloverPrefs.getLong("moved|$key", 0L)
+
+                    // Undo any earlier split first, then apply the new choice from the original amount.
+                    if (previouslyMoved > 0L) {
+                        settingsRepo.setRolloverBudget(nextKey, ((settingsRepo.rolloverBudgetMap[nextKey] ?: 0L) - previouslyMoved).coerceAtLeast(0L))
+                    }
+                    var moved = 0L
+                    val deductNow = when (mode) {
+                        0 -> 0L
+                        2 -> original / 2
+                        else -> original
+                    }
+                    if (mode == 2) {
+                        moved = original - deductNow
+                        settingsRepo.setRolloverBudget(nextKey, (settingsRepo.rolloverBudgetMap[nextKey] ?: 0L) + moved)
+                    }
+                    settingsRepo.setRolloverBudget(key, deductNow)
+                    rolloverPrefs.edit().putLong("orig|$key", original).putLong("moved|$key", moved).commit()
+                    activeRolloverAmount.value = deductNow
+                    incomingRolloverOriginal.value = original
+                    incomingRolloverMoved.value = moved
                 }
             }
         }
@@ -429,6 +504,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val filterCategory = MutableStateFlow("All")
     private val filterStartTime = MutableStateFlow(0L)
     private val transactionLimit = MutableStateFlow(100)
+
+    // ───────────── Custom budgets (goal budgets such as "New laptop") ─────────────
+    private val customBudgetStore = com.expensetracker.offline.data.repository.CustomBudgetStore(settingsRepo.prefs)
+    val customBudgets = MutableStateFlow(customBudgetStore.load())
+
+    fun saveCustomBudget(id: String?, name: String, targetPaise: Long, excludeFromMonthly: Boolean) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || targetPaise <= 0L) return
+        val existing = customBudgets.value.firstOrNull { it.id == id }
+        val budget = com.expensetracker.offline.data.repository.CustomBudget(
+            id = existing?.id ?: java.util.UUID.randomUUID().toString(),
+            name = trimmed,
+            targetPaise = targetPaise,
+            excludeFromMonthly = excludeFromMonthly,
+            createdAt = existing?.createdAt ?: System.currentTimeMillis()
+        )
+        customBudgets.value = customBudgetStore.upsert(budget)
+        // Flipping "keep out of monthly" applies to everything already in the budget.
+        if (existing != null && existing.excludeFromMonthly != excludeFromMonthly) {
+            viewModelScope.launch(Dispatchers.IO) { runCatching { repository.setBudgetExclusion(budget.id, excludeFromMonthly) } }
+        }
+    }
+
+    fun deleteCustomBudget(id: String) {
+        val budget = customBudgets.value.firstOrNull { it.id == id } ?: return
+        customBudgets.value = customBudgetStore.delete(id)
+        viewModelScope.launch(Dispatchers.IO) { runCatching { repository.clearBudget(id, budget.excludeFromMonthly) } }
+    }
+
+    /** Puts [ids] into [budgetId] (or takes them out of any budget when null). */
+    fun assignToBudget(ids: List<Long>, budgetId: String?) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val budget = customBudgets.value.firstOrNull { it.id == budgetId }
+                if (budget != null) {
+                    repository.tagToBudget(ids, budget.id, budget.excludeFromMonthly)
+                } else {
+                    val excludingIds = customBudgets.value.filter { it.excludeFromMonthly }.map { it.id }.toSet()
+                    val restore = repository.budgetIdsOf(ids).any { it in excludingIds }
+                    repository.untagFromBudget(ids, restore)
+                }
+            }
+        }
+    }
+
+    /** "Sort by payee": categorise every uncategorised spend to this payee and learn the rule. */
+    fun categorizePayee(payee: String, category: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.categorizePayee(payee, category) }
+        }
+    }
 
     fun renamePayeeForAll(oldPayee: String, newPayee: String) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -626,9 +753,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val recurringPayments: StateFlow<List<RecurringPayment>?> =
+    private val detectedRecurring: StateFlow<List<RecurringPayment>?> =
         dbEpoch.flatMapLatest { repository.recurringPaymentsFlow() }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private val hiddenRecurringKeys = MutableStateFlow(settingsRepo.hiddenRecurringKeys)
+
+    /** Detected recurring payments minus the ones the user marked "not recurring". */
+    val recurringPayments: StateFlow<List<RecurringPayment>?> =
+        combine(detectedRecurring, hiddenRecurringKeys) { list, hidden ->
+            list?.filterNot { RecurringPaymentDetector.groupKey(it.payee) in hidden }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** The ones the user hid, so they can be restored. */
+    val hiddenRecurringPayments: StateFlow<List<RecurringPayment>> =
+        combine(detectedRecurring, hiddenRecurringKeys) { list, hidden ->
+            list.orEmpty().filter { RecurringPaymentDetector.groupKey(it.payee) in hidden }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun hideRecurring(payee: String) {
+        val updated = settingsRepo.hiddenRecurringKeys + RecurringPaymentDetector.groupKey(payee)
+        settingsRepo.hiddenRecurringKeys = updated
+        hiddenRecurringKeys.value = updated
+    }
+
+    fun restoreRecurring(payee: String) {
+        val updated = settingsRepo.hiddenRecurringKeys - RecurringPaymentDetector.groupKey(payee)
+        settingsRepo.hiddenRecurringKeys = updated
+        hiddenRecurringKeys.value = updated
+    }
 
     fun resetManualSync() {
         _manualSyncBalance.value = null
@@ -729,9 +882,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         accountNumber: String? = null, linkedDebtId: Long? = null,
         excludeFromSpend: Boolean = false,
         isCreditCard: Boolean = false, // Add this new UI toggle parameter
-        splitParticipants: List<com.expensetracker.offline.ui.components.SplitParticipant> = emptyList()
+        splitParticipants: List<com.expensetracker.offline.ui.components.SplitParticipant> = emptyList(),
+        budgetId: String? = null
     ) {
         viewModelScope.launch(Dispatchers.IO) {
+            val budget = customBudgets.value.firstOrNull { it.id == budgetId }
             val ccConfig = if (bankName != null) settingsRepo.getCreditCardConfig(bankName, accountNumber) else null
             val isCcAccount = isCreditCard || ccConfig?.isCreditCard == true
 
@@ -743,7 +898,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 linkedDebtId = linkedDebtId, bankName = bankName,
                 accountNumber = accountNumber,
                 accountType = if (isCcAccount) "CREDIT_CARD" else "BANK", // Pass the flag
-                excludeFromSpend = excludeFromSpend || category.equals("Transfer", ignoreCase = true)
+                excludeFromSpend = excludeFromSpend || category.equals("Transfer", ignoreCase = true) ||
+                    (budget?.excludeFromMonthly == true),
+                budgetId = budget?.id
             )
             val newId = repository.insertTransaction(entity)
             if (newId > 0L && !excludeFromSpend) {
