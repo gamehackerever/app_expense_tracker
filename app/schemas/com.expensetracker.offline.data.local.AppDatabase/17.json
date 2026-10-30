@@ -1,0 +1,442 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 17,
+    "identityHash": "3ffdd0f820c7dbc9ae9ff7f9609f6440",
+    "entities": [
+      {
+        "tableName": "transactions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `amount` INTEGER NOT NULL, `payee` TEXT NOT NULL, `timestamp` INTEGER NOT NULL, `type` TEXT NOT NULL, `source` TEXT NOT NULL, `referenceId` TEXT, `rawContent` TEXT NOT NULL, `category` TEXT NOT NULL, `note` TEXT, `balance` INTEGER, `itemsSummary` TEXT, `receiptImageUri` TEXT, `bankName` TEXT, `accountNumber` TEXT, `isNecessity` INTEGER NOT NULL, `excludeFromSpend` INTEGER NOT NULL, `linkedDebtId` INTEGER, `paidBy` TEXT, `accountType` TEXT NOT NULL, `budgetId` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payee",
+            "columnName": "payee",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "referenceId",
+            "columnName": "referenceId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "rawContent",
+            "columnName": "rawContent",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "balance",
+            "columnName": "balance",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "itemsSummary",
+            "columnName": "itemsSummary",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "receiptImageUri",
+            "columnName": "receiptImageUri",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "bankName",
+            "columnName": "bankName",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "accountNumber",
+            "columnName": "accountNumber",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "isNecessity",
+            "columnName": "isNecessity",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "excludeFromSpend",
+            "columnName": "excludeFromSpend",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "linkedDebtId",
+            "columnName": "linkedDebtId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "paidBy",
+            "columnName": "paidBy",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "accountType",
+            "columnName": "accountType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "budgetId",
+            "columnName": "budgetId",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_transactions_timestamp",
+            "unique": false,
+            "columnNames": [
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_transactions_timestamp` ON `${TABLE_NAME}` (`timestamp`)"
+          },
+          {
+            "name": "index_transactions_amount_timestamp",
+            "unique": false,
+            "columnNames": [
+              "amount",
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_transactions_amount_timestamp` ON `${TABLE_NAME}` (`amount`, `timestamp`)"
+          },
+          {
+            "name": "index_transactions_referenceId",
+            "unique": false,
+            "columnNames": [
+              "referenceId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_transactions_referenceId` ON `${TABLE_NAME}` (`referenceId`)"
+          },
+          {
+            "name": "index_transactions_linkedDebtId",
+            "unique": false,
+            "columnNames": [
+              "linkedDebtId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_transactions_linkedDebtId` ON `${TABLE_NAME}` (`linkedDebtId`)"
+          },
+          {
+            "name": "index_transactions_bankName_accountNumber",
+            "unique": false,
+            "columnNames": [
+              "bankName",
+              "accountNumber"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_transactions_bankName_accountNumber` ON `${TABLE_NAME}` (`bankName`, `accountNumber`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "review_items",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `rawContent` TEXT NOT NULL, `sender` TEXT NOT NULL, `timestamp` INTEGER NOT NULL, `source` TEXT NOT NULL, `extractedPartialAmount` INTEGER, `extractedPartialPayee` TEXT, `type` TEXT, `bankName` TEXT, `accountNumber` TEXT, `balance` INTEGER, `referenceId` TEXT, `status` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rawContent",
+            "columnName": "rawContent",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sender",
+            "columnName": "sender",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "extractedPartialAmount",
+            "columnName": "extractedPartialAmount",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "extractedPartialPayee",
+            "columnName": "extractedPartialPayee",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "bankName",
+            "columnName": "bankName",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "accountNumber",
+            "columnName": "accountNumber",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "balance",
+            "columnName": "balance",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "referenceId",
+            "columnName": "referenceId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "category_rules",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `merchantPattern` TEXT NOT NULL, `category` TEXT NOT NULL, `usageCount` INTEGER NOT NULL, `lastUpdated` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "merchantPattern",
+            "columnName": "merchantPattern",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "usageCount",
+            "columnName": "usageCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastUpdated",
+            "columnName": "lastUpdated",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_category_rules_merchantPattern",
+            "unique": true,
+            "columnNames": [
+              "merchantPattern"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_category_rules_merchantPattern` ON `${TABLE_NAME}` (`merchantPattern`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "split_debts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `transactionId` INTEGER NOT NULL, `debtorName` TEXT NOT NULL, `amountOwed` INTEGER NOT NULL, `originalAmount` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `settledAt` INTEGER, `status` TEXT NOT NULL, FOREIGN KEY(`transactionId`) REFERENCES `transactions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transactionId",
+            "columnName": "transactionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "debtorName",
+            "columnName": "debtorName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amountOwed",
+            "columnName": "amountOwed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "originalAmount",
+            "columnName": "originalAmount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "settledAt",
+            "columnName": "settledAt",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_split_debts_transactionId",
+            "unique": false,
+            "columnNames": [
+              "transactionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_split_debts_transactionId` ON `${TABLE_NAME}` (`transactionId`)"
+          },
+          {
+            "name": "index_split_debts_transactionId_debtorName",
+            "unique": true,
+            "columnNames": [
+              "transactionId",
+              "debtorName"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_split_debts_transactionId_debtorName` ON `${TABLE_NAME}` (`transactionId`, `debtorName`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "transactions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "transactionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3ffdd0f820c7dbc9ae9ff7f9609f6440')"
+    ]
+  }
+}

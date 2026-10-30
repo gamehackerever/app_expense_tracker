@@ -201,11 +201,68 @@ interface TransactionDao {
     """)
     suspend fun getCardPaymentCredits(sinceMs: Long): List<TransactionEntity>
 
+    /** Card "payment received" credits (already flagged as transfers) with exactly this amount near this time. */
+    @Query("""
+        SELECT * FROM transactions
+        WHERE amount = :amount AND type = 'CREDIT' AND accountType = 'CREDIT_CARD'
+          AND excludeFromSpend = 1 AND category = 'Transfer'
+          AND timestamp BETWEEN :startTime AND :endTime
+        ORDER BY ABS(timestamp - :targetTime)
+        LIMIT 5
+    """)
+    suspend fun findCardPaymentCreditsByAmount(
+        amount: Long, startTime: Long, endTime: Long, targetTime: Long
+    ): List<TransactionEntity>
+
+    /** How many transactions already carry this bank/UPI reference (statement import duplicate check). */
+    @Query("SELECT COUNT(*) FROM transactions WHERE referenceId = :referenceId")
+    suspend fun countByReference(referenceId: String): Int
+
+    /** Tags transactions to a custom budget; [exclude] = 1 also keeps them out of the monthly spend total. */
+    @Query("UPDATE transactions SET budgetId = :budgetId, excludeFromSpend = CASE WHEN :exclude = 1 THEN 1 ELSE excludeFromSpend END WHERE id IN (:ids)")
+    suspend fun tagToBudget(ids: List<Long>, budgetId: String, exclude: Int)
+
+    /** Removes the tag; [restore] = 1 puts the transactions back into the monthly spend total. */
+    @Query("UPDATE transactions SET budgetId = NULL, excludeFromSpend = CASE WHEN :restore = 1 THEN 0 ELSE excludeFromSpend END WHERE id IN (:ids)")
+    suspend fun untagFromBudget(ids: List<Long>, restore: Int)
+
+    /** Used when a budget is deleted. */
+    @Query("UPDATE transactions SET budgetId = NULL, excludeFromSpend = CASE WHEN :restore = 1 THEN 0 ELSE excludeFromSpend END WHERE budgetId = :budgetId")
+    suspend fun clearBudget(budgetId: String, restore: Int)
+
+    @Query("UPDATE transactions SET excludeFromSpend = :exclude WHERE budgetId = :budgetId")
+    suspend fun setBudgetExclusion(budgetId: String, exclude: Int)
+
+    @Query("SELECT DISTINCT budgetId FROM transactions WHERE id IN (:ids) AND budgetId IS NOT NULL")
+    suspend fun budgetIdsOf(ids: List<Long>): List<String>
+
+    /** Like [countByReference] but only counting rows a statement import added earlier. */
+    @Query("SELECT COUNT(*) FROM transactions WHERE referenceId = :referenceId AND rawContent LIKE 'Imported from %'")
+    suspend fun countImportedByReference(referenceId: String): Int
+
+    @Query("SELECT COUNT(*) FROM transactions WHERE amount = :amount AND type = :type AND timestamp BETWEEN :startTime AND :endTime AND rawContent LIKE 'Imported from %'")
+    suspend fun countImportedSameAmountBetween(amount: Long, type: TransactionType, startTime: Long, endTime: Long): Int
+
+    @Query("SELECT COUNT(*) FROM transactions WHERE timestamp BETWEEN :startTime AND :endTime AND rawContent LIKE 'Imported from %'")
+    suspend fun countImportedBetween(startTime: Long, endTime: Long): Int
+
+    /** Removes earlier statement imports in a period so a fresh import can replace them (split bills are never touched). */
+    @Query("DELETE FROM transactions WHERE timestamp BETWEEN :startTime AND :endTime AND rawContent LIKE 'Imported from %' AND id NOT IN (SELECT transactionId FROM split_debts)")
+    suspend fun deleteImportedBetween(startTime: Long, endTime: Long): Int
+
+    /** How many transactions with this amount and direction already exist inside a time window. */
+    @Query("SELECT COUNT(*) FROM transactions WHERE amount = :amount AND type = :type AND timestamp BETWEEN :startTime AND :endTime")
+    suspend fun countSameAmountBetween(amount: Long, type: TransactionType, startTime: Long, endTime: Long): Int
+
     @Query("UPDATE transactions SET accountType = :accountType WHERE bankName = :bankName AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL))")
     suspend fun setAccountType(bankName: String, accountNumber: String?, accountType: String)
 
     @Query("UPDATE transactions SET accountType = 'CREDIT_CARD' WHERE bankName = :bankName AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL))")
     suspend fun markAccountAsCreditCard(bankName: String, accountNumber: String?)
+
+    /** Gives every still-uncategorised spend to this payee a category (the "Sort by payee" action). */
+    @Query("UPDATE transactions SET category = :category WHERE payee = :payee AND type = 'DEBIT' AND LOWER(TRIM(category)) = 'uncategorized'")
+    suspend fun categorizeUncategorizedByPayee(payee: String, category: String): Int
 
     @Query("UPDATE transactions SET payee = :newPayee, category = :newCategory WHERE payee = :oldPayee")
     suspend fun updatePayeeAndCategoryBulk(oldPayee: String, newPayee: String, newCategory: String)
