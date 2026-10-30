@@ -118,6 +118,7 @@ dependencies {
     "fullImplementation"(libs.text.recognition)
     // Native QR Code generation for one-tap settlement
     implementation(libs.core)
+    implementation(libs.pdfbox.android)
 }
 
 kotlin {

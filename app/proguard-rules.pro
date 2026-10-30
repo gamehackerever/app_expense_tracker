@@ -27,6 +27,11 @@
 }
 -keep class com.expensetracker.offline.widget.** { *; }
 
+# Statement Import
+-keep class com.tom_roush.pdfbox.** { *; }
+# PDFBox's optional JPEG-2000 codec is not bundled; the app extracts PDF text and does not decode JPX images.
+-dontwarn com.gemalto.jp2.**
+
 # ML Kit On-Device Text Recognition
 -keep class com.google.mlkit.** { *; }
 -dontwarn com.google.mlkit.**

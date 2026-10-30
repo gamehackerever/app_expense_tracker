@@ -7,6 +7,7 @@ fragmentKtx = "1.9.0"
 glanceAppwidget = "1.2.0"
 kotlin = "2.0.21"
 ksp = "2.0.21-1.0.27"
+pdfboxAndroid = "2.0.27.0"
 room = "2.6.1"
 coreKtx = "1.15.0"
 junit = "4.13.2"
@@ -53,6 +54,7 @@ androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "j
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workRuntimeKtx" }
+pdfbox-android = { module = "com.tom-roush:pdfbox-android", version.ref = "pdfboxAndroid" }
 text-recognition = { module = "com.google.mlkit:text-recognition", version.ref = "textRecognition" }
 
 [plugins]
