@@ -34,7 +34,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun splitDebtDao(): SplitDebtDao
 
     companion object {
-        const val DATABASE_VERSION = 17
+        const val DATABASE_VERSION = 18
 
         val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -316,6 +316,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `transactions` ADD COLUMN `budgetOriginalExclusion` INTEGER")
+            }
+        }
+
         @Volatile private var INSTANCE: AppDatabase? = null
 
         fun getInstance(context: Context): AppDatabase {
@@ -328,7 +334,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
                     MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
-                    MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17
+                    MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18
                 ).fallbackToDestructiveMigrationFrom(1, 2, 3)
                     .build().also { INSTANCE = it }
             }

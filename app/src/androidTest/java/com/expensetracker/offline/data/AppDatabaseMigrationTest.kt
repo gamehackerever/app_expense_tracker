@@ -42,10 +42,11 @@ class AppDatabaseMigrationTest {
             AppDatabase.DATABASE_VERSION,
             true,
             AppDatabase.MIGRATION_15_16,
-            AppDatabase.MIGRATION_16_17
+            AppDatabase.MIGRATION_16_17,
+            AppDatabase.MIGRATION_17_18
         )
         migrated.query(
-            "SELECT amount, payee, referenceId, accountType, budgetId FROM transactions WHERE id = 41"
+            "SELECT amount, payee, referenceId, accountType, budgetId, budgetOriginalExclusion FROM transactions WHERE id = 41"
         ).use { cursor ->
             check(cursor.moveToFirst()) { "Transaction was lost during migration" }
             assertEquals(2599L, cursor.getLong(0))
@@ -53,6 +54,7 @@ class AppDatabaseMigrationTest {
             assertEquals("REF-41", cursor.getString(2))
             assertEquals("BANK", cursor.getString(3))
             assertNull(cursor.getString(4))
+            assertNull(cursor.getString(5))
         }
         migrated.close()
     }

@@ -31,22 +31,31 @@ interface TransactionDao {
     ): Long
 
     @Query("""
-    SELECT balance FROM transactions 
-    WHERE bankName = :bankName 
-      AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL)) 
-      AND balance IS NOT NULL 
-    ORDER BY timestamp DESC LIMIT 1
-""")
+    SELECT balance FROM transactions
+    WHERE bankName = :bankName
+      AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL))
+      AND balance IS NOT NULL
+    ORDER BY timestamp DESC, id DESC LIMIT 1
+    """)
     fun getLatestBalanceForAccountFlow(bankName: String, accountNumber: String?): Flow<Long?>
 
     @Query("""
-    SELECT balance FROM transactions 
-    WHERE bankName = :bankName 
-      AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL)) 
-      AND balance IS NOT NULL 
-    ORDER BY timestamp DESC LIMIT 1
-""")
+    SELECT balance FROM transactions
+    WHERE bankName = :bankName
+      AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL))
+      AND balance IS NOT NULL
+    ORDER BY timestamp DESC, id DESC LIMIT 1
+    """)
     suspend fun getLatestBalanceForAccountSync(bankName: String, accountNumber: String?): Long?
+
+    @Query("""
+    SELECT timestamp FROM transactions
+    WHERE bankName = :bankName
+      AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL))
+      AND balance IS NOT NULL
+    ORDER BY timestamp DESC, id DESC LIMIT 1
+    """)
+    suspend fun getLatestBalanceTimestampForAccountSync(bankName: String, accountNumber: String?): Long?
 
     @Query("SELECT * FROM transactions WHERE bankName = :bankName AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL)) ORDER BY timestamp DESC")
     fun getTransactionsByAccountFlow(bankName: String, accountNumber: String?): Flow<List<TransactionEntity>>
@@ -64,7 +73,7 @@ interface TransactionDao {
     SELECT bankName, accountNumber,
            (SELECT balance FROM transactions t2 
             WHERE t2.bankName = t.bankName AND (t2.accountNumber = t.accountNumber OR (t2.accountNumber IS NULL AND t.accountNumber IS NULL)) AND t2.balance IS NOT NULL 
-            ORDER BY t2.timestamp DESC LIMIT 1) AS latestBalance,
+             ORDER BY t2.timestamp DESC, t2.id DESC LIMIT 1) AS latestBalance,
            MAX(timestamp) AS lastUpdated
     FROM transactions t WHERE bankName IS NOT NULL GROUP BY bankName, accountNumber ORDER BY lastUpdated DESC
     """)
@@ -121,7 +130,7 @@ interface TransactionDao {
           AND timestamp BETWEEN :startTime AND :endTime 
           AND (bankName = :bankName OR :bankName IS NULL OR bankName IS NULL)
           AND (accountNumber = :accountNumber OR :accountNumber IS NULL OR accountNumber IS NULL)
-        ORDER BY ABS(timestamp - :targetTime) 
+        ORDER BY ABS(timestamp - :targetTime), id DESC
         LIMIT 1
     """)
     suspend fun findMatchingTransaction(
@@ -146,7 +155,7 @@ interface TransactionDao {
           AND bankName IS NOT NULL
           AND :currentBank IS NOT NULL
           AND (bankName != :currentBank OR COALESCE(accountNumber, '') != COALESCE(:currentAccount, ''))
-        ORDER BY ABS(timestamp - :targetTime)
+        ORDER BY ABS(timestamp - :targetTime), id DESC
         LIMIT 1
     """)
     suspend fun findOppositeTransferLeg(
@@ -186,7 +195,7 @@ interface TransactionDao {
         SELECT * FROM transactions
         WHERE amount = :amount AND type = :type AND accountType = :accountType
           AND timestamp BETWEEN :startTime AND :endTime
-        ORDER BY ABS(timestamp - :targetTime)
+        ORDER BY ABS(timestamp - :targetTime), id DESC
         LIMIT 10
     """)
     suspend fun findPaymentCounterpartCandidates(
@@ -207,7 +216,7 @@ interface TransactionDao {
         WHERE amount = :amount AND type = 'CREDIT' AND accountType = 'CREDIT_CARD'
           AND excludeFromSpend = 1 AND category = 'Transfer'
           AND timestamp BETWEEN :startTime AND :endTime
-        ORDER BY ABS(timestamp - :targetTime)
+        ORDER BY ABS(timestamp - :targetTime), id DESC
         LIMIT 5
     """)
     suspend fun findCardPaymentCreditsByAmount(
@@ -219,18 +228,43 @@ interface TransactionDao {
     suspend fun countByReference(referenceId: String): Int
 
     /** Tags transactions to a custom budget; [exclude] = 1 also keeps them out of the monthly spend total. */
-    @Query("UPDATE transactions SET budgetId = :budgetId, excludeFromSpend = CASE WHEN :exclude = 1 THEN 1 ELSE excludeFromSpend END WHERE id IN (:ids)")
+    @Query("""
+        UPDATE transactions
+        SET budgetOriginalExclusion = CASE
+                WHEN budgetId IS NULL THEN excludeFromSpend
+                ELSE budgetOriginalExclusion
+            END,
+            budgetId = :budgetId,
+            excludeFromSpend = CASE
+                WHEN :exclude = 1 THEN 1
+                WHEN budgetId IS NULL THEN excludeFromSpend
+                ELSE COALESCE(budgetOriginalExclusion, 0)
+            END
+        WHERE id IN (:ids)
+    """)
     suspend fun tagToBudget(ids: List<Long>, budgetId: String, exclude: Int)
 
     /** Removes the tag; [restore] = 1 puts the transactions back into the monthly spend total. */
-    @Query("UPDATE transactions SET budgetId = NULL, excludeFromSpend = CASE WHEN :restore = 1 THEN 0 ELSE excludeFromSpend END WHERE id IN (:ids)")
+    @Query("""
+        UPDATE transactions
+        SET budgetId = NULL,
+            excludeFromSpend = CASE WHEN :restore = 1 THEN COALESCE(budgetOriginalExclusion, 0) ELSE excludeFromSpend END,
+            budgetOriginalExclusion = NULL
+        WHERE id IN (:ids)
+    """)
     suspend fun untagFromBudget(ids: List<Long>, restore: Int)
 
     /** Used when a budget is deleted. */
-    @Query("UPDATE transactions SET budgetId = NULL, excludeFromSpend = CASE WHEN :restore = 1 THEN 0 ELSE excludeFromSpend END WHERE budgetId = :budgetId")
+    @Query("""
+        UPDATE transactions
+        SET budgetId = NULL,
+            excludeFromSpend = CASE WHEN :restore = 1 THEN COALESCE(budgetOriginalExclusion, 0) ELSE excludeFromSpend END,
+            budgetOriginalExclusion = NULL
+        WHERE budgetId = :budgetId
+    """)
     suspend fun clearBudget(budgetId: String, restore: Int)
 
-    @Query("UPDATE transactions SET excludeFromSpend = :exclude WHERE budgetId = :budgetId")
+    @Query("UPDATE transactions SET excludeFromSpend = CASE WHEN :exclude = 1 THEN 1 ELSE COALESCE(budgetOriginalExclusion, 0) END WHERE budgetId = :budgetId")
     suspend fun setBudgetExclusion(budgetId: String, exclude: Int)
 
     @Query("SELECT DISTINCT budgetId FROM transactions WHERE id IN (:ids) AND budgetId IS NOT NULL")

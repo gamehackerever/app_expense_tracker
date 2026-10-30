@@ -39,5 +39,7 @@ data class TransactionEntity(
     val paidBy: String? = "You",
     val accountType: String = "BANK",
     /** Id of the custom budget ("New laptop") this transaction counts toward, if any. */
-    val budgetId: String? = null
+    val budgetId: String? = null,
+    /** Original exclusion state retained while a custom budget temporarily excludes this transaction. */
+    val budgetOriginalExclusion: Boolean? = null
 )

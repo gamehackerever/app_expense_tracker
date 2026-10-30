@@ -103,4 +103,41 @@ class DedupeAndImportTest {
         val sameSecond = txn(1_700_000_123_000L, null, null, TransactionSource.MANUAL, payee = "Chai", amount = 2_000L)
         assertEquals(2, repo.insertTransactionsBulk(listOf(sameSecond, sameSecond)))
     }
+
+    @Test
+    fun backdatedAccountTransaction_doesNotDeriveAFalseCurrentBalance() = runBlocking {
+        db.transactionDao().insertTransaction(
+            txn(2_000_000L, "HDFC Bank", "1234", TransactionSource.SMS).copy(balance = 50_000L)
+        )
+
+        val insertedId = repo.insertTransaction(
+            txn(1_000_000L, "HDFC Bank", "1234", TransactionSource.MANUAL, amount = 8_000L)
+        )
+
+        val inserted = db.transactionDao().getTransactionById(insertedId)
+        assertNull(inserted?.balance)
+        assertEquals(50_000L, db.transactionDao().getLatestBalanceForAccountSync("HDFC Bank", "1234"))
+    }
+
+    @Test
+    fun customBudgetExclusion_restoresEachTransactionsOriginalSpendState() = runBlocking {
+        val originallyExcludedId = db.transactionDao().insertTransaction(
+            txn(3_000_000L, null, null, TransactionSource.MANUAL, payee = "Card bill")
+                .copy(excludeFromSpend = true)
+        )
+        val ordinaryExpenseId = db.transactionDao().insertTransaction(
+            txn(3_001_000L, null, null, TransactionSource.MANUAL, payee = "Groceries")
+        )
+
+        repo.tagToBudget(listOf(originallyExcludedId, ordinaryExpenseId), "trip", excludeFromMonthly = true)
+        repo.setBudgetExclusion("trip", exclude = false)
+
+        assertEquals(true, db.transactionDao().getTransactionById(originallyExcludedId)?.excludeFromSpend)
+        assertEquals(false, db.transactionDao().getTransactionById(ordinaryExpenseId)?.excludeFromSpend)
+
+        repo.setBudgetExclusion("trip", exclude = true)
+        repo.clearBudget("trip", restoreCount = true)
+        assertEquals(true, db.transactionDao().getTransactionById(originallyExcludedId)?.excludeFromSpend)
+        assertEquals(false, db.transactionDao().getTransactionById(ordinaryExpenseId)?.excludeFromSpend)
+    }
 }
