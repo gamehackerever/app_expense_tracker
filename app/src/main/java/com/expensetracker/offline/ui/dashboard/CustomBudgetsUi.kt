@@ -480,9 +480,14 @@ private fun BudgetFormContent(
         Surface(
             shape = RoundedCornerShape(AppRadius.pill),
             color = scheme.onSurface.copy(alpha = 0.06f),
-            modifier = Modifier.clip(RoundedCornerShape(AppRadius.pill)).quietClickable { onCancel() }
+            modifier = Modifier
+                .height(56.dp)
+                .clip(RoundedCornerShape(AppRadius.pill))
+                .quietClickable { onCancel() }
         ) {
-            Text("Cancel", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface, modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 24.dp)) {
+                Text("Cancel", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface)
+            }
         }
         Box(modifier = Modifier.weight(1f)) {
             SheetPrimaryButton(text = if (existing == null) "Create budget" else "Save", enabled = valid, onClick = {
