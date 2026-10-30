@@ -36,10 +36,11 @@ enum class TimeRange(val tabLabel: String, val spendLabel: String) {
     THIS_WEEK("Week", "this week"),
     THIS_MONTH("Month", "this month"),
     THIS_YEAR("Year", "this year"),
-    ALL_TIME("All", "all time")
+    ALL_TIME("All", "all time"),
+    /** The previous billing cycle. Reached from the "Previous cycle" link, not shown as a tab. */
+    LAST_MONTH("Last", "last cycle")
 }
 
-internal fun HapticFeedback.tap() = tick()
 
 internal val LongConverter = TwoWayConverter<Long, AnimationVector1D>(
     convertToVector = { AnimationVector1D(it.toFloat()) },

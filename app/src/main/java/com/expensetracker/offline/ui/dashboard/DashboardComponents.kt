@@ -2,6 +2,9 @@
 
 package com.expensetracker.offline.ui.dashboard
 
+import com.expensetracker.offline.ui.components.quietClickable
+import com.expensetracker.offline.ui.components.quietCombinedClickable
+import com.expensetracker.offline.util.tap
 import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import android.content.Context
 import android.content.ContextWrapper
@@ -170,7 +173,7 @@ internal fun TransactionUndoBar(
                     modifier = Modifier
                         .clip(RoundedCornerShape(AppRadius.pill))
                         .quietClickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             onUndo()
                         }
                         .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -334,7 +337,7 @@ fun ManageCategoriesDialog(
         }
     }
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = {
             if (selectedCategoryForDetail != null) {
                 haptic.tap()
@@ -721,7 +724,7 @@ private fun CategoryOverviewSheetRow(
                         ) {
                             Text(
                                 "Custom",
-                                fontSize = 10.5.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -947,7 +950,7 @@ private fun CategoryDetailManagementContent(
                                     containerColor = MaterialTheme.colorScheme.onSurface,
                                     contentColor = MaterialTheme.colorScheme.surface
                                 ),
-                                modifier = Modifier.fillMaxWidth().height(46.dp)
+                                modifier = Modifier.fillMaxWidth().height(48.dp)
                             ) {
                                 Text("Save new name", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             }
@@ -965,7 +968,7 @@ private fun CategoryDetailManagementContent(
                     SheetCard(contentPadding = 14.dp, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
                             "Reassign all ${row.totalTxnCount} transactions and learned auto-categorization rules from \"${row.name}\" into another category:",
-                            fontSize = 12.5.sp,
+                            fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 18.sp
                         )
@@ -982,7 +985,7 @@ private fun CategoryDetailManagementContent(
                             shape = RoundedCornerShape(AppRadius.small),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
-                            modifier = Modifier.fillMaxWidth().height(46.dp)
+                            modifier = Modifier.fillMaxWidth().height(48.dp)
                         ) {
                             Text(
                                 "Move ${row.totalTxnCount} to $selectedMergeTarget",
@@ -1151,26 +1154,87 @@ fun SelectTargetDialog(
     currentTarget: Long,
     onDismiss: () -> Unit,
     onSaveTarget: (Long) -> Unit,
-    onManageCategoryCaps: (() -> Unit)? = null
+    onManageCategoryCaps: (() -> Unit)? = null,
+    /** Provide to offer "This month only" (a one-off budget for the current cycle). */
+    onSaveForThisCycle: ((Long) -> Unit)? = null,
+    /** Non-null while a one-off budget is active; shows the usual budget and a reset action. */
+    usualBudget: Long? = null,
+    onClearOverride: (() -> Unit)? = null
 ) {
     var textValue by remember { mutableStateOf(if (currentTarget > 0) currentTarget.toString().removeSuffix(".0") else "") }
+    // One-off by default when a one-off is already active, otherwise the usual every-month change.
+    var thisMonthOnly by remember { mutableStateOf(usualBudget != null) }
     val haptic = LocalHapticFeedback.current
     val parsedValue = textValue.toLongOrNull()
     val isValid = textValue.isNotBlank() && parsedValue != null && parsedValue > 0L
     val focusManager = LocalFocusManager.current
+    val save: (Long) -> Unit = { v ->
+        if (thisMonthOnly && onSaveForThisCycle != null) onSaveForThisCycle(v) else onSaveTarget(v)
+    }
 
     AppDialog(
-        title = "Set monthly budget",
+        title = "Monthly budget",
         onDismiss = { haptic.tap(); onDismiss() },
         confirmText = "Save",
         confirmEnabled = isValid,
-        onConfirm = { parsedValue?.let(onSaveTarget) }
+        onConfirm = { parsedValue?.let(save) }
     ) {
         Text(
-            "Enter your monthly spending limit to track progress against it.",
+            if (onSaveForThisCycle != null) "Unexpected expense this month? Change just this month and your usual budget comes back next cycle."
+            else "Enter your monthly spending limit to track progress against it.",
             fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        if (onSaveForThisCycle != null) {
+            Spacer(modifier = Modifier.height(14.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(false to "Every month", true to "This month only").forEach { (oneOff, label) ->
+                    val selected = thisMonthOnly == oneOff
+                    Surface(
+                        shape = RoundedCornerShape(AppRadius.pill),
+                        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(AppRadius.pill))
+                            .quietClickable { haptic.tap(); thisMonthOnly = oneOff }
+                    ) {
+                        Text(
+                            label,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            color = if (selected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp)
+                        )
+                    }
+                }
+            }
+        }
+        if (usualBudget != null && onClearOverride != null) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    "Usual budget: ${CurrencyFormat.withSymbol(usualBudget * 100L, 0)}",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "Reset to usual",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(AppRadius.pill))
+                        .quietClickable { haptic.tap(); onClearOverride(); onDismiss() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
         Spacer(modifier = Modifier.height(20.dp))
         // Inside SelectTargetDialog, replace the OutlinedTextField with this:
         BasicTextField(
@@ -1194,7 +1258,7 @@ fun SelectTargetDialog(
             ),
             keyboardActions = KeyboardActions(onDone = {
                 focusManager.clearFocus()
-                if (isValid) parsedValue?.let(onSaveTarget)
+                if (isValid) parsedValue?.let(save)
             }),
             modifier = Modifier.fillMaxWidth(),
             decorationBox = { inner ->
@@ -1257,7 +1321,7 @@ fun SelectTargetDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             "Category spending caps",
-                            fontSize = 13.5.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -1296,7 +1360,7 @@ fun AutoCaptureSetupSheet(
     val haptic = LocalHapticFeedback.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
@@ -1350,7 +1414,7 @@ fun AutoCaptureSetupSheet(
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(
                                 "If SMS is grayed out in Android Settings:",
-                                fontSize = 12.5.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
@@ -1365,14 +1429,14 @@ fun AutoCaptureSetupSheet(
                     }
                     Button(
                         onClick = { haptic.tap(); onOpenSmsPermissions() },
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = RoundedCornerShape(AppRadius.small),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.onSurface,
                             contentColor = MaterialTheme.colorScheme.surface
                         )
                     ) {
-                        Text("Open App Permissions", fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        Text("Open App Permissions", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1412,7 +1476,7 @@ fun AutoCaptureSetupSheet(
                 if (!hasNotificationPermission) {
                     Button(
                         onClick = { haptic.tap(); onOpenNotificationSettings() },
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = RoundedCornerShape(AppRadius.small),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -1422,7 +1486,7 @@ fun AutoCaptureSetupSheet(
                     ) {
                         Text(
                             "Enable Notification Access",
-                            fontSize = 13.5.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             softWrap = false,
@@ -1447,7 +1511,7 @@ fun AutoCaptureSetupSheet(
                         ) {
                             Text(
                                 "Greyed out? Tap here → ⋮ → Allow restricted settings",
-                                fontSize = 11.5.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.weight(1f)
@@ -1490,7 +1554,7 @@ fun AutoCaptureSetupSheet(
                 if (!isIgnoringBatteryOptimizations) {
                     OutlinedButton(
                         onClick = { haptic.tap(); onRequestBatteryUnrestricted() },
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = RoundedCornerShape(AppRadius.small),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -1500,7 +1564,7 @@ fun AutoCaptureSetupSheet(
                     ) {
                         Text(
                             "Allow Background Activity",
-                            fontSize = 13.5.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             softWrap = false,
@@ -1535,7 +1599,7 @@ fun AutoCaptureSetupSheet(
                 ) {
                     Text(
                         text = "Use Manual Mode",
-                        fontSize = 13.5.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         softWrap = false,
@@ -1924,7 +1988,7 @@ internal fun NecessityBreakdownDialog(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
-                Text("Safe to Spend breakdown", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Text("Safe to Spend breakdown", fontWeight = FontWeight.Bold, fontSize = 22.sp, letterSpacing = (-0.3).sp)
                 Spacer(modifier = Modifier.height(20.dp))
 
                 @Composable
@@ -2038,7 +2102,7 @@ internal fun NecessityBreakdownDialog(
                 Spacer(modifier = Modifier.height(28.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(
-                        onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onManage() },
+                        onClick = { haptic.tap(); onManage() },
                         shape = RoundedCornerShape(AppRadius.small),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -2057,7 +2121,7 @@ internal fun NecessityBreakdownDialog(
                         )
                     }
                     Button(
-                        onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onDismiss() },
+                        onClick = { haptic.tap(); onDismiss() },
                         shape = RoundedCornerShape(AppRadius.small),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -2109,7 +2173,7 @@ internal fun DayHeader(label: String, total: String? = null) {
     ) {
         Text(
             text = label,
-            fontSize = 13.5.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
             letterSpacing = 0.2.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2117,7 +2181,7 @@ internal fun DayHeader(label: String, total: String? = null) {
         if (total != null) {
             Text(
                 text = total,
-                fontSize = 13.5.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -2207,11 +2271,16 @@ internal fun startMillisFor(range: TimeRange, startDayOfMonth: Int): Long {
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
         TimeRange.THIS_MONTH -> BillingCycleHelper.getCycleRange(startDayOfMonth).first
+        TimeRange.LAST_MONTH -> BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -1).first
         TimeRange.THIS_YEAR -> Calendar.getInstance().apply {
             set(Calendar.DAY_OF_YEAR, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     }
 }
+
+/** End of the window for [range]: today for everything except the previous cycle, which ends where this one began. */
+internal fun endMillisFor(range: TimeRange, startDayOfMonth: Int): Long =
+    if (range == TimeRange.LAST_MONTH) BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -1).second else endOfTodayMillis()
 
 internal fun startOfCurrentMonthMillis(startDayOfMonth: Int): Long =
     BillingCycleHelper.getCycleRange(startDayOfMonth).first
@@ -2234,52 +2303,6 @@ fun Context.findFragmentActivity(): FragmentActivity? {
 }
 
 // ───────────────────────── Quiet interactions (no ripple) ─────────────────────────
-
-/** Click handler with no ripple; presses fade the element slightly instead. */
-@Composable
-internal fun Modifier.quietClickable(
-    enabled: Boolean = true,
-    pressedAlpha: Float = 0.75f,
-    pressedScale: Float = 0.98f,
-    onClick: () -> Unit
-): Modifier {
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    val alpha by animateFloatAsState(if (pressed && enabled) pressedAlpha else 1f, tween(100), label = "quietPress")
-    val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled) pressedScale else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
-        label = "quietScale"
-    )
-    return this
-        .graphicsLayer {
-            this.alpha = alpha
-            this.scaleX = scale
-            this.scaleY = scale
-        }
-        .clickable(enabled = enabled, interactionSource = source, indication = null, onClick = onClick)
-}
-
-/** Tap + long-press with no ripple. */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-internal fun Modifier.quietCombinedClickable(
-    pressedAlpha: Float = 0.85f,
-    onLongClick: (() -> Unit)? = null,
-    onClick: () -> Unit
-): Modifier {
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    val alpha by animateFloatAsState(if (pressed) pressedAlpha else 1f, tween(100), label = "quietPress")
-    return this
-        .graphicsLayer { this.alpha = alpha }
-        .combinedClickable(
-            interactionSource = source,
-            indication = null,
-            onLongClick = onLongClick,
-            onClick = onClick
-        )
-}
 
 /** Selectable (tabs, radio-style rows) with no ripple. */
 @Composable
@@ -2336,37 +2359,11 @@ fun DashboardProgressBar(
 internal fun CategoryBadgeTile(
     category: String,
     size: androidx.compose.ui.unit.Dp = 38.dp,
-    cornerRadius: androidx.compose.ui.unit.Dp = 10.dp,
-    iconSize: androidx.compose.ui.unit.Dp = 18.dp
+    @Suppress("UNUSED_PARAMETER") cornerRadius: androidx.compose.ui.unit.Dp = 10.dp,
+    @Suppress("UNUSED_PARAMETER") iconSize: androidx.compose.ui.unit.Dp = 18.dp
 ) {
-    val hasIcon = remember(category) { hasCategoryIcon(category) }
-    val initial = remember(category) {
-        category.trim().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?"
-    }
-    val neutralTint = MaterialTheme.colorScheme.onSurfaceVariant
-    Surface(
-        shape = RoundedCornerShape(cornerRadius),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-        modifier = Modifier.size(size)
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            if (hasIcon) {
-                Icon(
-                    getCategoryIcon(category),
-                    contentDescription = null,
-                    tint = neutralTint,
-                    modifier = Modifier.size(iconSize)
-                )
-            } else {
-                Text(
-                    text = initial,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = neutralTint
-                )
-            }
-        }
-    }
+    // Single shared glyph: see CategoryAvatar for the icon / initial rules.
+    com.expensetracker.offline.ui.components.CategoryAvatar(category = category, size = size)
 }
 
 @Composable
@@ -2795,7 +2792,7 @@ fun ManageCategoryBudgetsSheet(
 
     val sheetContentHeight = (LocalConfiguration.current.screenHeightDp * 0.72f).dp.coerceIn(480.dp, 620.dp)
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = {
             if (selectedCategoryForEdit != null && initialCategory == null) {
                 haptic.tap()
@@ -3324,10 +3321,7 @@ private fun CategoryBudgetFormContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                SheetIconTile(
-                    icon = getCategoryIcon(category),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                CategoryAvatar(category = category, size = 40.dp)
             }
 
             SheetAmountCard(

@@ -1,5 +1,6 @@
 package com.expensetracker.offline.ui.dashboard
 
+import com.expensetracker.offline.util.tap
 import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
@@ -49,7 +50,9 @@ fun DashboardSearchAndFilter(
     onAccountSelected: (AccountInfo?) -> Unit,
     hasUnspecifiedAccount: Boolean,
     onAutoDetectBanks: () -> Unit,
-    showCategoryChips: Boolean = true
+    showCategoryChips: Boolean = true,
+    selectedSort: String = "NEWEST",
+    onSortSelected: (String) -> Unit = {}
 ) {
     Column {
         AnimatedVisibility(visible = searchOpen || searchQuery.isNotEmpty()) {
@@ -118,6 +121,11 @@ fun DashboardSearchAndFilter(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                PremiumFilterChip(
+                    text = "Top spends",
+                    isSelected = selectedSort == "HIGHEST",
+                    onClick = { haptic.tap(); onSortSelected(if (selectedSort == "HIGHEST") "NEWEST" else "HIGHEST") }
+                )
                 PremiumFilterChip(text = "All", isSelected = selectedFilterCategory == "All", onClick = { haptic.tap(); onCategorySelected("All") })
                 PremiumFilterChip(text = "Split only", isSelected = selectedFilterCategory == "Split Only", onClick = { haptic.tap(); onCategorySelected("Split Only") })
                 allAvailableCategories.forEach { category ->

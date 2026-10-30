@@ -1,5 +1,6 @@
 package com.expensetracker.offline.ui.dashboard
 
+import com.expensetracker.offline.util.tap
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -27,6 +28,8 @@ fun DashboardTopBar(
     searchOpen: Boolean,
     searchQuery: String,
     currentMonthName: String,
+    /** Non-null while the previous billing cycle is shown: its date range replaces the current cycle's. */
+    previousCycleLabel: String? = null,
     startDayOfMonth: Int,
     hasNotificationPermission: Boolean,
     isIgnoringBatteryOptimizations: Boolean,
@@ -87,8 +90,8 @@ fun DashboardTopBar(
                 }
             } else {
                 DashboardHeader(
-                    monthLabel = currentMonthName,
-                    cycleLabel = com.expensetracker.offline.util.BillingCycleHelper.getCycleLabel(startDayOfMonth),
+                    monthLabel = if (previousCycleLabel != null) "Previous cycle" else currentMonthName,
+                    cycleLabel = previousCycleLabel ?: com.expensetracker.offline.util.BillingCycleHelper.getCycleLabel(startDayOfMonth),
                     statusColor = statusColor,
                     searchActive = searchOpen || searchQuery.isNotEmpty(),
                     showSettingsBadge = !isProTipsDismissed,

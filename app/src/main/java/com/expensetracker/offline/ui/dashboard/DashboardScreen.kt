@@ -2,6 +2,8 @@
 
 package com.expensetracker.offline.ui.dashboard
 
+import com.expensetracker.offline.ui.components.EmptyState
+import com.expensetracker.offline.util.tap
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -49,7 +51,9 @@ import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -168,7 +172,7 @@ private fun RolloverOptionCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     title,
-                    fontSize = 14.5.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 2
@@ -193,7 +197,7 @@ private fun RolloverOptionCard(
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     outcomeDetail,
-                    fontSize = 11.5.sp,
+                    fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1
                 )
@@ -265,6 +269,9 @@ fun DashboardScreen(
     val settingsRepo = remember { SettingsRepository(context) }
     val monthlyBudget by viewModel.monthlyBudget.collectAsStateWithLifecycle()
     val activeRolloverAmountPaise by viewModel.activeRolloverAmount.collectAsStateWithLifecycle()
+    val incomingRolloverOriginalPaise by viewModel.incomingRolloverOriginal.collectAsStateWithLifecycle()
+    val incomingRolloverMovedPaise by viewModel.incomingRolloverMoved.collectAsStateWithLifecycle()
+    var showCarryOverAdjust by rememberSaveable { mutableStateOf(false) }
     val isBudgetExplicitlySet by viewModel.isBudgetExplicitlySet.collectAsStateWithLifecycle()
     val isManualModePreferred by viewModel.isManualModePreferred.collectAsStateWithLifecycle()
     val isAutoCaptureBannerDismissed by viewModel.isAutoCaptureBannerDismissed.collectAsStateWithLifecycle()
@@ -349,6 +356,16 @@ fun DashboardScreen(
     }
 
     var selectedFilterCategory by remember { mutableStateOf("All") }
+    // "NEWEST" (default, grouped by day) or "HIGHEST" (biggest spends first, flat list)
+    var selectedSort by rememberSaveable { mutableStateOf("NEWEST") }
+    // Set at the moment the sort changes, so the rows that appear next can ease in instead of snapping.
+    var sortChangeStamp by remember { mutableLongStateOf(0L) }
+    val setSort: (String) -> Unit = { next ->
+        if (next != selectedSort) {
+            sortChangeStamp = System.currentTimeMillis()
+            selectedSort = next
+        }
+    }
     var selectedTimeRange by rememberSaveable { mutableStateOf(TimeRange.THIS_MONTH) }
 
     var isSelectionMode by rememberSaveable { mutableStateOf(false) }
@@ -534,6 +551,14 @@ fun DashboardScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    val previousCycleLabel = remember(selectedTimeRange, startDayOfMonth) {
+        if (selectedTimeRange != TimeRange.LAST_MONTH) null
+        else {
+            val fmt = java.text.SimpleDateFormat("d MMM", java.util.Locale.getDefault())
+            "${fmt.format(java.util.Date(startMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))} – " +
+                fmt.format(java.util.Date(endMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))
+        }
+    }
     val currentMonthName = remember(startDayOfMonth, java.time.LocalDate.now()) {
         BillingCycleHelper.getCycleMonthName(startDayOfMonth)
     }
@@ -570,28 +595,65 @@ fun DashboardScreen(
         val startOfYear = Calendar.getInstance().apply {
             set(Calendar.DAY_OF_YEAR, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
-        listOf(startOfDay, startOfWeek, startOfCycle, startOfYear)
+        val startOfLastCycle = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -1).first
+        listOf(startOfDay, startOfWeek, startOfCycle, startOfYear, startOfLastCycle)
+    }
+
+    // ── Spend breakdown (leave categories out / single them out) ──
+    val lensSettings = remember { SettingsRepository(context) }
+    var lensKeys by remember { mutableStateOf(lensSettings.spendLensCategories) }
+    var lensOnlyMode by remember { mutableStateOf(lensSettings.spendLensOnlyMode) }
+    var showLensSheet by rememberSaveable { mutableStateOf(false) }
+    var lensPinned by remember { mutableStateOf(lensSettings.spendLensPinned) }
+    val customBudgets by viewModel.customBudgets.collectAsStateWithLifecycle()
+    var showBudgetsSheet by rememberSaveable { mutableStateOf(false) }
+    var budgetsStartInForm by rememberSaveable { mutableStateOf(false) }
+    // The budget chosen in the Add sheet for the transaction being created (reset after saving).
+    var pendingBudgetId by remember { mutableStateOf<String?>(null) }
+    val lensCategories = remember(transactionsWithDebts, selectedTimeRange, startDayOfMonth, pendingDeleteIds) {
+        val net = computeCycleCategoryNetSpend(
+            transactions = transactionsWithDebts,
+            cycleStart = startMillisFor(selectedTimeRange, startDayOfMonth),
+            cycleEnd = endMillisFor(selectedTimeRange, startDayOfMonth),
+            pendingDeleteIds = pendingDeleteIds.keys
+        )
+        val names = HashMap<String, String>()
+        for (item in transactionsWithDebts) {
+            val c = item.transaction.category.trim()
+            if (c.isNotEmpty()) names.putIfAbsent(c.lowercase(), c)
+        }
+        buildLensCategories(net, names)
+    }
+    val applyLens: (Set<String>, Boolean) -> Unit = { keys, only ->
+        lensKeys = keys
+        lensOnlyMode = only
+        lensSettings.spendLensCategories = keys
+        lensSettings.spendLensOnlyMode = only
     }
 
     val filteredTransactions = remember(
-        transactionsWithDebts, debouncedSearchQuery, selectedFilterCategory, selectedTimeRange, selectedAccount, timeBoundaries
+        transactionsWithDebts, debouncedSearchQuery, selectedFilterCategory, selectedTimeRange, selectedAccount, timeBoundaries, selectedSort
     ) {
         val query = debouncedSearchQuery
         val categoryFilter = selectedFilterCategory
         val range = selectedTimeRange
         val currentAccount = selectedAccount
+        val sortHighest = selectedSort == "HIGHEST"
         val minTimestamp = when (range) {
             TimeRange.TODAY -> timeBoundaries[0]
             TimeRange.THIS_WEEK -> timeBoundaries[1]
             TimeRange.THIS_MONTH -> timeBoundaries[2]
             TimeRange.THIS_YEAR -> timeBoundaries[3]
             TimeRange.ALL_TIME -> Long.MIN_VALUE
+            TimeRange.LAST_MONTH -> timeBoundaries[4]
         }
+        val maxTimestamp = if (range == TimeRange.LAST_MONTH) timeBoundaries[2] - 1L else Long.MAX_VALUE
         val isDesc = transactionsWithDebts.size < 2 ||
                 transactionsWithDebts.first().transaction.timestamp >= transactionsWithDebts.last().transaction.timestamp
         val out = ArrayList<TransactionWithDebts>()
         for (txnWithDebts in transactionsWithDebts) {
             val txn = txnWithDebts.transaction
+            if (txn.timestamp > maxTimestamp) continue
             if (txn.timestamp < minTimestamp) {
                 if (isDesc) break else continue
             }
@@ -606,6 +668,8 @@ fun DashboardScreen(
                 else -> txn.category.equals(categoryFilter, ignoreCase = true)
             }
             if (!matchesCategory) continue
+            // "Top spends" only ranks real spending, so salary credits and own-account transfers never crowd the top.
+            if (sortHighest && (txn.type != TransactionType.DEBIT || txn.excludeFromSpend)) continue
 
             val matchesSearch = query.isBlank() ||
                     txn.payee.contains(query, ignoreCase = true) ||
@@ -617,11 +681,12 @@ fun DashboardScreen(
                 out.add(txnWithDebts)
             }
         }
+        if (sortHighest) out.sortByDescending { it.transaction.amount }
         out
     }
 
     var visibleTransactionCount by rememberSaveable { mutableIntStateOf(50) }
-    LaunchedEffect(debouncedSearchQuery, selectedFilterCategory, selectedTimeRange, selectedAccount) {
+    LaunchedEffect(debouncedSearchQuery, selectedFilterCategory, selectedTimeRange, selectedAccount, selectedSort) {
         visibleTransactionCount = 50
         if (isSelectionMode) { isSelectionMode = false; selectedTxnIds = emptySet() }
     }
@@ -631,7 +696,7 @@ fun DashboardScreen(
 
     val periodSpent = remember(transactionsWithDebts, selectedTimeRange, pendingDeleteIds, startDayOfMonth) {
         val start = startMillisFor(selectedTimeRange, startDayOfMonth)
-        val end = endOfTodayMillis()
+        val end = endMillisFor(selectedTimeRange, startDayOfMonth)
         val isDesc = transactionsWithDebts.size < 2 ||
                 transactionsWithDebts.first().transaction.timestamp >= transactionsWithDebts.last().transaction.timestamp
         var gross = 0L
@@ -773,16 +838,20 @@ fun DashboardScreen(
     val todayKey = (System.currentTimeMillis() + TimeZone.getDefault().rawOffset) / 86_400_000L
 
     val isMonthlyView = selectedTimeRange == TimeRange.THIS_MONTH
-    val baseMonthlyBudgetPaise = monthlyBudget * 100L
-    val effectiveBudgetPaise = (baseMonthlyBudgetPaise - activeRolloverAmountPaise).coerceAtLeast(0L)
+    // This cycle's budget may be a one-off (e.g. 7,500 "this month only"). Next cycle starts from the USUAL budget,
+    // so the carry-over preview must be computed from that, not from this month's one-off.
+    val usualBudgetRupees by viewModel.baseMonthlyBudget.collectAsStateWithLifecycle()
+    val thisCycleBudgetPaise = monthlyBudget * 100L
+    val baseMonthlyBudgetPaise = (if (usualBudgetRupees > 0L) usualBudgetRupees else monthlyBudget) * 100L
+    val effectiveBudgetPaise = (thisCycleBudgetPaise - activeRolloverAmountPaise).coerceAtLeast(0L)
     val isOverBudget = monthlyBudget > 0L && isMonthlyView && periodSpent > effectiveBudgetPaise
     val overspendPaise = if (monthlyBudget > 0L) (periodSpent - effectiveBudgetPaise).coerceAtLeast(0L) else 0L
 
 
     val (firstInstallmentPaise, secondInstallmentPaise) = splitRolloverOverspend(overspendPaise, rolloverMonths)
     val rolloverDeductionPaise = firstInstallmentPaise
-    val projectedNextBudget = baseMonthlyBudgetPaise - firstInstallmentPaise
-    val projectedFollowingBudget = baseMonthlyBudgetPaise - secondInstallmentPaise
+    val projectedNextBudget = (baseMonthlyBudgetPaise - firstInstallmentPaise).coerceAtLeast(0L)
+    val projectedFollowingBudget = (baseMonthlyBudgetPaise - secondInstallmentPaise).coerceAtLeast(0L)
 
     val totalCreditCardDebt by viewModel.totalCreditCardDebt.collectAsStateWithLifecycle()
 
@@ -908,7 +977,7 @@ fun DashboardScreen(
                 .fillMaxWidth()
                 .widthIn(max = 400.dp), shape = RoundedCornerShape(AppRadius.medium), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))) {
                 Column(modifier = Modifier.padding(24.dp)) {
-                    Text("Receipt", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Text("Receipt", fontWeight = FontWeight.Bold, fontSize = 22.sp, letterSpacing = (-0.3).sp)
                     Spacer(modifier = Modifier.height(16.dp))
                     Box(modifier = Modifier
                         .fillMaxWidth()
@@ -937,6 +1006,74 @@ fun DashboardScreen(
         }
     }
 
+    if (showCarryOverAdjust && incomingRolloverOriginalPaise > 0L) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val original = incomingRolloverOriginalPaise
+        val mode = when {
+            activeRolloverAmountPaise <= 0L -> 0
+            incomingRolloverMovedPaise > 0L -> 2
+            else -> 1
+        }
+        val halfNow = original / 2
+        val pick = { picked: Int ->
+            if (picked != mode) {
+                haptic.tap()
+                viewModel.adjustIncomingRollover(picked)
+            }
+            scope.launch { sheetState.hide() }.invokeOnCompletion { showCarryOverAdjust = false }
+            Unit
+        }
+        ResistantModalBottomSheet(
+            onDismissRequest = { showCarryOverAdjust = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Carry-over from last cycle", fontSize = 22.sp, letterSpacing = (-0.3).sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "Last cycle's overspend was ${CurrencyFormat.withSymbol(original, 0)}. Choose how much of it comes out of this cycle's ${CurrencyFormat.withSymbol(thisCycleBudgetPaise, 0)} budget.",
+                    fontSize = 14.sp, lineHeight = 19.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "This cycle's budget",
+                    fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, end = 17.dp)
+                )
+                RolloverOptionCard(
+                    title = "Start fresh",
+                    description = "Forget it. Spending less this cycle? Begin clean.",
+                    outcome = CurrencyFormat.withSymbol(thisCycleBudgetPaise, 0),
+                    outcomeDetail = "no deduction",
+                    selected = mode == 0,
+                    onClick = { pick(0) }
+                )
+                RolloverOptionCard(
+                    title = "Deduct half, carry half",
+                    description = "Half now, the other half comes out of $nextCycleLabel.",
+                    outcome = CurrencyFormat.withSymbol((thisCycleBudgetPaise - halfNow).coerceAtLeast(0L), 0),
+                    outcomeDetail = "−${CurrencyFormat.withSymbol(halfNow, 0)}",
+                    selected = mode == 2,
+                    onClick = { pick(2) }
+                )
+                RolloverOptionCard(
+                    title = "Deduct all of it",
+                    description = "Take the full amount from this cycle.",
+                    outcome = CurrencyFormat.withSymbol((thisCycleBudgetPaise - original).coerceAtLeast(0L), 0),
+                    outcomeDetail = "−${CurrencyFormat.withSymbol(original, 0)}",
+                    selected = mode == 1,
+                    onClick = { pick(1) }
+                )
+            }
+        }
+    }
+
     if (showRolloverSheet && isOverBudget) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val choice = if (isRolloverEnabled) rolloverMonths else 0
@@ -948,7 +1085,7 @@ fun DashboardScreen(
             }
         }
 
-        ModalBottomSheet(
+        ResistantModalBottomSheet(
             onDismissRequest = { showRolloverSheet = false },
             sheetState = sheetState,
             containerColor = MaterialTheme.colorScheme.surface,
@@ -958,15 +1095,15 @@ fun DashboardScreen(
                 modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Handle your overspend", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("Handle your overspend", fontSize = 22.sp, letterSpacing = (-0.3).sp, fontWeight = FontWeight.Bold)
                 Text(
                     "You're ${CurrencyFormat.withSymbol(overspendPaise, 0)} over. Choose how it carries into $nextCycleLabel.",
-                    fontSize = 13.5.sp, lineHeight = 19.sp,
+                    fontSize = 14.sp, lineHeight = 19.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
                     "$nextCycleLabel budget",
-                    fontSize = 11.5.sp, fontWeight = FontWeight.Medium,
+                    fontSize = 12.sp, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.End,
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp, end = 17.dp)
@@ -982,7 +1119,7 @@ fun DashboardScreen(
                 RolloverOptionCard(
                     title = "Deduct in $nextCycleLabel",
                     description = "Take the full amount next cycle.",
-                    outcome = CurrencyFormat.withSymbol(baseMonthlyBudgetPaise - overspendPaise, 0),
+                    outcome = CurrencyFormat.withSymbol((baseMonthlyBudgetPaise - overspendPaise).coerceAtLeast(0L), 0),
                     outcomeDetail = "−${CurrencyFormat.withSymbol(overspendPaise, 0)}",
                     selected = choice == 1,
                     onClick = { select(1) }
@@ -990,8 +1127,8 @@ fun DashboardScreen(
                 RolloverOptionCard(
                     title = "Split in two",
                     description = "Half in $nextCycleLabel, half in $followingCycleLabel.",
-                    outcome = CurrencyFormat.withSymbol(baseMonthlyBudgetPaise - halfFirst, 0),
-                    outcomeDetail = "then ${CurrencyFormat.withSymbol(baseMonthlyBudgetPaise - halfSecond, 0)} in $followingCycleLabel",
+                    outcome = CurrencyFormat.withSymbol((baseMonthlyBudgetPaise - halfFirst).coerceAtLeast(0L), 0),
+                    outcomeDetail = "then ${CurrencyFormat.withSymbol((baseMonthlyBudgetPaise - halfSecond).coerceAtLeast(0L), 0)} in $followingCycleLabel",
                     selected = choice == 2,
                     onClick = { select(2) }
                 )
@@ -1001,7 +1138,7 @@ fun DashboardScreen(
                         haptic.tap()
                         scope.launch { sheetState.hide() }.invokeOnCompletion { showRolloverSheet = false }
                     },
-                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(AppRadius.small),
                     elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -1034,8 +1171,11 @@ fun DashboardScreen(
             onDismiss = {
                 showAddExpenseSheet = false
                 autoLaunchReceiptScan = false
+                pendingBudgetId = null
             },
             linkedAccounts = linkedAccounts,
+            customBudgets = customBudgets,
+            onBudgetSelected = { pendingBudgetId = it },
             transactionsHistory = transactions,
             initialSplitPeople = recentSplitPeople,
             onAddToFixedCosts = { suggestion ->
@@ -1050,9 +1190,11 @@ fun DashboardScreen(
                     timestamp = timestamp, itemsSummary = itemsSummary, receiptImageUri = receiptUri,
                     bankName = bank, accountNumber = acct,
                     excludeFromSpend = excludeFromSpend,
-                    splitParticipants = pendingNewExpenseSplit
+                    splitParticipants = pendingNewExpenseSplit,
+                    budgetId = if (type == TransactionType.DEBIT) pendingBudgetId else null
                 )
                 pendingNewExpenseSplit = emptyList()
+                pendingBudgetId = null
                 haptic.confirm()
                 if (type == TransactionType.DEBIT &&
                     necessitiesList.none { NecessityManager.matches(it, payee, category) }
@@ -1126,7 +1268,7 @@ fun DashboardScreen(
                 .fillMaxWidth()
                 .widthIn(max = 400.dp), shape = RoundedCornerShape(AppRadius.large), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))) {
                 Column(modifier = Modifier.padding(24.dp)) {
-                    Text("Link Repayment", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Text("Link Repayment", fontWeight = FontWeight.Bold, fontSize = 22.sp, letterSpacing = (-0.3).sp)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Received ${CurrencyFormat.withSymbol(creditTxn.amount, 0)} from ${creditTxn.payee}. Select whose share this payment settled:", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(16.dp))
@@ -1179,14 +1321,23 @@ fun DashboardScreen(
     }
 
     if (showBudgetDialog) {
+        val cycleOverride by viewModel.cycleBudgetOverride.collectAsStateWithLifecycle()
+        val usualBudget by viewModel.baseMonthlyBudget.collectAsStateWithLifecycle()
         SelectTargetDialog(
             currentTarget = monthlyBudget,
             onDismiss = { showBudgetDialog = false },
             onSaveTarget = { newTarget ->
                 haptic.confirm()
-                viewModel.updateMonthlyBudget(newTarget)
+                viewModel.updateMonthlyBudget(newTarget, clearOverride = true)
                 showBudgetDialog = false
             },
+            onSaveForThisCycle = { newTarget ->
+                haptic.confirm()
+                viewModel.setBudgetForThisCycle(newTarget)
+                showBudgetDialog = false
+            },
+            usualBudget = if (cycleOverride != null) usualBudget else null,
+            onClearOverride = { viewModel.clearBudgetOverride() },
             onManageCategoryCaps = {
                 initialCategoryForBudgetEdit = null
                 showManageCategoryBudgetsDialog = true
@@ -1365,6 +1516,31 @@ fun DashboardScreen(
                 showSnack("Category \"$targetCat\" deleted")
                 categoryToDelete = null
             }
+        )
+    }
+
+    if (showBudgetsSheet) {
+        CustomBudgetsSheet(
+            budgets = customBudgets,
+            transactions = transactionsWithDebts,
+            startInForm = budgetsStartInForm,
+            onSave = { id, name, target, exclude -> viewModel.saveCustomBudget(id, name, target, exclude) },
+            onDelete = { id -> viewModel.deleteCustomBudget(id) },
+            onRemoveTransaction = { txnId -> viewModel.assignToBudget(listOf(txnId), null) },
+            onDismiss = { showBudgetsSheet = false }
+        )
+    }
+
+    if (showLensSheet && lensCategories.isNotEmpty()) {
+        SpendLensSheet(
+            categories = lensCategories,
+            selectedKeys = lensKeys,
+            onlyMode = lensOnlyMode,
+            periodLabel = selectedTimeRange.spendLabel,
+            onChange = applyLens,
+            pinned = lensPinned,
+            onPinnedChange = { lensPinned = it; lensSettings.spendLensPinned = it },
+            onDismiss = { showLensSheet = false }
         )
     }
 
@@ -1556,7 +1732,17 @@ fun DashboardScreen(
 
     data class DayGroup(val label: String, val rows: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>, val daySpentPaise: Long)
 
-    val grouped = remember(visibleTransactions, pendingDeleteIds) {
+    val grouped = remember(visibleTransactions, pendingDeleteIds, selectedSort) {
+        if (selectedSort == "HIGHEST") {
+            if (visibleTransactions.isEmpty()) emptyList<DayGroup>()
+            else listOf(
+                DayGroup(
+                    "Biggest spends first",
+                    visibleTransactions,
+                    visibleTransactions.filter { it.transaction.id !in pendingDeleteIds }.sumOf { mySpendShare(it) }
+                )
+            )
+        } else {
         val order = linkedMapOf<String, MutableList<com.expensetracker.offline.data.local.dao.TransactionWithDebts>>()
         visibleTransactions.forEach { txn ->
             order.getOrPut(dayLabel(txn.transaction.timestamp)) { mutableListOf() }.add(txn)
@@ -1572,6 +1758,7 @@ fun DashboardScreen(
                 }
                 .sumOf { r -> mySpendShare(r) }
             DayGroup(label, rows, daySpent)
+        }
         }
     }
 
@@ -1651,6 +1838,7 @@ fun DashboardScreen(
             onRemoveFromFixedCosts = { matchedBill?.let { removeFixedCost(it) } },
             totalOwedByOthers = transactionsWithDebts.find { it.transaction.id == txn.id }?.debts?.sumOf { it.amountOwed.toLong() } ?: 0L,
             availableCategories = editCategories,
+            customBudgets = customBudgets,
             onDismiss = { activeTransactionForEditId = null },
             onSave = { updatedTxn ->
                 viewModel.updateTransaction(updatedTxn, learnRule = true)
@@ -1830,6 +2018,7 @@ fun DashboardScreen(
                 searchOpen = searchOpen,
                 searchQuery = searchQuery,
                 currentMonthName = currentMonthName,
+                previousCycleLabel = previousCycleLabel,
                 startDayOfMonth = startDayOfMonth,
                 hasNotificationPermission = hasNotificationPermission,
                 isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
@@ -2109,8 +2298,10 @@ fun DashboardScreen(
                         }
                     }
 
-                    val timeRanges = TimeRange.entries
-                    val selectedRangeIdx = timeRanges.indexOf(selectedTimeRange).coerceAtLeast(0)
+                    val timeRanges = TimeRange.entries.filter { it != TimeRange.LAST_MONTH }
+                    val selectedRangeIdx = timeRanges.indexOf(
+                        if (selectedTimeRange == TimeRange.LAST_MONTH) TimeRange.THIS_MONTH else selectedTimeRange
+                    ).coerceAtLeast(0)
                     var rangeSegmentWidthPx by remember { mutableFloatStateOf(0f) }
                     val animatedRangeIdx by animateFloatAsState(
                         targetValue = selectedRangeIdx.toFloat(),
@@ -2143,7 +2334,9 @@ fun DashboardScreen(
                         )
                         Row(modifier = Modifier.fillMaxSize()) {
                             timeRanges.forEach { range ->
-                                val isSelected = selectedTimeRange == range
+                                // The Month tab stays lit while looking at the previous cycle (reached from the link below).
+                                val isSelected = selectedTimeRange == range ||
+                                    (range == TimeRange.THIS_MONTH && selectedTimeRange == TimeRange.LAST_MONTH)
                                 val labelColor by animateColorAsState(
                                     targetValue = if (isSelected) MaterialTheme.colorScheme.onSurface
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2159,7 +2352,7 @@ fun DashboardScreen(
                                             selected = isSelected,
                                             role = Role.Tab,
                                             onClick = {
-                                                if (!isSelected) haptic.tap()
+                                                if (selectedTimeRange != range) haptic.tap()
                                                 selectedTimeRange = range
                                             }
                                         ),
@@ -2178,7 +2371,25 @@ fun DashboardScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    if (selectedTimeRange == TimeRange.THIS_MONTH || selectedTimeRange == TimeRange.LAST_MONTH) {
+                        val viewingLast = selectedTimeRange == TimeRange.LAST_MONTH
+                        Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End) {
+                            Text(
+                                if (viewingLast) "Back to this cycle ›" else "‹ Previous cycle",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(AppRadius.pill))
+                                    .quietClickable {
+                                        haptic.tap()
+                                        selectedTimeRange = if (viewingLast) TimeRange.THIS_MONTH else TimeRange.LAST_MONTH
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     val budgetProgress = if (isMonthlyView && monthlyBudget > 0L) {
                         if (effectiveBudgetPaise > 0L) (periodSpent.toFloat() / effectiveBudgetPaise.toFloat()).coerceIn(0f, 1f) else 1f
@@ -2254,7 +2465,7 @@ fun DashboardScreen(
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text(
                                                 "Resets Day $startDayOfMonth",
-                                                fontSize = 11.5.sp,
+                                                fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
@@ -2298,13 +2509,13 @@ fun DashboardScreen(
                                             Surface(shape = RoundedCornerShape(AppRadius.pill), color = AppColors.negative.copy(alpha = 0.10f)) {
                                                 Text(
                                                     "${CurrencyFormat.withSymbol(overspendPaise, 0)} over budget",
-                                                    fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AppColors.negative,
+                                                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.negative,
                                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                                 )
                                             }
                                             Text(
                                                 "of ${CurrencyFormat.withSymbol(effectiveBudgetPaise, 0)}",
-                                                fontSize = 12.5.sp, fontWeight = FontWeight.Medium,
+                                                fontSize = 13.sp, fontWeight = FontWeight.Medium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
@@ -2312,14 +2523,14 @@ fun DashboardScreen(
                                             Surface(shape = RoundedCornerShape(AppRadius.pill), color = AppColors.warning.copy(alpha = 0.14f)) {
                                                 Text(
                                                     "$usedPct% used · $daysLeft ${if (daysLeft == 1) "day" else "days"} left",
-                                                    fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = AppColors.warning,
+                                                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.warning,
                                                     maxLines = 1,
                                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                                 )
                                             }
                                             Text(
                                                 "${CurrencyFormat.withSymbol(remaining, 0)} left",
-                                                fontSize = 12.5.sp, fontWeight = FontWeight.Medium,
+                                                fontSize = 13.sp, fontWeight = FontWeight.Medium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
@@ -2331,7 +2542,7 @@ fun DashboardScreen(
                                             )
                                             Text(
                                                 "of ${CurrencyFormat.withSymbol(effectiveBudgetPaise, 0)} · ${CurrencyFormat.withSymbol(remaining / daysLeft, 0)}/day",
-                                                fontSize = 12.5.sp, fontWeight = FontWeight.Medium,
+                                                fontSize = 13.sp, fontWeight = FontWeight.Medium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
@@ -2380,14 +2591,32 @@ fun DashboardScreen(
                                     }
                                 }
 
-                                if (activeRolloverAmountPaise > 0L) {
+                                if (incomingRolloverOriginalPaise > 0L) {
                                     Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = "Budget reduced by ${CurrencyFormat.withSymbol(activeRolloverAmountPaise, 0)} due to last cycle's overspend.",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = AppColors.warning
-                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(AppRadius.small))
+                                            .quietClickable { haptic.tap(); showCarryOverAdjust = true },
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = if (activeRolloverAmountPaise > 0L)
+                                                "Budget reduced by ${CurrencyFormat.withSymbol(activeRolloverAmountPaise, 0)} due to last cycle's overspend."
+                                            else "Last cycle's overspend was cleared. Budget is back to normal.",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = if (activeRolloverAmountPaise > 0L) AppColors.warning else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            "Change",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
                                 }
 
                                 if (categoryBudgetStatuses.isNotEmpty()) {
@@ -2448,7 +2677,7 @@ fun DashboardScreen(
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
                                                 text = statusSummary,
-                                                fontSize = 12.5.sp,
+                                                fontSize = 13.sp,
                                                 fontWeight = if (alertCat != null) FontWeight.SemiBold else FontWeight.Medium,
                                                 color = summaryColor,
                                                 maxLines = 1,
@@ -2678,7 +2907,7 @@ fun DashboardScreen(
                                     ) {
                                         Text(
                                             "Discard all ($pendingReviewCount)",
-                                            fontSize = 12.5.sp,
+                                            fontSize = 13.sp,
                                             fontWeight = FontWeight.SemiBold,
                                             color = AppColors.negative,
                                             maxLines = 1,
@@ -2712,7 +2941,7 @@ fun DashboardScreen(
                                     ) {
                                         Text(
                                             "Approve all ($pendingReviewCount)",
-                                            fontSize = 12.5.sp,
+                                            fontSize = 13.sp,
                                             fontWeight = FontWeight.SemiBold,
                                             color = MaterialTheme.colorScheme.onSurface,
                                             maxLines = 1,
@@ -2726,8 +2955,33 @@ fun DashboardScreen(
                 }
             }
 
+            // Compact card for the user's own goal budgets. Absent until they create one.
+            if (customBudgets.isNotEmpty()) {
+                item(key = "custom_budgets") {
+                    CustomBudgetsStrip(
+                        budgets = customBudgets,
+                        transactions = transactionsWithDebts,
+                        onOpen = { budgetsStartInForm = false; showBudgetsSheet = true }
+                    )
+                }
+            }
+
+            // Only when the user pinned it; otherwise it opens on demand from the Transactions header.
+            if (lensPinned && lensCategories.isNotEmpty()) {
+                item(key = "spend_lens") {
+                    SpendLensCard(
+                        categories = lensCategories,
+                        selectedKeys = lensKeys,
+                        onlyMode = lensOnlyMode,
+                        periodLabel = selectedTimeRange.spendLabel,
+                        onOpen = { showLensSheet = true },
+                        onRemoveKey = { key -> applyLens(lensKeys - key, lensOnlyMode) }
+                    )
+                }
+            }
+
             item {
-                val hasActiveListFilter = searchQuery.isNotBlank() || selectedFilterCategory != "All" || selectedAccount != null
+                val hasActiveListFilter = searchQuery.isNotBlank() || selectedFilterCategory != "All" || selectedAccount != null || selectedSort != "NEWEST"
                 val activeRows = remember(filteredTransactions, pendingDeleteIds) {
                     filteredTransactions.filter { it.transaction.id !in pendingDeleteIds }
                 }
@@ -2738,11 +2992,11 @@ fun DashboardScreen(
                         .filter {
                             it.transaction.type == TransactionType.DEBIT &&
                                     !it.transaction.excludeFromSpend &&
-                                    it.transaction.category != "Split Settlement"
+                                    it.transaction.category != "Split Settlement" &&
+                                    !it.transaction.category.equals("Transfer", ignoreCase = true)
                         }
-                        .sumOf { item ->
-                            (item.transaction.amount - item.debts.sumOf { d -> d.amountOwed.toLong() }).coerceAtLeast(0L)
-                        }
+                        // Same split-aware "my share" the hero and the day totals use.
+                        .sumOf { item -> mySpendShare(item) }
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -2773,6 +3027,40 @@ fun DashboardScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                            Surface(
+                                shape = RoundedCornerShape(AppRadius.pill),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(AppRadius.pill))
+                                    .quietClickable {
+                                        haptic.tap()
+                                        budgetsStartInForm = customBudgets.isEmpty()
+                                        showBudgetsSheet = true
+                                    }
+                            ) {
+                                Icon(
+                                    Icons.Default.Savings,
+                                    contentDescription = "Custom budgets",
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp).size(16.dp)
+                                )
+                            }
+                            if (lensCategories.isNotEmpty()) {
+                                Surface(
+                                    shape = RoundedCornerShape(AppRadius.pill),
+                                    color = if (lensKeys.isNotEmpty()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(AppRadius.pill))
+                                        .quietClickable { haptic.tap(); showLensSheet = true }
+                                ) {
+                                    Icon(
+                                        Icons.Default.Tune,
+                                        contentDescription = "Spend breakdown",
+                                        tint = if (lensKeys.isNotEmpty()) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp).size(16.dp)
+                                    )
+                                }
+                            }
                             AnimatedContent(
                                 targetState = "$visibleCount ${if (visibleCount == 1) "entry" else "entries"}",
                                 transitionSpec = {
@@ -2799,12 +3087,13 @@ fun DashboardScreen(
                                             debouncedSearchQuery = ""
                                             searchOpen = false
                                             selectedFilterCategory = "All"
+                                            setSort("NEWEST")
                                             viewModel.selectedAccount.value = null
                                         }
                                 ) {
                                     Text(
                                         "Reset",
-                                        fontSize = 11.5.sp,
+                                        fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -2814,7 +3103,7 @@ fun DashboardScreen(
                         }
                     }
 
-                    val showCategoryFilterChips = visibleCount >= 4 || searchOpen || searchQuery.isNotBlank() || selectedFilterCategory != "All"
+                    val showCategoryFilterChips = visibleCount >= 4 || searchOpen || searchQuery.isNotBlank() || selectedFilterCategory != "All" || selectedSort != "NEWEST"
                     val showAccountFilterChips = linkedAccounts.size > 1 || selectedAccount != null
                     if (showCategoryFilterChips || showAccountFilterChips) {
                         val hasUnspecified = remember(transactions) {
@@ -2836,76 +3125,80 @@ fun DashboardScreen(
                             onAccountSelected = { viewModel.selectedAccount.value = it },
                             hasUnspecifiedAccount = hasUnspecified,
                             onAutoDetectBanks = { showBankInfoDialog = true },
-                            showCategoryChips = showCategoryFilterChips
+                            showCategoryChips = showCategoryFilterChips,
+                            selectedSort = selectedSort,
+                            onSortSelected = { setSort(it) }
                         )
                     }
                 }
             }
 
             if (filteredTransactions.isEmpty()) {
-                item {
+                item(key = "empty_state") {
                     AnimatedVisibility(visible = true, enter = fadeIn(animationSpec = tween(500))) {
-                        Surface(modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp), shape = RoundedCornerShape(AppRadius.medium), color = MaterialTheme.colorScheme.surfaceVariant) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(32.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                val isFiltering = transactions.isNotEmpty() &&
-                                        (searchQuery.isNotBlank() || selectedFilterCategory != "All" ||
-                                                selectedTimeRange != TimeRange.ALL_TIME || selectedAccount != null)
-
-                                if (isFiltering) {
-                                    Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(32.dp))
-                                    Text(
-                                        "Try a different search or clear your filters.",
-                                        fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        textAlign = TextAlign.Center
-                                    )
-                                } else {
-                                    Text(
-                                        text = "✨", // Playful emoji instead of a gray icon
-                                        fontSize = 48.sp,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Text(
-                                        "All clean! Add your first expense\nto get started.",
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        textAlign = TextAlign.Center
-                                    )
+                        // The default "Month" range is not a user filter: an empty cycle is simply an empty cycle.
+                        val hasUserFilters = searchQuery.isNotBlank() || selectedFilterCategory != "All" ||
+                                selectedSort != "NEWEST" || selectedAccount != null
+                        val isFiltering = transactions.isNotEmpty() && hasUserFilters
+                        val isEmptyPeriod = transactions.isNotEmpty() && !hasUserFilters && selectedTimeRange != TimeRange.ALL_TIME
+                        when {
+                            isFiltering -> EmptyState(title = "No transactions match", icon = Icons.Default.Search) {
+                                TextButton(onClick = {
+                                    haptic.tap()
+                                    searchQuery = ""; debouncedSearchQuery = ""; searchOpen = false
+                                    selectedFilterCategory = "All"
+                                    setSort("NEWEST")
+                                    viewModel.selectedAccount.value = null
+                                }) { Text("Clear filters") }
+                            }
+                            isEmptyPeriod -> {
+                                // A brand-new cycle must not look like the app lost your data: say what last cycle looked like.
+                                val lastCycleSpent = remember(transactionsWithDebts, startDayOfMonth, pendingDeleteIds) {
+                                    computeCycleCategoryNetSpend(
+                                        transactions = transactionsWithDebts,
+                                        cycleStart = startMillisFor(TimeRange.LAST_MONTH, startDayOfMonth),
+                                        cycleEnd = endMillisFor(TimeRange.LAST_MONTH, startDayOfMonth),
+                                        pendingDeleteIds = pendingDeleteIds.keys
+                                    ).values.sumOf { it.first.coerceAtLeast(0L) }
                                 }
-
-                                if (!isFiltering) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Button(
-                                        onClick = { haptic.tap(); onNavigateToSettings("SMS") },
-                                        shape = RoundedCornerShape(AppRadius.pill),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.onSurface,
-                                            contentColor = MaterialTheme.colorScheme.surface
-                                        ),
-                                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
-                                    ) {
-                                        Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Import Past SMS", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                val canViewLast = selectedTimeRange == TimeRange.THIS_MONTH
+                                EmptyState(
+                                    title = if (canViewLast) "A fresh cycle has started" else "No transactions in this period",
+                                    subtitle = if (canViewLast && lastCycleSpent > 0L)
+                                        "Last cycle you spent ${CurrencyFormat.withSymbol(lastCycleSpent, 0)}. Your history is safe, and new payments show up here automatically."
+                                    else "New payments show up here automatically.",
+                                    icon = Icons.Default.Receipt
+                                ) {
+                                    if (canViewLast) {
+                                        Button(
+                                            onClick = { haptic.tap(); selectedTimeRange = TimeRange.LAST_MONTH },
+                                            shape = RoundedCornerShape(AppRadius.pill),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.onSurface,
+                                                contentColor = MaterialTheme.colorScheme.surface
+                                            ),
+                                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+                                        ) { Text("View previous cycle", fontWeight = FontWeight.SemiBold, fontSize = 14.sp) }
                                     }
+                                    TextButton(onClick = { haptic.tap(); selectedTimeRange = TimeRange.ALL_TIME }) { Text("See all transactions") }
                                 }
-
-                                if (isFiltering) {
-                                    TextButton(onClick = {
-                                        haptic.tap()
-                                        searchQuery = ""; debouncedSearchQuery = ""; searchOpen = false
-                                        selectedFilterCategory = "All"
-                                        selectedTimeRange = TimeRange.ALL_TIME
-                                        viewModel.selectedAccount.value = null
-                                    }) { Text("Clear filters") }
+                            }
+                            else -> EmptyState(
+                                title = "All clean! Add your first expense to get started.",
+                                emoji = "✨"
+                            ) {
+                                Button(
+                                    onClick = { haptic.tap(); onNavigateToSettings("SMS") },
+                                    shape = RoundedCornerShape(AppRadius.pill),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.onSurface,
+                                        contentColor = MaterialTheme.colorScheme.surface
+                                    ),
+                                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+                                ) {
+                                    Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Import Past SMS", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                                 }
                             }
                         }
@@ -2914,6 +3207,9 @@ fun DashboardScreen(
             } else {
                 grouped.forEach { dayGroup ->
                     dashboardDayGroup(
+                        showDate = selectedSort != "NEWEST",
+                        entranceStamp = sortChangeStamp,
+                        staggerRows = selectedSort == "HIGHEST",
                         label = dayGroup.label,
                         rows = dayGroup.rows,
                         daySpentPaise = dayGroup.daySpentPaise,
