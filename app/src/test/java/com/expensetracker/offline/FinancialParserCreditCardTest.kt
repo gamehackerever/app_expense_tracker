@@ -55,4 +55,21 @@ class FinancialParserCreditCardTest {
         val r = p("HDFCBK", "Refund of Rs 300.00 credited to your HDFC Bank Credit Card XX1234 from AMAZON on 12-Jan-25")
         assertEquals("Amazon", r.payee); assertTrue(r.excludeFromSpend)
     }
+
+    @Test fun internationalSpendUsesForeignAmountNotAvailableLimit() {
+        val p = FinancialParser.parse(
+            "USD 2.12 spent on Kotak Credit Card 06-10-26 at PAYPAL *DEEPSEERWEA. Avl limit INR 38898.03 Not you? SMS CCLOST"
+        )
+        assertTrue(p.isFinancial)
+        assertTrue(p.amountIsApproximate)
+        assertEquals("USD", p.foreignCurrency)
+        assertTrue("amount was ${p.amount}", p.amount!! in 15_000L..22_000L)
+        assertEquals(3_889_803L, p.availableLimit)
+    }
+
+    @Test fun domesticCardSpendIgnoresAvailableLimit() {
+        val p = FinancialParser.parse("Rs.1,250.00 spent on Kotak Credit Card XX1234 at SWIGGY on 06-10-26. Avl limit INR 38898.03")
+        assertEquals(125_000L, p.amount)
+        assertFalse(p.amountIsApproximate)
+    }
 }

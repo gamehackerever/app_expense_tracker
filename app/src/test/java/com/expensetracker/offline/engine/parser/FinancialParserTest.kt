@@ -79,10 +79,10 @@ class FinancialParserTest {
     }
 
     @Test
-    fun debitAndCreditInOneMessage_hasNoTypeSoItGoesToReview() {
+    fun transferWithDebitAndCreditVerbs_usesTheSenderAccountDirection() {
         val p = sms("Rs 500 debited from your A/c and credited to A/c XX9999 of Ravi. UPI Ref 123456789012", "AX-SBIINB")
         assertTrue(p.isFinancial)
-        assertNull(p.type)
+        assertEquals(TransactionType.DEBIT, p.type)
     }
 
     @Test
@@ -140,8 +140,8 @@ class FinancialParserTest {
 
     @Test
     fun approvedReviewTemplate_learnsTypeAndPayeeForAmbiguousSms() {
-        val msg1 = "Rs 500 debited from your A/c and credited to A/c XX9999 of Ravi. UPI Ref 123456789012"
-        val msg2 = "Rs 850 debited from your A/c and credited to A/c XX8888 of Suresh. UPI Ref 987654321098"
+        val msg1 = "Rs 500 debit and credit adjustment to Ravi. UPI Ref 123456789012"
+        val msg2 = "Rs 850 debit and credit adjustment to Suresh. UPI Ref 987654321098"
 
         // Before approval, type is ambiguous (null) so it goes to review
         val initial = sms(msg1, "AX-SBIINB")
