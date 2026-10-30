@@ -696,7 +696,7 @@ private fun settledLabel(settledBy: String?): String {
 
     val shortName = settledBy.trim().split(" ").firstOrNull { it.isNotBlank() }
         ?.lowercase()
-        ?.replaceFirstChar { it.titlecase(Locale.getDefault()) }
+        ?.replaceFirstChar { it.titlecase(Locale.ROOT) }
         .orEmpty()
 
     return when {

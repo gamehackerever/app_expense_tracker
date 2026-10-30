@@ -492,8 +492,8 @@ fun SheetPrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit) {
         colors = ButtonDefaults.buttonColors(
             containerColor = MaterialTheme.colorScheme.onSurface,
             contentColor = MaterialTheme.colorScheme.surface,
-            disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
-            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+            disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
         ),
         modifier = Modifier
             .fillMaxWidth()

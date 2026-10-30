@@ -147,7 +147,6 @@ fun EditTransactionSheet(
     var userManuallyPickedCategoryInEdit by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(payee) {
         if (userManuallyPickedCategoryInEdit) return@LaunchedEffect
-        if (!selectedCategory.equals("Uncategorized", ignoreCase = true)) return@LaunchedEffect
         val clean = payee.trim()
         if (clean.length < 2 || clean.equals(transaction.payee.trim(), ignoreCase = true)) return@LaunchedEffect
         val inferred = CategoryClassifier.classifySync(clean, transaction.rawContent)

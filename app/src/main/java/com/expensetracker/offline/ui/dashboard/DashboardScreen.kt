@@ -2551,7 +2551,6 @@ fun DashboardScreen(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(RoundedCornerShape(AppRadius.small))
                                             .quietClickable { haptic.tap(); showRolloverSheet = true }
                                             .padding(vertical = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically
@@ -2591,8 +2590,8 @@ fun DashboardScreen(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(RoundedCornerShape(AppRadius.small))
-                                            .quietClickable { haptic.tap(); showCarryOverAdjust = true },
+                                            .quietClickable { haptic.tap(); showCarryOverAdjust = true }
+                                            .padding(vertical = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
@@ -2600,16 +2599,17 @@ fun DashboardScreen(
                                                 "Budget reduced by ${CurrencyFormat.withSymbol(activeRolloverAmountPaise, 0)} due to last cycle's overspend."
                                             else "Last cycle's overspend was cleared. Budget is back to normal.",
                                             fontSize = 12.sp,
+                                            lineHeight = 16.sp,
                                             fontWeight = FontWeight.Medium,
                                             color = if (activeRolloverAmountPaise > 0L) AppColors.warning else MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.weight(1f)
                                         )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            "Change",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.ArrowForward,
+                                            contentDescription = "Adjust carry-over",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                 }
@@ -3000,12 +3000,17 @@ fun DashboardScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
                                 "Transactions",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             if (hasActiveListFilter && filteredSpendTotal > 0L) {
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -3013,12 +3018,15 @@ fun DashboardScreen(
                                     "· ${CurrencyFormat.smart(filteredSpendTotal)}",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
 
                         Row(
+                            modifier = Modifier.wrapContentWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
@@ -3067,7 +3075,9 @@ fun DashboardScreen(
                                     countText,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                             if (hasActiveListFilter) {
@@ -3091,7 +3101,9 @@ fun DashboardScreen(
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }

@@ -145,7 +145,7 @@ fun AddExpenseSheet(
     }
 
     // Hybrid Jaro-Winkler + Subword Naive Bayes + Gaussian Log-Amount & Temporal auto-categorization
-    LaunchedEffect(payee, calculatedAmount, transactionDateMillis, isTransferMode, userManuallyPickedCategory) {
+    LaunchedEffect(payee, calculatedAmount, transactionDateMillis, isTransferMode, userManuallyPickedCategory, transactionsHistory) {
         if (isTransferMode || userManuallyPickedCategory) return@LaunchedEffect
         val clean = payee.trim()
         if (clean.length < 2 && (calculatedAmount == null || calculatedAmount <= 0L)) return@LaunchedEffect
