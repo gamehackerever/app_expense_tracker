@@ -279,6 +279,7 @@ fun SettingsScreen(
     var isReviewRemindersEnabled by remember { mutableStateOf(settingsRepo.reviewRemindersEnabled) }
     var thresholdText by remember { mutableStateOf(settingsRepo.lowBalanceThreshold.toInt().toString()) }
     val vmMonthlyBudget by viewModel.monthlyBudget.collectAsStateWithLifecycle()
+    val vmActiveRolloverAmount by viewModel.activeRolloverAmount.collectAsStateWithLifecycle()
     val allTransactionsWithDebts by viewModel.allTransactionsWithDebts.collectAsStateWithLifecycle()
     val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsStateWithLifecycle()
     val vmBaseBudget by viewModel.baseMonthlyBudget.collectAsStateWithLifecycle()
@@ -865,7 +866,7 @@ if (openPage == "budget") {
                         initialCategory = initialCatForSettingsBudget,
                         transactions = allTransactionsWithDebts,
                         pendingDeleteIds = pendingDeleteIds.keys,
-                        monthlyBudgetPaise = vmMonthlyBudget * 100L,
+                        monthlyBudgetPaise = (vmMonthlyBudget * 100L - vmActiveRolloverAmount).coerceAtLeast(0L),
                         startDayOfMonth = startDayOfMonth
                     )
                 }

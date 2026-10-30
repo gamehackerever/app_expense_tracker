@@ -334,6 +334,8 @@ fun AccountsDialog(
                                     .filter {
                                         it.type == TransactionType.DEBIT &&
                                                 !it.excludeFromSpend &&
+                                                !it.category.equals("Transfer", ignoreCase = true) &&
+                                                it.category != "Split Settlement" &&
                                                 it.bankName == account.bankName &&
                                                 it.accountNumber == account.accountNumber &&
                                                 it.timestamp in stmtStart..stmtEnd
@@ -453,6 +455,8 @@ fun AccountsDialog(
                                             .filter {
                                                 it.type == TransactionType.DEBIT &&
                                                         !it.excludeFromSpend &&
+                                                        !it.category.equals("Transfer", ignoreCase = true) &&
+                                                        it.category != "Split Settlement" &&
                                                         it.bankName == account.bankName &&
                                                         it.accountNumber == account.accountNumber &&
                                                         it.timestamp in stmtStart..stmtEnd

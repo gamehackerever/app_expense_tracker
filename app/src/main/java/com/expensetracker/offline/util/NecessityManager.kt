@@ -431,6 +431,8 @@ object NecessityManager {
                 .filter {
                     it.type == TransactionType.DEBIT &&
                             !it.excludeFromSpend &&
+                            !it.category.equals("Transfer", ignoreCase = true) &&
+                            it.category != "Split Settlement" &&
                             it.timestamp >= cycleStart &&
                             matches(item, it.payee, it.category)
                 }

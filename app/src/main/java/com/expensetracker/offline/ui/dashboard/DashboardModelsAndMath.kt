@@ -167,7 +167,7 @@ fun computeSafeToSpend(
         val ts = item.transaction.timestamp
         if (ts > cycleEnd) continue
         if (isDesc && ts < cycleStart) break
-        if (ts in cycleStart..cycleEnd && item.transaction.type == TransactionType.DEBIT) {
+        if (ts in cycleStart..cycleEnd && item.transaction.type == TransactionType.DEBIT && !item.transaction.excludeFromSpend && item.transaction.category != "Split Settlement" && !item.transaction.category.equals("Transfer", ignoreCase = true)) {
             validTxns.add(item)
         }
     }
@@ -192,7 +192,7 @@ fun computeSafeToSpend(
 
         val amountPaidForThisItem = validTxns
             .filter { NecessityManager.matches(item, it.transaction.payee, it.transaction.category) }
-            .sumOf { (it.transaction.amount - it.debts.sumOf { d -> d.amountOwed.toLong() }).coerceAtLeast(0L) }
+            .sumOf { mySpendShare(it) }
         val manuallyPaid = item.paidCycleKey == currentCycleKey
 
         val effectiveAmount = when {

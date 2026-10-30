@@ -88,9 +88,8 @@ fun InsightsScreen(
     val dismissedCategoryWarningLevels by viewModel.dismissedCategoryWarningLevels.collectAsStateWithLifecycle()
     val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsStateWithLifecycle()
     val monthlyBudget by viewModel.monthlyBudget.collectAsStateWithLifecycle()
-    val baseMonthlyBudget by viewModel.baseMonthlyBudget.collectAsStateWithLifecycle()
     val activeRolloverAmount by viewModel.activeRolloverAmount.collectAsStateWithLifecycle()
-    val effectiveMonthlyBudgetPaise = ((if (baseMonthlyBudget > 0L) baseMonthlyBudget else monthlyBudget) * 100L - activeRolloverAmount).coerceAtLeast(0L)
+    val effectiveMonthlyBudgetPaise = (monthlyBudget * 100L - activeRolloverAmount).coerceAtLeast(0L)
 
     var showManageCategoryBudgetsSheet by remember { mutableStateOf(false) }
     var initialCategoryForBudgetSheet by remember { mutableStateOf<String?>(null) }
@@ -357,7 +356,11 @@ fun InsightsScreen(
     }
 
     val isLoaded = true
-    val grandTotalDebit: Long = remember(categories) { categories.sumOf { it.totalSpent } }
+    val grandTotalDebit: Long = remember(filteredTransactions) {
+        val gross = filteredTransactions.filter { isSpendDebit(it.transaction) }.sumOf { myShareOf(it) }
+        val refunds = filteredTransactions.filter { com.expensetracker.offline.ui.dashboard.isRefundCredit(it.transaction) }.sumOf { it.transaction.amount }
+        (gross - refunds).coerceAtLeast(0L)
+    }
     val totalTransactions = remember(categories) { categories.sumOf { it.transactionCount } }
     val hasSpending = totalTransactions > 0
 

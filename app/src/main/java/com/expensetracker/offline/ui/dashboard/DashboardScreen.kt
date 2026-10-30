@@ -1718,7 +1718,7 @@ fun DashboardScreen(
             initialCategory = initialCategoryForBudgetEdit,
             transactions = transactionsWithDebts,
             pendingDeleteIds = pendingDeleteIds.keys,
-            monthlyBudgetPaise = monthlyBudget * 100L,
+            monthlyBudgetPaise = effectiveBudgetPaise,
             startDayOfMonth = startDayOfMonth
         )
     }

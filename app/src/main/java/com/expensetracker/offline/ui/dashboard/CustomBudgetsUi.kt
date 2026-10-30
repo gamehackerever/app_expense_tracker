@@ -70,7 +70,14 @@ internal fun budgetSpentPaise(budgetId: String, transactions: List<TransactionWi
     for (item in transactions) {
         val t = item.transaction
         if (t.budgetId != budgetId) continue
-        total += if (t.type == TransactionType.DEBIT) mySpendShare(item) else -t.amount
+        if (t.type == TransactionType.DEBIT) {
+            if (t.excludeFromSpend) continue
+            if (t.category.equals("Transfer", ignoreCase = true)) continue
+            if (t.category == "Split Settlement") continue
+            total += mySpendShare(item)
+        } else if (t.type == TransactionType.CREDIT && t.linkedDebtId == null && com.expensetracker.offline.ui.dashboard.isRefundCredit(t)) {
+            total -= t.amount
+        }
     }
     return total.coerceAtLeast(0L)
 }

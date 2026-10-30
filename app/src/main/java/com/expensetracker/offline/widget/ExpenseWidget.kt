@@ -130,7 +130,9 @@ class ExpenseWidget : GlanceAppWidget() {
 
                 spentTodayPaise = dao.getMySpendBetween(todayStart, todayEnd)
                 spentMonthPaise = dao.getMySpendBetween(cycleStart, cycleEnd)
-                monthlyBudgetPaise = if (settingsRepo.isBudgetExplicitlySet) settingsRepo.monthlyBudget * 100L else 0L
+                val cycleKey = java.text.SimpleDateFormat("MMM_yyyy", java.util.Locale.US).format(java.util.Date(cycleStart))
+                val rolloverPaise = settingsRepo.rolloverBudgetMap[cycleKey] ?: 0L
+                monthlyBudgetPaise = if (settingsRepo.isBudgetExplicitlySet) (settingsRepo.effectiveMonthlyBudget * 100L - rolloverPaise).coerceAtLeast(0L) else 0L
                 pendingReviewCount = reviewDao.getPendingReviewCountSync()
 
                 val recentForBills = dao.getRecentTransactions(150)
