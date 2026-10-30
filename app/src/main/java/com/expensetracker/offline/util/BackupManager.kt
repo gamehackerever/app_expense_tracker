@@ -50,12 +50,13 @@ object BackupManager {
     private val MAGIC_V2 = "ETBK_V2_".toByteArray(Charsets.UTF_8)
     private val MAGIC_V3 = "ETBK_V3_".toByteArray(Charsets.UTF_8)
     private val MAGIC_V4 = "ETBK_V4_".toByteArray(Charsets.UTF_8)
-    private val PREF_FILES = listOf(PREFS_NAME)
+    private val PREF_FILES = listOf(PREFS_NAME, "rollover_plans")
     private val EXCLUDED_PREF_KEYS = setOf(
         "key_backup_folder_uri", "key_last_backup_timestamp", "key_auto_backup_enabled",
         "key_last_scan_txns", "key_last_scan_reviews", "key_pending_delete_txn_ids",
         "key_last_auto_backup_ok", "key_last_auto_backup_run_time", "key_last_auto_backup_reason",
-        "key_auto_backup_passphrase_enc", "key_auto_backup_passphrase"
+        "key_auto_backup_passphrase_enc", "key_auto_backup_passphrase",
+        "key_last_heal_at", "key_heal_version"
     )
 
     private fun deserializeCategories(bytes: ByteArray): Set<String> {

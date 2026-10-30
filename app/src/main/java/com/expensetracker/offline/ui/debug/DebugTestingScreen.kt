@@ -1,5 +1,7 @@
 package com.expensetracker.offline.ui.debug
 
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.util.confirm
 import android.content.Context
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
@@ -155,7 +157,7 @@ fun DebugTestingScreen(
             destructive = true,
             onConfirm = {
                 showConfirmWipeDialog = false
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
                 viewModel.clearAllTransactions()
                 context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
                     .edit().remove("key_latest_bank_balance").apply()
@@ -217,7 +219,7 @@ fun DebugTestingScreen(
                     },
                     navigationIcon = {
                         IconButton(onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             onBack()
                         }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -247,7 +249,7 @@ fun DebugTestingScreen(
                 MlDiagnosticsCard(
                     report = currentReport,
                     onRefresh = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         mlRefreshTick++
                         showSnack("Re-evaluated all 5 on-device AI/ML models")
                     }
@@ -273,7 +275,7 @@ fun DebugTestingScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 "Automated Test Suite",
-                                fontSize = 15.5.sp,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
@@ -290,7 +292,7 @@ fun DebugTestingScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Button(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                haptic.confirm()
                                 val ran = AutomatedTestSuite.runAll(context)
                                 testResults = ran
                                 val passed = ran.count { it.passed }
@@ -305,7 +307,7 @@ fun DebugTestingScreen(
                         ) {
                             Text(
                                 if (testResults.isEmpty()) "Run All Tests" else "Re-run (${testResults.count { it.passed }}/${testResults.size})",
-                                fontSize = 12.5.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 softWrap = false
@@ -350,7 +352,7 @@ fun DebugTestingScreen(
                                             )
                                             Text(
                                                 res.detail,
-                                                fontSize = 11.5.sp,
+                                                fontSize = 12.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
@@ -440,7 +442,7 @@ fun DebugTestingScreen(
                 OutlinedButton(
                     onClick = {
                         if (rawInput.isNotBlank()) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            haptic.confirm()
                             scope.launch {
                                 CaptureDispatcher.dispatch(app, liveParse, senderInput, System.currentTimeMillis(), TransactionSource.SMS)
                             }
@@ -458,7 +460,7 @@ fun DebugTestingScreen(
                 Button(
                     onClick = {
                         if (rawInput.isNotBlank()) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            haptic.confirm()
                             scope.launch {
                                 CaptureDispatcher.dispatch(app, liveParse, senderInput, System.currentTimeMillis(), TransactionSource.NOTIFICATION)
                             }
@@ -493,7 +495,7 @@ fun DebugTestingScreen(
 
             OutlinedButton(
                 onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    haptic.tap()
                     showConfirmWipeDialog = true
                 },
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
@@ -515,7 +517,7 @@ fun DebugTestingScreen(
                     title = "Step 1: Set Baseline Balance (₹5,000)",
                     sample = "Rs 100.00 debited from a/c **1234 on 18-Sep to ChaiWala. Avl Bal: INR 5,000.00"
                 ) {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    haptic.tap()
                     rawInput = it
                     senderInput = "VM-HDFCBK"
                 }
@@ -524,7 +526,7 @@ fun DebugTestingScreen(
                     title = "Step 2: Trigger Missing ₹1,000 Expense",
                     sample = "Rs 200.00 debited from a/c **1234 on 18-Sep to Zomato. Avl Bal: INR 3,800.00"
                 ) {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    haptic.tap()
                     rawInput = it
                     senderInput = "VM-HDFCBK"
                 }
@@ -539,7 +541,7 @@ fun DebugTestingScreen(
                     title = "Starbucks SMS (₹450 -> Food & Dining)",
                     sample = "Rs 450.00 debited from a/c **1234 on 18-Sep-26 to Starbucks using UPI Ref 9283748291. Avl Bal: INR 12,000"
                 ) {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    haptic.tap()
                     rawInput = it
                     senderInput = "VM-HDFCBK"
                 }
@@ -548,7 +550,7 @@ fun DebugTestingScreen(
                     title = "Uber Cab Notif (₹220 -> Transport)",
                     sample = "Google Pay: Paid ₹220.00 to Uber India on UPI Ref 1928374628"
                 ) {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    haptic.tap()
                     rawInput = it
                     senderInput = "com.google.android.apps.nbu.paisa.user"
                 }
@@ -557,7 +559,7 @@ fun DebugTestingScreen(
                     title = "Salary Credit SMS (₹25,000)",
                     sample = "INR 25,000.00 credited to a/c XX9876 on 01-Oct via NEFT from ACME CORP. Avl Bal: Rs 48,200.00"
                 ) {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    haptic.tap()
                     rawInput = it
                     senderInput = "AD-ICICIB"
                 }
@@ -611,7 +613,7 @@ private fun MlDiagnosticsCard(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             "AI/ML Telemetry",
-                            fontSize = 15.5.sp,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = scheme.onSurface,
                             maxLines = 1,
@@ -730,7 +732,7 @@ private fun MlDiagnosticsCard(
                             ) {
                                 Text(
                                     row.secondaryDetail,
-                                    fontSize = 11.5.sp,
+                                    fontSize = 12.sp,
                                     lineHeight = 15.sp,
                                     color = scheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
@@ -823,7 +825,7 @@ private fun MlKpiMiniTile(
             )
             Text(
                 caption,
-                fontSize = 10.5.sp,
+                fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 softWrap = false

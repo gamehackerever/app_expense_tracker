@@ -2,6 +2,8 @@
 
 package com.expensetracker.offline.ui.insights
 
+import com.expensetracker.offline.ui.components.quietClickable
+import com.expensetracker.offline.util.tap
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform

@@ -2,6 +2,8 @@
 
 package com.expensetracker.offline.ui.insights
 
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.ui.components.ResistantModalBottomSheet
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
@@ -36,6 +38,11 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
+import com.expensetracker.offline.ui.components.quietClickable
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.animation.animateContentSize
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.ReceiptLong
@@ -90,7 +97,9 @@ fun CategoryTransactionsSheet(
     onDismiss: () -> Unit,
     budgetPaise: Long? = null,
     onManageBudgetClick: (() -> Unit)? = null,
-    onTransactionClick: ((TransactionEntity) -> Unit)? = null
+    onTransactionClick: ((TransactionEntity) -> Unit)? = null,
+    categoryOptions: List<String> = emptyList(),
+    onCategorizePayee: ((payee: String, category: String) -> Unit)? = null
 ) {
     val haptic = LocalHapticFeedback.current
     val categoryTxns = remember(allTransactions, categoryName) {
@@ -102,7 +111,7 @@ fun CategoryTransactionsSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val hasBudget = budgetPaise != null && budgetPaise > 0L
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
@@ -170,6 +179,19 @@ fun CategoryTransactionsSheet(
             Spacer(modifier = Modifier.height(20.dp))
 
             LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp)) {
+                if (categoryName.equals("Uncategorized", ignoreCase = true) && onCategorizePayee != null && categoryOptions.isNotEmpty()) {
+                    item(key = "sort_by_payee") {
+                        SortByPayeePanel(
+                            transactions = categoryTxns,
+                            categoryOptions = categoryOptions,
+                            onCategorize = { payee, category ->
+                                haptic.tap()
+                                onCategorizePayee(payee, category)
+                            }
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+                }
                 item {
                     TransactionGroup {
                         categoryTxns.forEachIndexed { index, item ->
@@ -220,7 +242,7 @@ fun MerchantTransactionsSheet(
     }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
@@ -277,6 +299,134 @@ fun MerchantTransactionsSheet(
                                         }
                                     }
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+/**
+ * One row per payee that still has uncategorised spends, biggest first. Tapping a row opens its category choices
+ * right underneath; picking one files all of that payee's payments at once and teaches the app, so the next payment
+ * to them is categorised automatically.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SortByPayeePanel(
+    transactions: List<TransactionWithDebts>,
+    categoryOptions: List<String>,
+    onCategorize: (payee: String, category: String) -> Unit
+) {
+    data class PayeeGroup(val payee: String, val count: Int, val total: Long, val isPerson: Boolean)
+
+    val scheme = MaterialTheme.colorScheme
+    val groups = remember(transactions) {
+        transactions.groupBy { it.transaction.payee.trim() }
+            .filterKeys { it.isNotEmpty() }
+            .map { (payee, items) ->
+                PayeeGroup(
+                    payee = payee,
+                    count = items.size,
+                    total = items.sumOf { myShareOf(it) },
+                    isPerson = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(payee)
+                )
+            }
+            .sortedByDescending { it.total }
+            .take(8)
+    }
+    if (groups.isEmpty()) return
+    var expanded by remember { mutableStateOf<String?>(null) }
+    // If the open payee was just filed (and so left the list), close the panel state with it.
+    if (expanded != null && groups.none { it.payee == expanded }) expanded = null
+
+    Surface(
+        shape = RoundedCornerShape(AppRadius.medium),
+        color = scheme.surface,
+        border = BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Text("Sort by payee", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = scheme.onSurface)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Tap a payee and pick a category. All their payments are filed, now and in future.",
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                color = scheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            groups.forEachIndexed { index, group ->
+                if (index > 0) HorizontalDivider(color = scheme.outlineVariant.copy(alpha = 0.3f))
+                val isOpen = expanded == group.payee
+                Column(modifier = Modifier.fillMaxWidth().animateContentSize(tween(220))) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(AppRadius.small))
+                            .quietClickable(pressedAlpha = 0.85f, pressedScale = 0.995f) {
+                                expanded = if (isOpen) null else group.payee
+                            }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (group.isPerson) {
+                            Icon(
+                                Icons.Default.Person,
+                                contentDescription = "Person",
+                                tint = scheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                group.payee,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = scheme.onSurface
+                            )
+                            Text(
+                                "${group.count} ${if (group.count == 1) "payment" else "payments"} · ${formatRupees(group.total)}",
+                                fontSize = 12.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            if (isOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (isOpen) "Close" else "Choose category",
+                            tint = scheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    if (isOpen) {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            categoryOptions.forEach { option ->
+                                val tint = getCategoryColor(option)
+                                Surface(
+                                    shape = RoundedCornerShape(AppRadius.pill),
+                                    color = tint.copy(alpha = 0.12f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(AppRadius.pill))
+                                        .quietClickable { onCategorize(group.payee, option) }
+                                ) {
+                                    Text(
+                                        option,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = scheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                                    )
+                                }
                             }
                         }
                     }

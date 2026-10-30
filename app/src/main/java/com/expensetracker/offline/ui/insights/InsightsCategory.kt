@@ -2,6 +2,8 @@
 
 package com.expensetracker.offline.ui.insights
 
+import com.expensetracker.offline.ui.components.quietClickable
+import com.expensetracker.offline.util.tap
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
@@ -88,36 +90,15 @@ internal fun CategoryGlyphBox(
     category: String,
     categoryColor: Color,
     size: androidx.compose.ui.unit.Dp = 40.dp,
-    cornerRadius: androidx.compose.ui.unit.Dp = 12.dp,
-    iconSize: androidx.compose.ui.unit.Dp = 20.dp
+    @Suppress("UNUSED_PARAMETER") cornerRadius: androidx.compose.ui.unit.Dp = 12.dp,
+    @Suppress("UNUSED_PARAMETER") iconSize: androidx.compose.ui.unit.Dp = 20.dp
 ) {
-    val hasIcon = remember(category) { hasCategoryIcon(category) }
-    val initial = remember(category) {
-        category.trim().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?"
-    }
-    Surface(
-        shape = RoundedCornerShape(cornerRadius),
-        color = categoryColor.copy(alpha = 0.12f),
-        modifier = Modifier.size(size)
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            if (hasIcon) {
-                Icon(
-                    getCategoryIcon(category),
-                    contentDescription = null,
-                    tint = categoryColor,
-                    modifier = Modifier.size(iconSize)
-                )
-            } else {
-                Text(
-                    text = initial,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    color = categoryColor
-                )
-            }
-        }
-    }
+    // Same glyph as everywhere else; tinted to match the chart colour.
+    com.expensetracker.offline.ui.components.CategoryAvatar(
+        category = category,
+        size = size,
+        tint = categoryColor
+    )
 }
 
 // ─────────────────────────────── Category breakdown ───────────────────────────────
@@ -212,7 +193,7 @@ internal fun CategoryBreakdownCard(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 "${cat.category} $pctLabel",
-                                fontSize = 11.5.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1

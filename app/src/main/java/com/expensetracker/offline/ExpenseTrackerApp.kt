@@ -51,6 +51,7 @@ class ExpenseTrackerApp : Application() {
 
         // Ensure NotificationCaptureService stays bound when auto-capture is enabled
         val settings = SettingsRepository(this)
+        com.expensetracker.offline.util.CardPaymentReconciler.hintProvider = { settings.cardPayeeHints() }
         if (settings.disclosureAccepted && !settings.isManualModePreferred) {
             NotificationCaptureService.forceRebind(this)
         }

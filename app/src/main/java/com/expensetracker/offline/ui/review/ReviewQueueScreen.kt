@@ -1,5 +1,10 @@
 package com.expensetracker.offline.ui.review
 
+import com.expensetracker.offline.ui.components.EmptyState
+import com.expensetracker.offline.ui.components.quietClickable
+import com.expensetracker.offline.ui.components.quietCombinedClickable
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.util.confirm
 import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -131,7 +136,7 @@ fun ReviewQueueScreen(
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
 
     BackHandler(enabled = isSelectionMode) {
-        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        haptic.tap()
         isSelectionMode = false
         selectedIds = emptySet()
     }
@@ -143,7 +148,7 @@ fun ReviewQueueScreen(
     LaunchedEffect(items.isEmpty()) {
         if (items.isEmpty() && !hasCelebrated) {
             hasCelebrated = true
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            haptic.confirm()
             iconScale.animateTo(
                 targetValue = 1.2f,
                 animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
@@ -178,7 +183,7 @@ fun ReviewQueueScreen(
                                 isSelectionMode = false
                                 selectedIds = emptySet()
                             } else {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 onBack()
                             }
                         }) {
@@ -188,17 +193,17 @@ fun ReviewQueueScreen(
                     actions = {
                         if (isSelectionMode) {
                             IconButton(onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 confirmBulkApprove = true
                             }) { Icon(Icons.Default.CheckCircle, tint = MaterialTheme.colorScheme.onSurface, contentDescription = "Approve selected") }
 
                             IconButton(onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 confirmBulkDiscard = true
                             }) { Icon(Icons.Default.DeleteOutline, tint = ExpenseRed, contentDescription = "Discard selected") }
                         } else if (items.isNotEmpty()) {
                             IconButton(onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 isSelectionMode = true
                                 selectedIds = items.map { it.id }.toSet()
                             }) { Icon(Icons.Default.SelectAll, contentDescription = "Select All") }
@@ -218,27 +223,12 @@ fun ReviewQueueScreen(
                     .padding(AppSpacing.screenPadding),
                 contentAlignment = Alignment.Center
             ) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    shape = RoundedCornerShape(AppRadius.medium),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(48.dp).scale(iconScale.value)
-                        )
-                        Text("All caught up!", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp)
-                        Text("Nothing needs your attention. Messages we're unsure about will show up here.", fontSize = 13.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
+                EmptyState(
+                    title = "All caught up!",
+                    subtitle = "Nothing needs your attention. Messages we're unsure about will show up here.",
+                    icon = Icons.Default.CheckCircle,
+                    iconModifier = Modifier.scale(iconScale.value)
+                )
             }
         } else {
             var unknownEduDismissed by remember { mutableStateOf(prefs.getBoolean("key_unknown_edu_dismissed", false)) }
@@ -257,12 +247,12 @@ fun ReviewQueueScreen(
                         ReviewExplainer(
                             count = items.size,
                             onApproveAll = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 selectedIds = items.map { it.id }.toSet()
                                 confirmBulkApprove = true
                             },
                             onDiscardAll = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 selectedIds = items.map { it.id }.toSet()
                                 confirmBulkDiscard = true
                             }
@@ -297,13 +287,13 @@ fun ReviewQueueScreen(
                         isSelectionMode = isSelectionMode,
                         isSelected = selectedIds.contains(item.id),
                         onToggleSelect = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             selectedIds = if (selectedIds.contains(item.id)) selectedIds - item.id else selectedIds + item.id
                             if (selectedIds.isEmpty()) isSelectionMode = false
                         },
                         onLongPress = {
                             if (!isSelectionMode) {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                haptic.confirm()
                                 isSelectionMode = true
                                 selectedIds = setOf(item.id)
                             }
@@ -311,11 +301,11 @@ fun ReviewQueueScreen(
                         onResolve = { amt, payee, type, cat, bankName, accNum ->
                             // Update the item copy before resolving it so the ViewModel gets the manual bank changes
                             viewModel.resolveReview(item, amt, payee, type, cat, bankName, accNum)
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            haptic.confirm()
                         },
                         onDiscard = {
                             viewModel.discardReview(item.id)
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            haptic.confirm()
                         }
                     )
                 }
@@ -344,7 +334,7 @@ fun ReviewQueueScreen(
                 confirmBulkApprove = false
                 isSelectionMode = false
                 selectedIds = emptySet()
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
             }
         ) {
             Text("They'll be added using the amount, merchant, and category predicted from each message, and we'll learn their SMS patterns and categories for future alerts.",
@@ -364,7 +354,7 @@ fun ReviewQueueScreen(
                 confirmBulkDiscard = false
                 isSelectionMode = false
                 selectedIds = emptySet()
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
             }
         ) {
             Text("They won't be added to your expenses, and we'll learn this message pattern so similar non-transaction alerts are ignored automatically.",
@@ -456,7 +446,7 @@ fun SwipeHintBanner(onDismiss: () -> Unit = {}) {
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text("Quick tips", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
-                Text("Swipe right to approve • Swipe left to discard • Long-press to select several", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Swipe right to approve • Swipe left to discard • Long-press to select several", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Default.Close, contentDescription = "Dismiss tips", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
@@ -746,7 +736,7 @@ fun ReviewCard(
 
                     LaunchedEffect(pullFraction >= 1f) {
                         if (pullFraction >= 1f && !hasCrossedThreshold) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            haptic.confirm()
                             hasCrossedThreshold = true
                         } else if (pullFraction < 1f) {
                             hasCrossedThreshold = false
@@ -801,7 +791,7 @@ fun ReviewCard(
                                             .fillMaxWidth()
                                             .quietCombinedClickable(
                                                 onClick = {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    haptic.tap()
                                                     if (isSelectionMode) onToggleSelect() else expanded = !expanded
                                                 },
                                                 onLongClick = onLongPress
@@ -938,7 +928,7 @@ fun ReviewCard(
                                                             modifier = Modifier
                                                                 .clip(RoundedCornerShape(AppRadius.pill))
                                                                 .clickable {
-                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                    haptic.tap()
                                                                     payeeText = pred.payee
                                                                     if (amountText.isBlank() && pred.typicalAmountPaise > 0L) {
                                                                         amountText = String.format(AMOUNT_LOCALE, "%.2f", pred.typicalAmountPaise / 100.0)
@@ -1032,7 +1022,7 @@ fun ReviewCard(
                                                         modifier = Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(AppRadius.small)).quietClickable(enabled = isEnabled) {
                                                             val parsedAmt = (amountText.toDoubleOrNull()?.times(100))?.toLong() ?: 0L
                                                             if (parsedAmt > 0L) {
-                                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                                haptic.confirm()
                                                                 val payee = payeeText.trim().ifBlank { FinancialParser.inferFallbackPayee(item.rawContent, transactionType) }
                                                                 val category = categoryText.trim().ifBlank { "Uncategorized" }
                                                                 val (finalBank, finalAcct) = resolvedBankInfo()
@@ -1085,7 +1075,7 @@ private fun UndoBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.clip(RoundedCornerShape(AppRadius.pill)).quietClickable {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         onUndo()
                     }.padding(horizontal = 10.dp, vertical = 6.dp)
                 ) {
@@ -1159,42 +1149,6 @@ private fun ReviewTextField(
             }
         }
     )
-}
-
-/** Click handler with no ripple; presses fade the element slightly instead. */
-@Composable
-private fun Modifier.quietClickable(
-    enabled: Boolean = true,
-    pressedAlpha: Float = 0.6f,
-    onClick: () -> Unit
-): Modifier {
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    val alpha by animateFloatAsState(if (pressed && enabled) pressedAlpha else 1f, tween(100), label = "quietPress")
-    return this
-        .graphicsLayer { this.alpha = alpha }
-        .clickable(enabled = enabled, interactionSource = source, indication = null, onClick = onClick)
-}
-
-/** Tap + long-press with no ripple; presses fade the element slightly instead. */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun Modifier.quietCombinedClickable(
-    pressedAlpha: Float = 0.8f,
-    onLongClick: (() -> Unit)? = null,
-    onClick: () -> Unit
-): Modifier {
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    val alpha by animateFloatAsState(if (pressed) pressedAlpha else 1f, tween(100), label = "quietPress")
-    return this
-        .graphicsLayer { this.alpha = alpha }
-        .combinedClickable(
-            interactionSource = source,
-            indication = null,
-            onLongClick = onLongClick,
-            onClick = onClick
-        )
 }
 
 @Composable

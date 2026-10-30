@@ -707,7 +707,7 @@ fun ProminentDisclosureScreen(
                                                     color = MaterialTheme.colorScheme.onSurface
                                                 )
                                                 Text(
-                                                    "Fills your recent balances & spending right away so you don't start from zero.",
+                                                    "Fills your recent balances & spending right away. Need more history? Import up to a year, or everything, later from Settings.",
                                                     fontSize = 11.5.sp,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     lineHeight = 15.5.sp

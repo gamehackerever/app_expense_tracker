@@ -2,6 +2,7 @@
 
 package com.expensetracker.offline.ui.insights
 
+import com.expensetracker.offline.ui.components.quietClickable
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
@@ -91,7 +92,6 @@ internal object InsightsColors {
     val negative @Composable get() = if (isSystemInDarkTheme()) Color(0xFFEF4444) else Color(0xFFDC2626)
 }
 
-internal fun HapticFeedback.tap() = tick()
 
 internal fun formatRupees(value: Double): String =
     "₹" + String.format(Locale.getDefault(), "%,.0f", value / 100.0)
@@ -280,7 +280,7 @@ internal fun SectionHeader(
                     }
                     Text(
                         actionLabel,
-                        fontSize = 11.5.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1
@@ -293,34 +293,7 @@ internal fun SectionHeader(
 
 @Composable
 internal fun EmptyInsightState(text: String) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        shape = RoundedCornerShape(AppRadius.medium),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Icon(
-                Icons.Default.ReceiptLong,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(28.dp)
-            )
-            Text(
-                text,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 14.sp
-            )
-        }
-    }
+    com.expensetracker.offline.ui.components.EmptyState(title = text, icon = Icons.Default.ReceiptLong)
 }
 
 /**
@@ -430,31 +403,6 @@ internal fun HeroFact(
             }
         )
     }
-}
-
-/** Click handler with no ripple; presses fade the element slightly instead. */
-@Composable
-internal fun Modifier.quietClickable(
-    enabled: Boolean = true,
-    pressedAlpha: Float = 0.72f,
-    pressedScale: Float = 0.98f,
-    onClick: () -> Unit
-): Modifier {
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    val alpha by animateFloatAsState(if (pressed && enabled) pressedAlpha else 1f, tween(100), label = "quietPress")
-    val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled) pressedScale else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
-        label = "quietScale"
-    )
-    return this
-        .graphicsLayer {
-            this.alpha = alpha
-            this.scaleX = scale
-            this.scaleY = scale
-        }
-        .clickable(enabled = enabled, interactionSource = source, indication = null, onClick = onClick)
 }
 
 // Same look as the Dashboard's StatusBadge

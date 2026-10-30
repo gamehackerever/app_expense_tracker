@@ -2,6 +2,9 @@
 
 package com.expensetracker.offline.ui.necessities
 
+import com.expensetracker.offline.ui.components.quietClickable
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.ui.components.ResistantModalBottomSheet
 import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import android.app.DatePickerDialog
 import androidx.compose.animation.AnimatedVisibility
@@ -256,7 +259,7 @@ internal fun NecessityCard(
                 if (isPaid) {
                     Button(
                         onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             onTogglePaid()
                         },
                         enabled = !autoPaid,
@@ -280,7 +283,7 @@ internal fun NecessityCard(
                         }
                         Text(
                             paidLabel,
-                            fontSize = 12.5.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             softWrap = false,
@@ -290,7 +293,7 @@ internal fun NecessityCard(
                 } else {
                     Button(
                         onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             onTogglePaid()
                         },
                         shape = RoundedCornerShape(AppRadius.small),
@@ -306,7 +309,7 @@ internal fun NecessityCard(
                         Spacer(Modifier.width(5.dp))
                         Text(
                             "Mark as paid",
-                            fontSize = 12.5.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             softWrap = false,
@@ -317,7 +320,7 @@ internal fun NecessityCard(
 
                 OutlinedButton(
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         onLink()
                     },
                     shape = RoundedCornerShape(AppRadius.small),
@@ -330,7 +333,7 @@ internal fun NecessityCard(
                     Spacer(Modifier.width(5.dp))
                     Text(
                         if (item.aliases.isEmpty()) "Link payee" else "${item.aliases.size} linked",
-                        fontSize = 12.5.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         softWrap = false,
@@ -532,7 +535,7 @@ internal fun NecessityFormSheet(
         )
     }
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
@@ -593,7 +596,7 @@ internal fun NecessityFormSheet(
                                                 add(Calendar.MONTH, s.frequency.months)
                                             }.timeInMillis
                                         }
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptic.tap()
                                     }
                             ) {
                                 Row(
@@ -767,7 +770,7 @@ internal fun NecessityFormSheet(
                                 selected = isProrated,
                                 onClick = {
                                     isProrated = true
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    haptic.tap()
                                 },
                                 modifier = Modifier.weight(1f)
                             )
@@ -777,7 +780,7 @@ internal fun NecessityFormSheet(
                                 selected = !isProrated,
                                 onClick = {
                                     isProrated = false
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    haptic.tap()
                                 },
                                 modifier = Modifier.weight(1f)
                             )
@@ -868,7 +871,7 @@ internal fun LinkTransactionSheet(
     }
 
     val onRowClick: (TransactionEntity) -> Unit = { t ->
-        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        haptic.tap()
         when (matchState(item, t.payee)) {
             MatchState.AUTO -> Unit
             // Unlinking removes every alias this payee matches, so the row really stops counting.
@@ -879,7 +882,7 @@ internal fun LinkTransactionSheet(
         }
     }
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
@@ -1138,7 +1141,7 @@ internal fun NecessityUndoBar(
                     modifier = Modifier
                         .clip(RoundedCornerShape(AppRadius.pill))
                         .quietClickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             onUndo()
                         }
                         .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -1246,30 +1249,6 @@ internal fun lumpSumSuffix(months: Int): String = when (months) {
     12 -> "/yr"
     3 -> "/qtr"
     else -> "/$months mo"
-}
-
-@Composable
-internal fun Modifier.quietClickable(
-    enabled: Boolean = true,
-    pressedAlpha: Float = 0.75f,
-    pressedScale: Float = 0.98f,
-    onClick: () -> Unit
-): Modifier {
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    val alpha by animateFloatAsState(if (pressed && enabled) pressedAlpha else 1f, tween(100), label = "quietPress")
-    val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled) pressedScale else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
-        label = "quietScale"
-    )
-    return this
-        .graphicsLayer {
-            this.alpha = alpha
-            this.scaleX = scale
-            this.scaleY = scale
-        }
-        .clickable(enabled = enabled, interactionSource = source, indication = null, onClick = onClick)
 }
 
 /** Shared icon chip: 12dp radius, 4% tint, centred glyph. */

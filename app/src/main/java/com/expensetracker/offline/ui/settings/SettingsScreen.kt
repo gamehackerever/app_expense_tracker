@@ -1,6 +1,10 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package com.expensetracker.offline.ui.settings
+import androidx.compose.foundation.layout.heightIn
+import com.expensetracker.offline.ui.components.quietClickable
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.util.confirm
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.compose.foundation.layout.PaddingValues
@@ -71,6 +75,10 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Savings
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.filled.HealthAndSafety
+import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.TableView
 import androidx.compose.material.icons.filled.Tune
@@ -197,6 +205,11 @@ fun SettingsScreen(
 
     val highlightJob = remember { mutableStateOf<Job?>(null) }
 
+    // Settings is a hub of short pages instead of one very long scroll. null = the hub itself.
+    var openPage by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(openPage) { scrollState.scrollTo(0) }
+    androidx.activity.compose.BackHandler(enabled = openPage != null) { openPage = null }
+
     fun scrollToAndHighlight(key: String) {
         highlightJob.value?.cancel()
         highlightJob.value = coroutineScope.launch {
@@ -212,6 +225,20 @@ fun SettingsScreen(
             } finally {
                 highlightedSection = null
             }
+        }
+    }
+
+    /** Opens the page that holds [key] (a section key such as "SMS"), then scrolls to and highlights it. */
+    fun openSection(key: String) {
+        val page = settingsPageFor(key)
+        if (page == null) {
+            scrollToAndHighlight(key)
+            return
+        }
+        if (openPage != page) openPage = page
+        coroutineScope.launch {
+            delay(250) // let the page compose and report where the section sits
+            scrollToAndHighlight(key)
         }
     }
 
@@ -249,11 +276,14 @@ fun SettingsScreen(
 
     var isLowBalanceEnabled by remember { mutableStateOf(settingsRepo.lowBalanceAlertEnabled) }
     var isBillRemindersEnabled by remember { mutableStateOf(settingsRepo.billRemindersEnabled) }
+    var isReviewRemindersEnabled by remember { mutableStateOf(settingsRepo.reviewRemindersEnabled) }
     var thresholdText by remember { mutableStateOf(settingsRepo.lowBalanceThreshold.toInt().toString()) }
     val vmMonthlyBudget by viewModel.monthlyBudget.collectAsStateWithLifecycle()
     val allTransactionsWithDebts by viewModel.allTransactionsWithDebts.collectAsStateWithLifecycle()
     val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsStateWithLifecycle()
-    var budgetText by remember(vmMonthlyBudget) { mutableStateOf(vmMonthlyBudget.toString()) }
+    val vmBaseBudget by viewModel.baseMonthlyBudget.collectAsStateWithLifecycle()
+    val vmCycleOverride by viewModel.cycleBudgetOverride.collectAsStateWithLifecycle()
+    var budgetText by remember(vmBaseBudget) { mutableStateOf(vmBaseBudget.toString()) }
 
     var startDayOfMonth by remember { mutableIntStateOf(settingsRepo.startDayOfMonth) }
     val isManualModePreferred by viewModel.isManualModePreferred.collectAsStateWithLifecycle()
@@ -352,6 +382,20 @@ fun SettingsScreen(
 
     var showStartDayDialog by remember { mutableStateOf(false) }
     var showScanConfirmDialog by remember { mutableStateOf(false) }
+    var showMissedSmsDialog by remember { mutableStateOf(false) }
+    var statementBusy by remember { mutableStateOf(false) }
+    var statementOutcome by remember { mutableStateOf<com.expensetracker.offline.engine.importer.StatementImporter.Outcome?>(null) }
+    val statementPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            statementBusy = true
+            coroutineScope.launch {
+                statementOutcome = com.expensetracker.offline.engine.importer.StatementImporter(context, app.database).analyze(uri)
+                statementBusy = false
+            }
+        }
+    }
     var isScanning by remember { mutableStateOf(false) }
 
     val powerManager = remember { context.getSystemService(Context.POWER_SERVICE) as PowerManager }
@@ -452,7 +496,7 @@ fun SettingsScreen(
 
     val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            haptic.confirm()
             coroutineScope.launch {
                 val isLegacy = withContext(Dispatchers.IO) { isLegacyBackup(context, uri) }
                 if (isLegacy) {
@@ -470,7 +514,7 @@ fun SettingsScreen(
 
     val csvFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null && !isCsvBusy) {
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            haptic.confirm()
             isCsvBusy = true
             coroutineScope.launch {
                 try {
@@ -491,7 +535,7 @@ fun SettingsScreen(
 
     val csvImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null && !isCsvBusy) {
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            haptic.confirm()
             isCsvBusy = true
             coroutineScope.launch {
                 try {
@@ -519,6 +563,11 @@ fun SettingsScreen(
 
     LaunchedEffect(scrollToSection) {
         val target = scrollToSection ?: return@LaunchedEffect
+        val page = settingsPageFor(target)
+        if (page != null) {
+            openPage = page
+            delay(250)
+        }
         snapshotFlow { sectionPositions[target] }
             .filterNotNull()
             .first()
@@ -563,7 +612,7 @@ fun SettingsScreen(
                 TopAppBar(
                     title = {
                         Text(
-                            text = "Settings",
+                            text = settingsPageTitle(openPage),
                             fontWeight = FontWeight.Bold,
                             fontSize = 20.sp,
                             letterSpacing = (-0.3).sp
@@ -571,8 +620,8 @@ fun SettingsScreen(
                     },
                     navigationIcon = {
                         IconButton(onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onBack()
+                            haptic.tap()
+                            if (openPage != null) openPage = null else onBack()
                         }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
@@ -595,7 +644,7 @@ fun SettingsScreen(
 
             val needsHealthFix = !isManualModePreferred && (!(hasNotificationPermission || hasSmsPermission) || !isIgnoringBatteryOptimizations)
 
-            if (needsHealthFix) {
+            if (needsHealthFix && (openPage == null || openPage == "health")) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(AppRadius.medium),
@@ -646,6 +695,7 @@ fun SettingsScreen(
                 }
             }
 
+            if (openPage == null) {
             val healthIssues = if (isManualModePreferred) 0
             else listOf(hasSmsPermission, hasNotificationPermission, isIgnoringBatteryOptimizations).count { !it }
             SettingsStatusStrip(
@@ -681,21 +731,35 @@ fun SettingsScreen(
                         key = "Health"
                     )
                 ),
-                onClick = { scrollToAndHighlight(it) }
+                onClick = { openSection(it) }
             )
 
-            SettingsQuickNav(
-                items = listOf(
-                    "Budget" to "Cycle",
-                    "Capture" to "Live",
-                    "Import" to "SMS",
-                    "Alerts" to "Alerts",
-                    "Backup" to "Backup",
-                    "Appearance" to "Theme",
-                    "Health" to "Health"
+            SettingsHub(
+                groups = listOf(
+                    "Money" to listOf(
+                        SettingsHubEntry(Icons.Default.Savings, "Budget & Cycle", "Monthly limit, billing cycle, fixed costs", "budget"),
+                        SettingsHubEntry(
+                            Icons.Default.Bolt, "Capture & Import",
+                            if (isManualModePreferred) "Auto-capture is paused" else "Live SMS capture, inbox scan, statements",
+                            "capture"
+                        )
+                    ),
+                    "App" to listOf(
+                        SettingsHubEntry(Icons.Default.Notifications, "Security & Alerts", "App lock, reminders, daily digest", "alerts"),
+                        SettingsHubEntry(
+                            Icons.Default.Backup, "Data & Backup",
+                            if (autoBackupEnabled) (if (autoBackupStatusFailed) "Last backup failed" else "Auto-backup $backupFrequency") else "Auto-backup is off",
+                            "data"
+                        ),
+                        SettingsHubEntry(Icons.Default.Palette, "Appearance", "Theme and display", "look"),
+                        SettingsHubEntry(
+                            Icons.Default.HealthAndSafety, "System Health",
+                            if (healthIssues == 0) "Everything is working" else "$healthIssues to fix",
+                            "health"
+                        )
+                    )
                 ),
-                selectedKey = highlightedSection,
-                onSelect = { scrollToAndHighlight(it) }
+                onOpen = { haptic.tap(); openPage = it }
             )
 
             AnimatedVisibility(
@@ -705,29 +769,34 @@ fun SettingsScreen(
             ) {
                 ProTipsCarousel(
                     onDismiss = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         isProTipsDismissed = true
                         prefs.edit { putBoolean("key_pro_tips_dismissed", true) }
                     },
                     onTipClick = { targetKey ->
                         if (targetKey.equals("Necessities", ignoreCase = true) || targetKey.equals("necessities", ignoreCase = true)) onNavigateToNecessities()
-                        else scrollToAndHighlight(targetKey)
+                        else openSection(targetKey)
                     }
                 )
+            }
             }
 
             // ─────────────────────────────────────────────────────────────────
             // 1. Budget & Cycle
             // ─────────────────────────────────────────────────────────────────
+if (openPage == "budget") {
             SettingsSection(
                 title = "Budget & Cycle",
                 isHighlighted = highlightedSection == "Cycle",
+                showTitle = false,
                 modifier = Modifier.trackSection("Cycle", sectionPositions)
             ) {
                 SettingsItem(
                     icon = Icons.Default.Savings,
                     title = "Target Spending Limit",
-                    subtitle = "Powers the monthly gauge on your dashboard"
+                    subtitle = vmCycleOverride?.let {
+                        "This month is set to ₹$it (one-off). The usual budget below returns next cycle."
+                    } ?: "Powers the monthly gauge on your dashboard"
                 )
 
                 SettingsInset {
@@ -757,7 +826,7 @@ fun SettingsScreen(
                     subtitle = if (categoryBudgets.isEmpty()) "Set spending caps for Food, Shopping, etc."
                     else "${categoryBudgets.size} ${if (categoryBudgets.size == 1) "limit" else "limits"} active · ${com.expensetracker.offline.ui.components.CurrencyFormat.withSymbol(categoryBudgets.values.sum(), 0)} allocated",
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         showManageCategoryBudgetsDialog = true
                     }
                 )
@@ -815,7 +884,7 @@ fun SettingsScreen(
                     subtitle = if (settingsCustomCategories.isEmpty()) "Add, rename, or merge expense categories"
                     else "${settingsCustomCategories.size} custom · Rename, merge, or add categories",
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         initialCatForSettingsManage = null
                         showManageCategoriesSheet = true
                     }
@@ -899,7 +968,7 @@ fun SettingsScreen(
                     title = "Billing Cycle Reset",
                     subtitle = "Current: ${BillingCycleHelper.getCycleLabel(startDayOfMonth)}",
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         showStartDayDialog = true
                     },
                     trailing = { SettingsValueChip("Day $startDayOfMonth") }
@@ -912,7 +981,7 @@ fun SettingsScreen(
                     title = "Fixed Costs & Bills",
                     subtitle = "Rent, subscriptions & yearly premiums",
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         onNavigateToNecessities()
                     }
                 )
@@ -940,10 +1009,12 @@ fun SettingsScreen(
                     )
                 }
             }
+}
 
             // ─────────────────────────────────────────────────────────────────
             // 2. Live Capture Automation
             // ─────────────────────────────────────────────────────────────────
+if (openPage == "capture") {
             SettingsSection(
                 title = "Live Capture Automation",
                 isHighlighted = highlightedSection == "Live",
@@ -957,7 +1028,7 @@ fun SettingsScreen(
                     iconTint = if (!isManualModePreferred) AppColors.positive else MaterialTheme.colorScheme.onSurfaceVariant,
                     checked = !isManualModePreferred,
                     onCheckedChange = { enableAuto ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         viewModel.setManualModePreferred(!enableAuto)
                         if (enableAuto) {
                             viewModel.setAutoCaptureBannerDismissed(false)
@@ -976,7 +1047,7 @@ fun SettingsScreen(
                     subtitle = "Skips the Review queue. Misread merchants or amounts get saved as-is.",
                     checked = skipReviewQueue,
                     onCheckedChange = { enabled ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         skipReviewQueue = enabled
                         prefs.edit { putBoolean("key_skip_review_queue", enabled) }
                     }
@@ -1021,16 +1092,18 @@ fun SettingsScreen(
                     subtitle = "If your bank balance drops without an SMS alert, skip review and auto-log the missing amount.",
                     checked = autoSaveUnknown,
                     onCheckedChange = { enabled ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         autoSaveUnknown = enabled
                         prefs.edit { putBoolean("key_autosave_unknown_deductions", enabled) }
                     }
                 )
             }
+}
 
             // ─────────────────────────────────────────────────────────────────
             // 3. Inbox Import & Review
             // ─────────────────────────────────────────────────────────────────
+if (openPage == "capture") {
             SettingsSection(
                 title = "Inbox Import & Review",
                 isHighlighted = highlightedSection == "SMS",
@@ -1038,9 +1111,9 @@ fun SettingsScreen(
             ) {
                 SettingsItem(
                     icon = Icons.Default.Sms,
-                    title = "Scan SMS for Current Month",
-                    subtitle = if (skipScanReview) "Direct import active. Scans from ${BillingCycleHelper.getCycleStartDateFormatted(startDayOfMonth)} to now."
-                    else "Scans from ${BillingCycleHelper.getCycleStartDateFormatted(startDayOfMonth)}. High values go to Review."
+                    title = "Scan SMS Inbox",
+                    subtitle = if (skipScanReview) "Imports straight in, no Review step. Choose how far back to go."
+                    else "High values go to Review. Choose how far back to go."
                 )
 
                 SettingsDivider()
@@ -1051,7 +1124,7 @@ fun SettingsScreen(
                     subtitle = "Skips review for the inbox scan. Check Undo Last Scan if results look off.",
                     checked = skipScanReview,
                     onCheckedChange = { enabled ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         skipScanReview = enabled
                         prefs.edit { putBoolean("key_skip_scan_review", enabled) }
                     }
@@ -1089,10 +1162,22 @@ fun SettingsScreen(
                     }
                 }
 
+                SettingsDivider()
+
+                SettingsItem(
+                    icon = Icons.Default.Warning,
+                    title = "Missed bank SMS",
+                    subtitle = "See bank messages the app could not read, and copy them (redacted) to get the pattern fixed",
+                    onClick = {
+                        haptic.tap()
+                        showMissedSmsDialog = true
+                    }
+                )
+
                 SettingsInset(start = 16.dp, top = 4.dp) {
                     Button(
                         onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             showScanConfirmDialog = true
                         },
                         enabled = !isScanning,
@@ -1132,7 +1217,7 @@ fun SettingsScreen(
                     SettingsInset(start = 16.dp, top = 0.dp) {
                         OutlinedButton(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                haptic.confirm()
                                 viewModel.undoScan(lastImportedTxnIds, lastImportedReviewIds)
 
                                 val count = lastImportedTxnIds.size + lastImportedReviewIds.size
@@ -1166,13 +1251,16 @@ fun SettingsScreen(
                     }
                 }
             }
+}
 
             // ─────────────────────────────────────────────────────────────────
             // 4. Security & Alerts
             // ─────────────────────────────────────────────────────────────────
+if (openPage == "alerts") {
             SettingsSection(
                 title = "Security & Alerts",
                 isHighlighted = highlightedSection == "Alerts",
+                showTitle = false,
                 modifier = Modifier.trackSection("Alerts", sectionPositions)
             ) {
                 SettingsSwitchItem(
@@ -1181,7 +1269,7 @@ fun SettingsScreen(
                     subtitle = "Require biometric unlock & hide from Recents",
                     checked = isAppLockEnabled,
                     onCheckedChange = { enabled ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         if (enabled) {
                             val biometricManager = BiometricManager.from(context)
                             val canAuthenticate = biometricManager.canAuthenticate(APP_LOCK_AUTHENTICATORS)
@@ -1213,7 +1301,7 @@ fun SettingsScreen(
                     subtitle = "Warns when bank balance drops low",
                     checked = isLowBalanceEnabled,
                     onCheckedChange = { enabled ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         isLowBalanceEnabled = enabled
                         prefs.edit { putBoolean("key_low_balance_alert_enabled", enabled) }
                     }
@@ -1258,7 +1346,7 @@ fun SettingsScreen(
                     subtitle = "Notify 2 days before fixed costs or subscriptions are due",
                     checked = isBillRemindersEnabled,
                     onCheckedChange = { enabled ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         isBillRemindersEnabled = enabled
                         settingsRepo.billRemindersEnabled = enabled
                         if (enabled) {
@@ -1268,14 +1356,31 @@ fun SettingsScreen(
                         }
                     }
                 )
+
+                SettingsDivider()
+
+                SettingsSwitchItem(
+                    icon = Icons.Default.NotificationsActive,
+                    title = "Review Reminder",
+                    subtitle = "One evening nudge (9:30 PM, with your daily digest) only when transactions are waiting in Review",
+                    checked = isReviewRemindersEnabled,
+                    onCheckedChange = { enabled ->
+                        haptic.tap()
+                        isReviewRemindersEnabled = enabled
+                        settingsRepo.reviewRemindersEnabled = enabled
+                    }
+                )
             }
+}
 
             // ─────────────────────────────────────────────────────────────────
             // 5. Data & Backup
             // ─────────────────────────────────────────────────────────────────
+if (openPage == "data") {
             SettingsSection(
                 title = "Data & Backup",
                 isHighlighted = highlightedSection == "Backup",
+                showTitle = false,
                 modifier = Modifier.trackSection("Backup", sectionPositions)
             ) {
                 SettingsSwitchItem(
@@ -1329,7 +1434,7 @@ fun SettingsScreen(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(AppRadius.small))
                             .quietClickable {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 folderPickerLauncher.launch(null)
                             },
                         shape = RoundedCornerShape(AppRadius.small),
@@ -1467,7 +1572,7 @@ fun SettingsScreen(
                     ) {
                         OutlinedButton(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 filePickerLauncher.launch("*/*")
                             },
                             colors = ButtonDefaults.outlinedButtonColors(
@@ -1495,7 +1600,7 @@ fun SettingsScreen(
 
                         Button(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                haptic.confirm()
                                 if (backupFolderUri.isNotBlank()) {
                                     tempPassphrase = SecurePassphraseStore.load(context).orEmpty()
                                     tempConfirmPassphrase = tempPassphrase
@@ -1547,7 +1652,7 @@ fun SettingsScreen(
                     ) {
                         OutlinedButton(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 csvImportLauncher.launch("text/*")
                             },
                             enabled = !isCsvBusy,
@@ -1576,7 +1681,7 @@ fun SettingsScreen(
 
                         Button(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                haptic.confirm()
                                 csvFolderLauncher.launch(null)
                             },
                             enabled = !isCsvBusy,
@@ -1605,14 +1710,29 @@ fun SettingsScreen(
                         }
                     }
                 }
+
+                SettingsDivider()
+
+                SettingsItem(
+                    icon = Icons.Default.AccountBalanceWallet,
+                    title = "Import payment statement",
+                    subtitle = "Fill gaps from a PhonePe statement, Google Pay (Takeout) activity or a bank CSV. Payments already in the app are skipped.",
+                    onClick = {
+                        haptic.tap()
+                        statementPicker.launch(arrayOf("*/*"))
+                    }
+                )
             }
+}
 
             // ─────────────────────────────────────────────────────────────────
             // 6. Appearance & Theme
             // ─────────────────────────────────────────────────────────────────
+if (openPage == "look") {
             SettingsSection(
                 title = "Appearance & Theme",
                 isHighlighted = highlightedSection == "Theme",
+                showTitle = false,
                 modifier = Modifier.trackSection("Theme", sectionPositions)
             ) {
                 SettingsItem(
@@ -1635,13 +1755,16 @@ fun SettingsScreen(
                     )
                 }
             }
+}
 
             // ─────────────────────────────────────────────────────────────────
             // 7. System Health
             // ─────────────────────────────────────────────────────────────────
+if (openPage == "health") {
             SettingsSection(
                 title = "System Health",
                 isHighlighted = highlightedSection == "Health",
+                showTitle = false,
                 modifier = Modifier.trackSection("Health", sectionPositions)
             ) {
                 SettingsItem(
@@ -1655,14 +1778,14 @@ fun SettingsScreen(
                     SettingsInset(start = 16.dp) {
                         OutlinedButton(
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptic.tap()
                                 val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                                     data = Uri.fromParts("package", context.packageName, null)
                                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                 }
                                 context.startActivitySafely(intent)
                             },
-                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
                             shape = RoundedCornerShape(AppRadius.small),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
@@ -1733,10 +1856,10 @@ fun SettingsScreen(
                                 Spacer(modifier = Modifier.height(12.dp))
                                 OutlinedButton(
                                     onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptic.tap()
                                         context.startActivitySafely(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                                     },
-                                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                                    modifier = Modifier.fillMaxWidth().height(48.dp),
                                     shape = RoundedCornerShape(AppRadius.small),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
@@ -1760,14 +1883,14 @@ fun SettingsScreen(
                                 Spacer(modifier = Modifier.height(12.dp))
                                 OutlinedButton(
                                     onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptic.tap()
                                         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                                             data = android.net.Uri.fromParts("package", context.packageName, null)
                                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                         }
                                         context.startActivitySafely(intent)
                                     },
-                                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                                    modifier = Modifier.fillMaxWidth().height(48.dp),
                                     shape = RoundedCornerShape(AppRadius.small),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
@@ -1817,7 +1940,7 @@ fun SettingsScreen(
                                 Spacer(modifier = Modifier.height(12.dp))
                                 OutlinedButton(
                                     onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptic.tap()
                                         val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                                             data = Uri.parse("package:${context.packageName}")
                                         }
@@ -1829,7 +1952,7 @@ fun SettingsScreen(
                                             context.startActivitySafely(fallback)
                                         }
                                     },
-                                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                                    modifier = Modifier.fillMaxWidth().height(48.dp),
                                     shape = RoundedCornerShape(AppRadius.small),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
@@ -1841,18 +1964,19 @@ fun SettingsScreen(
                     }
                 }
             }
+}
 
             // ─────────────────────────────────────────────────────────────────
             // 8. Developer Sandbox (Strictly gated behind debuggable builds)
             // ─────────────────────────────────────────────────────────────────
-            if (isDebugBuild) {
+            if (isDebugBuild && openPage == null) {
                 SettingsSection(title = "Developer") {
                     SettingsItem(
                         icon = Icons.Default.BugReport,
                         title = "Developer Sandbox",
                         subtitle = "Live AI/ML telemetry, automated test suite & capture simulator",
                         onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             onNavigateToDebug()
                         }
                     )
@@ -1872,14 +1996,14 @@ fun SettingsScreen(
             ) {
                 Text(
                     text = "Expense Tracker v$appVersionName",
-                    fontSize = 12.5.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "100% Offline · Zero Network Access",
-                    fontSize = 11.5.sp,
+                    fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                 )
             }
@@ -2038,25 +2162,183 @@ fun SettingsScreen(
         }
     }
 
+    if (statementBusy) {
+        AppDialog(
+            title = "Reading statement…",
+            onDismiss = {},
+            confirmText = "Please wait",
+            confirmEnabled = false,
+            dismissText = null,
+            onConfirm = {}
+        ) {
+            Text("Finding payments and checking them against what the app already has.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+    statementOutcome?.let { outcome ->
+        when (outcome) {
+            is com.expensetracker.offline.engine.importer.StatementImporter.Outcome.Failed -> AppDialog(
+                title = "Could not import",
+                onDismiss = { statementOutcome = null },
+                confirmText = "OK",
+                dismissText = null,
+                onConfirm = { statementOutcome = null }
+            ) {
+                Text(outcome.message, fontSize = 14.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            is com.expensetracker.offline.engine.importer.StatementImporter.Outcome.Ready -> {
+                val a = outcome.analysis
+                var replaceEarlier by remember(a) { mutableStateOf(false) }
+                val importCount = if (replaceEarlier) a.replaceRows.size else a.newRows.size
+                val fmt = remember { java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()) }
+                AppDialog(
+                    title = a.format.label,
+                    onDismiss = { statementOutcome = null },
+                    confirmText = if (importCount == 0) "Done" else "Import $importCount",
+                    dismissText = if (importCount == 0) null else "Cancel",
+                    onConfirm = {
+                        statementOutcome = null
+                        if (importCount > 0) {
+                            coroutineScope.launch {
+                                val added = com.expensetracker.offline.engine.importer.StatementImporter(context, app.database).commit(a, replaceEarlier)
+                                showSnack("Imported $added payment${if (added == 1) "" else "s"}")
+                            }
+                        }
+                    }
+                ) {
+                    Column(
+                        modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(a.fileName, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        Text(
+                            buildString {
+                                append("${a.newRows.size} new payment${if (a.newRows.size == 1) "" else "s"}")
+                                if (a.earliest != null && a.latest != null) append(" (${fmt.format(java.util.Date(a.earliest!!))} to ${fmt.format(java.util.Date(a.latest!!))})")
+                                append("\n${a.alreadyTracked} already in the app, skipped")
+                                if (a.unreadable > 0) append("\n${a.unreadable} entr${if (a.unreadable == 1) "y" else "ies"} could not be read")
+                            },
+                            fontSize = 14.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurface
+                        )
+                        a.newRows.take(6).forEach { r ->
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(
+                                    "${fmt.format(java.util.Date(r.timestamp))} · ${r.payee}",
+                                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    (if (r.isDebit) "-" else "+") + "₹" + String.format(java.util.Locale.US, "%,.2f", r.amountPaise / 100.0),
+                                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                    color = if (r.isDebit) MaterialTheme.colorScheme.onSurface else AppColors.positive
+                                )
+                            }
+                        }
+                        if (a.newRows.size > 6) Text("and ${a.newRows.size - 6} more", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (a.earlierImported > 0) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Replace earlier imports", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                                    Text(
+                                        "Removes the ${a.earlierImported} payment${if (a.earlierImported == 1) "" else "s"} a previous import added for these dates, then imports again. Use this to refresh times and categories.",
+                                        fontSize = 12.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Switch(checked = replaceEarlier, onCheckedChange = { replaceEarlier = it }, colors = settingsSwitchColors())
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showMissedSmsDialog) {
+        var missed by remember { mutableStateOf<List<com.expensetracker.offline.engine.scanner.MissedSms>?>(null) }
+        LaunchedEffect(Unit) {
+            missed = withContext(Dispatchers.IO) {
+                SmsHistoryScanner(context, app.database)
+                    .findMissedBankSms(System.currentTimeMillis() - 90L * 86_400_000L)
+            }
+        }
+        val missedList = missed
+        AppDialog(
+            title = "Missed bank SMS",
+            onDismiss = { showMissedSmsDialog = false },
+            confirmText = if (missedList.isNullOrEmpty()) "Done" else "Copy all",
+            dismissText = if (missedList.isNullOrEmpty()) null else "Close",
+            onConfirm = {
+                if (!missedList.isNullOrEmpty()) {
+                    val text = missedList.joinToString("\n\n") { "${it.sender} · ${it.reason}\n${it.redactedBody}" }
+                    val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("Missed bank SMS", text))
+                    showSnack("Copied ${missedList.size} messages (account numbers and UPI ids hidden)")
+                }
+                showMissedSmsDialog = false
+            }
+        ) {
+            when {
+                missedList == null -> Text("Checking the last 90 days of messages…", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                missedList.isEmpty() -> Text(
+                    "Every bank message from the last 90 days was understood.",
+                    fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                else -> Column(
+                    modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "These looked like payments but could not be read. Copy them and share to get the pattern added. Account numbers and UPI ids are hidden.",
+                        fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    val dateFmt = remember { java.text.SimpleDateFormat("d MMM, h:mm a", java.util.Locale.getDefault()) }
+                    missedList.forEach { m ->
+                        Surface(
+                            shape = RoundedCornerShape(AppRadius.small),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    "${m.sender} · ${dateFmt.format(java.util.Date(m.date))}",
+                                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(m.reason, fontSize = 12.sp, color = AppColors.warning)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(m.redactedBody, fontSize = 13.sp, lineHeight = 17.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (showScanConfirmDialog) {
         var scanDay by remember { mutableFloatStateOf(startDayOfMonth.toFloat()) }
+        var scanRange by remember { mutableStateOf("CYCLE") }
 
         AppDialog(
             title = "Confirm Scan",
-            onDismiss = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); showScanConfirmDialog = false },
+            onDismiss = { haptic.tap(); showScanConfirmDialog = false },
             confirmText = "Scan",
             onConfirm = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
                 showScanConfirmDialog = false
 
-                val cycleStartMillis = BillingCycleHelper.getCycleRange(scanDay.toInt()).first
+                val sinceMillis = scanSinceMillis(scanRange, scanDay.toInt())
                 isScanning = true
 
                 coroutineScope.launch {
                     try {
                         val scanner = SmsHistoryScanner(context, app.database)
                         val response = withContext(NonCancellable + Dispatchers.IO) {
-                            scanner.scanSmsSince(cycleStartMillis).also { r ->
+                            scanner.scanSmsSince(sinceMillis).also { r ->
                                 if (r is ScanResponse.Success) {
                                     settingsRepo.lastImportedTxnIds = r.result.importedTransactionIds
                                     settingsRepo.lastImportedReviewIds = r.result.importedReviewIds
@@ -2091,29 +2373,61 @@ fun SettingsScreen(
             }
         ) {
             Text(
-                text = if (skipScanReview) "Scanning reads SMS strictly from the start of your active billing cycle to now. Direct import is active."
-                else "Scanning reads SMS strictly from the start of your active billing cycle. Expenses > ₹1,000 will be added to Review.",
+                text = when {
+                    scanRange != "CYCLE" -> "Older messages are imported too. Messages already in the app are skipped, so it is safe to scan twice."
+                    skipScanReview -> "Reads SMS from the start of your active billing cycle to now. Direct import is active."
+                    else -> "Reads SMS from the start of your active billing cycle. Expenses > ₹1,000 will be added to Review."
+                },
                 fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("CYCLE" to "Cycle", "3M" to "3 mo", "6M" to "6 mo", "1Y" to "1 yr", "ALL" to "All").forEach { (key, label) ->
+                    val selected = scanRange == key
+                    Surface(
+                        shape = RoundedCornerShape(AppRadius.pill),
+                        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(AppRadius.pill))
+                            .quietClickable {
+                                haptic.tap()
+                                scanRange = key
+                            }
+                    ) {
+                        Text(
+                            label,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            color = if (selected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(AppRadius.small),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Scanning from:\n${BillingCycleHelper.getCycleStartDateFormatted(scanDay.toInt())} to Now",
+                    text = if (scanRange == "CYCLE") "Scanning from:\n${BillingCycleHelper.getCycleStartDateFormatted(scanDay.toInt())} to Now"
+                    else if (scanRange == "ALL") "Scanning:\nEvery bank message on this phone"
+                    else "Scanning from:\n${java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(scanSinceMillis(scanRange, scanDay.toInt())))} to Now",
                     fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(12.dp), lineHeight = 18.sp
                 )
             }
-            Spacer(modifier = Modifier.height(16.dp))
-            Slider(
+            if (scanRange == "CYCLE") Spacer(modifier = Modifier.height(16.dp))
+            if (scanRange == "CYCLE") Slider(
                 value = scanDay,
                 onValueChange = { value ->
                     if (scanDay != value) {
                         scanDay = value
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                     }
                 },
                 valueRange = 1f..28f,
@@ -2125,5 +2439,18 @@ fun SettingsScreen(
                 )
             )
         }
+    }
+}
+
+
+/** Where an inbox scan starts: this billing cycle (adjustable day), a fixed look-back, or the whole inbox. */
+private fun scanSinceMillis(range: String, cycleStartDay: Int): Long {
+    val cal = java.util.Calendar.getInstance()
+    return when (range) {
+        "3M" -> cal.apply { add(java.util.Calendar.MONTH, -3) }.timeInMillis
+        "6M" -> cal.apply { add(java.util.Calendar.MONTH, -6) }.timeInMillis
+        "1Y" -> cal.apply { add(java.util.Calendar.YEAR, -1) }.timeInMillis
+        "ALL" -> 0L
+        else -> BillingCycleHelper.getCycleRange(cycleStartDay).first
     }
 }

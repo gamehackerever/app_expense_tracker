@@ -3,6 +3,8 @@
 package com.expensetracker.offline.ui.settings
 
 
+import com.expensetracker.offline.ui.components.quietClickable
+import com.expensetracker.offline.util.tap
 import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import android.content.Context
 import android.content.Intent
@@ -157,7 +159,7 @@ internal fun ProTipsCarousel(onDismiss: () -> Unit, onTipClick: (String) -> Unit
                         .width(280.dp)
                         .clip(RoundedCornerShape(AppRadius.medium))
                         .quietClickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             onTipClick(tip.targetKey)
                         }
                 ) {
@@ -200,6 +202,8 @@ internal fun SettingsSection(
     title: String,
     modifier: Modifier = Modifier,
     isHighlighted: Boolean = false,
+    /** Off when the page's own title already says it (a page with a single section). */
+    showTitle: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -213,14 +217,16 @@ internal fun SettingsSection(
     )
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = title.uppercase(),
-            fontSize = 11.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.9.sp,
-            color = scheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 6.dp)
-        )
+        if (showTitle) {
+            Text(
+                text = title.uppercase(),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.9.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 6.dp)
+            )
+        }
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(AppRadius.medium),
@@ -290,7 +296,7 @@ internal fun SettingsItem(
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
-                    fontSize = 12.5.sp,
+                    fontSize = 13.sp,
                     lineHeight = 17.sp,
                     color = scheme.onSurfaceVariant
                 )
@@ -422,7 +428,7 @@ internal fun SettingsStatusStrip(items: List<SettingsStatus>, onClick: (String) 
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = item.label,
-                            fontSize = 11.5.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = scheme.onSurfaceVariant,
                             maxLines = 1
@@ -469,7 +475,7 @@ internal fun SettingsQuickNav(
             ) {
                 Text(
                     text = label,
-                    fontSize = 12.5.sp,
+                    fontSize = 13.sp,
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
                     color = if (selected) scheme.surface else scheme.onSurface,
                     maxLines = 1,
@@ -544,39 +550,8 @@ internal fun SettingsTextField(
 internal fun isNotificationPermissionGranted(context: Context): Boolean =
     com.expensetracker.offline.engine.interceptor.NotificationCaptureService.isPermissionGranted(context)
 
-/** Click handler with no ripple; presses fade the element slightly instead. */
 @Composable
-internal fun Modifier.quietClickable(
-    enabled: Boolean = true,
-    pressedAlpha: Float = 0.72f,
-    pressedScale: Float = 0.98f,
-    onClick: () -> Unit
-): Modifier {
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    val alpha by animateFloatAsState(if (pressed && enabled) pressedAlpha else 1f, tween(100), label = "quietPress")
-    val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled) pressedScale else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
-        label = "quietScale"
-    )
-    return this
-        .graphicsLayer {
-            this.alpha = alpha
-            this.scaleX = scale
-            this.scaleY = scale
-        }
-        .clickable(enabled = enabled, interactionSource = source, indication = null, onClick = onClick)
-}
-
-@Composable
-internal fun settingsSwitchColors() = SwitchDefaults.colors(
-    checkedThumbColor = MaterialTheme.colorScheme.surface,
-    checkedTrackColor = MaterialTheme.colorScheme.onSurface,
-    uncheckedThumbColor = MaterialTheme.colorScheme.outline,
-    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-    uncheckedBorderColor = Color.Transparent
-)
+internal fun settingsSwitchColors() = com.expensetracker.offline.ui.components.appSwitchColors()
 
 /** Records this composable's Y offset. Writes only happen when the value actually changes. */
 internal fun Modifier.trackSection(key: String, positions: MutableMap<String, Float>): Modifier =
@@ -702,4 +677,50 @@ internal fun requireDeviceAuth(
             .setAllowedAuthenticators(APP_LOCK_AUTHENTICATORS)
             .build()
     )
+}
+
+
+// ─────────────────────────── Settings hub ───────────────────────────
+
+internal data class SettingsHubEntry(val icon: ImageVector, val title: String, val summary: String, val page: String)
+
+/** Which page a section key (used by deep links such as "SMS" or "Backup") lives on. */
+internal fun settingsPageFor(sectionKey: String): String? = when (sectionKey.lowercase()) {
+    "cycle", "budget" -> "budget"
+    "live", "sms", "capture" -> "capture"
+    "alerts" -> "alerts"
+    "backup", "data" -> "data"
+    "theme", "look" -> "look"
+    "health" -> "health"
+    else -> null
+}
+
+internal fun settingsPageTitle(page: String?): String = when (page) {
+    "budget" -> "Budget & Cycle"
+    "capture" -> "Capture & Import"
+    "alerts" -> "Security & Alerts"
+    "data" -> "Data & Backup"
+    "look" -> "Appearance"
+    "health" -> "System Health"
+    else -> "Settings"
+}
+
+/** The Settings landing list: grouped rows, each with a one-line summary, opening a page. */
+@Composable
+internal fun SettingsHub(groups: List<Pair<String, List<SettingsHubEntry>>>, onOpen: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        groups.forEach { (title, entries) ->
+            SettingsSection(title = title) {
+                entries.forEachIndexed { index, entry ->
+                    if (index > 0) SettingsDivider()
+                    SettingsItem(
+                        icon = entry.icon,
+                        title = entry.title,
+                        subtitle = entry.summary,
+                        onClick = { onOpen(entry.page) }
+                    )
+                }
+            }
+        }
+    }
 }

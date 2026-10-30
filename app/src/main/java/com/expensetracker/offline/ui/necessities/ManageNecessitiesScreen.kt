@@ -2,6 +2,8 @@
 
 package com.expensetracker.offline.ui.necessities
 
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.util.confirm
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -202,7 +204,7 @@ fun ManageNecessitiesScreen(
                     },
                     navigationIcon = {
                         IconButton(onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             onNavigateBack()
                         }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -222,7 +224,7 @@ fun ManageNecessitiesScreen(
                 ) {
                     ExtendedFloatingActionButton(
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptic.tap()
                         itemToEdit = null
                         prefillItem = null
                         showFormSheet = true
@@ -361,7 +363,7 @@ fun ManageNecessitiesScreen(
                             Spacer(modifier = Modifier.height(20.dp))
                             Button(
                                 onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    haptic.tap()
                                     itemToEdit = null
                                     prefillItem = null
                                     showFormSheet = true
@@ -429,7 +431,7 @@ fun ManageNecessitiesScreen(
                         onTogglePaid = { togglePaid(item, manuallyPaid) },
                         onLink = { itemToLink = item },
                         onDelete = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptic.tap()
                             itemPendingDelete = item
                         },
                         modifier = Modifier.animateItem()
@@ -488,7 +490,7 @@ fun ManageNecessitiesScreen(
                 }
                 showFormSheet = false
                 prefillItem = null
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.confirm()
             }
         )
     }

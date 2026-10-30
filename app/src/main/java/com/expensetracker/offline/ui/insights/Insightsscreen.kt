@@ -2,6 +2,8 @@
 
 package com.expensetracker.offline.ui.insights
 
+import com.expensetracker.offline.ui.components.quietClickable
+import com.expensetracker.offline.util.tap
 import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import android.content.Context
 import androidx.compose.animation.core.*
@@ -73,6 +75,7 @@ fun InsightsScreen(
     val allTransactions by viewModel.allTransactionsWithDebts.collectAsStateWithLifecycle()
     val linkedAccounts by viewModel.linkedAccounts.collectAsStateWithLifecycle()
     val recurringPayments by viewModel.recurringPayments.collectAsStateWithLifecycle()
+    val hiddenRecurring by viewModel.hiddenRecurringPayments.collectAsStateWithLifecycle()
 
     val haptic = LocalHapticFeedback.current
 
@@ -614,7 +617,7 @@ fun InsightsScreen(
                                 ) {
                                     Text(
                                         "$pctOfBudget% of ${formatRupees(monthlyBudget * 100L)} budget",
-                                        fontSize = 12.5.sp,
+                                        fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = budgetTint,
                                         maxLines = 1,
@@ -923,6 +926,7 @@ fun InsightsScreen(
                                 viewModel.requestNecessityPrefill(draft)
                                 onNavigateToNecessities()
                             },
+                            hiddenCount = hiddenRecurring.size,
                             onViewAllClick = { showRecurringPaymentsSheet = true }
                         )
                         val totalMonthlyReservePaise = remember(necessities) {
@@ -949,9 +953,12 @@ fun InsightsScreen(
     }
     }
 
-    if (showRecurringPaymentsSheet && !recurringPayments.isNullOrEmpty()) {
+    if (showRecurringPaymentsSheet && (!recurringPayments.isNullOrEmpty() || hiddenRecurring.isNotEmpty())) {
         RecurringPaymentsAllSheet(
-            payments = recurringPayments!!,
+            payments = recurringPayments.orEmpty(),
+            hidden = hiddenRecurring,
+            onHide = { viewModel.hideRecurring(it.payee) },
+            onRestore = { viewModel.restoreRecurring(it.payee) },
             necessities = necessities,
             onAddToFixedCosts = { draft ->
                 haptic.tap()
@@ -966,10 +973,18 @@ fun InsightsScreen(
     val catName = selectedCategoryForBreakdown
     if (catName != null) {
         val catBudget = categoryBudgets.entries.firstOrNull { it.key.equals(catName, ignoreCase = true) }?.value
+        val sortOptions = remember(allTransactions) {
+            val custom = prefs.getStringSet("key_custom_categories", emptySet()) ?: emptySet()
+            (com.expensetracker.offline.engine.categorizer.CategoryClassifier.PREDEFINED_CATEGORIES + custom)
+                .filter { !it.equals("Uncategorized", true) && !it.equals("Transfer", true) }
+                .distinct()
+        }
         CategoryTransactionsSheet(
             categoryName = catName,
             allTransactions = filteredTransactions,
             onDismiss = { selectedCategoryForBreakdown = null },
+            categoryOptions = sortOptions,
+            onCategorizePayee = { payee, category -> viewModel.categorizePayee(payee, category) },
             budgetPaise = catBudget,
             onManageBudgetClick = {
                 returnToCategoryBreakdown = catName

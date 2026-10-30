@@ -2,6 +2,8 @@
 
 package com.expensetracker.offline.ui.insights
 
+import com.expensetracker.offline.ui.components.quietClickable
+import com.expensetracker.offline.util.tap
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
@@ -360,7 +362,7 @@ internal fun MultiCycleTrendCard(
                         if (selectedPoint.rangeLabel.isNotBlank())
                             "${selectedPoint.label} cycle · ${selectedPoint.rangeLabel}"
                         else "${selectedPoint.label} cycle",
-                        fontSize = 12.5.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -387,7 +389,7 @@ internal fun MultiCycleTrendCard(
                 ) {
                     Text(
                         if (points.size >= 2) "${points.size}-cycle trend" else "Trend",
-                        fontSize = 11.5.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -446,7 +448,7 @@ internal fun MultiCycleTrendCard(
                                 if (hasData) {
                                     Text(
                                         text = compactRupees(pt.spentPaise),
-                                        fontSize = 10.sp,
+                                        fontSize = 11.sp,
                                         fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
                                         color = if (isSel) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
@@ -478,7 +480,7 @@ internal fun MultiCycleTrendCard(
             if (points.size < 6) {
                 Text(
                     "Earlier cycles will appear as you keep using the app",
-                    fontSize = 11.5.sp,
+                    fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                 )
             }
@@ -537,7 +539,7 @@ internal fun DailyCalendarHeatmapCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         "Daily spending rhythm",
-                        fontSize = 14.5.sp,
+                        fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
@@ -610,7 +612,7 @@ internal fun DailyCalendarHeatmapCard(
                 } else {
                     Text(
                         "Tap date to inspect",
-                        fontSize = 11.5.sp,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         softWrap = false
@@ -749,7 +751,7 @@ internal fun DailyCalendarHeatmapCard(
                 ) {
                     Text(
                         "Less",
-                        fontSize = 10.5.sp,
+                        fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     listOf(
@@ -767,7 +769,7 @@ internal fun DailyCalendarHeatmapCard(
                     }
                     Text(
                         "More",
-                        fontSize = 10.5.sp,
+                        fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -789,7 +791,7 @@ internal fun DailyCalendarHeatmapCard(
                             )
                             Text(
                                 "Today",
-                                fontSize = 10.5.sp,
+                                fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -806,7 +808,7 @@ internal fun DailyCalendarHeatmapCard(
                         )
                         Text(
                             "Selected",
-                            fontSize = 10.5.sp,
+                            fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -935,7 +937,7 @@ internal fun SmartInsightsCard(
                         ) {
                             Text(
                                 text = item.title,
-                                fontSize = 13.5.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,

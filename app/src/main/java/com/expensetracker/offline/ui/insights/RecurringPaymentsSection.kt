@@ -1,12 +1,15 @@
 package com.expensetracker.offline.ui.insights
 
+import com.expensetracker.offline.ui.components.quietClickable
+import com.expensetracker.offline.util.tap
+import com.expensetracker.offline.ui.components.ResistantModalBottomSheet
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -28,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.engine.recurring.Cadence
 import com.expensetracker.offline.engine.recurring.RecurringPayment
 import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
+import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
 import com.expensetracker.offline.ui.theme.getCategoryColor
@@ -51,7 +55,7 @@ private object RecurringColors {
     val negative @Composable get() = if (isSystemInDarkTheme()) Color(0xFFEF4444) else Color(0xFFDC2626)
 }
 
-// Uses internal HapticFeedback.tap() from InsightsComponents.kt
+// Uses HapticFeedback.tap() from util/HapticUtil.kt
 
 private fun rupees(value: Long): String =
     "₹" + String.format(Locale.getDefault(), "%,.0f", value / 100.0)
@@ -101,11 +105,12 @@ fun RecurringPaymentsSection(
     payments: List<RecurringPayment>?,
     necessities: List<NecessityItem>,
     onAddToFixedCosts: (NecessityItem) -> Unit,
-    onViewAllClick: (() -> Unit)? = null
+    onViewAllClick: (() -> Unit)? = null,
+    hiddenCount: Int = 0
 ) {
     if (payments == null) return
     if (payments.isEmpty()) {
-        RecurringEmptyState()
+        RecurringEmptyState(hiddenCount = hiddenCount, onManageHidden = onViewAllClick)
     } else {
         RecurringPaymentsContent(payments, necessities, onAddToFixedCosts, onViewAllClick)
     }
@@ -114,9 +119,12 @@ fun RecurringPaymentsSection(
 // ─────────────────────────────── Empty state ───────────────────────────────
 
 @Composable
-private fun RecurringEmptyState() {
+private fun RecurringEmptyState(hiddenCount: Int = 0, onManageHidden: (() -> Unit)? = null) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(AppRadius.medium))
+            .then(if (hiddenCount > 0 && onManageHidden != null) Modifier.quietClickable(pressedAlpha = 0.85f) { onManageHidden() } else Modifier),
         shape = RoundedCornerShape(AppRadius.medium),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
@@ -149,7 +157,8 @@ private fun RecurringEmptyState() {
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    "Subscriptions and regular bills appear here automatically as you use the app.",
+                    if (hiddenCount > 0) "$hiddenCount hidden · tap to review"
+                    else "Subscriptions and regular bills appear here automatically as you use the app.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -283,7 +292,7 @@ private fun RecurringPaymentsContent(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 "Tracked in fixed costs",
-                                fontSize = 11.5.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -409,13 +418,18 @@ private fun RecurringCompactRow(
 
 // ─────────────────────────────── Full list sheet ───────────────────────────────
 
+private enum class RecurringTab { ACTIVE, LAPSED, HIDDEN }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecurringPaymentsAllSheet(
     payments: List<RecurringPayment>,
     necessities: List<NecessityItem>,
     onAddToFixedCosts: (NecessityItem) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    hidden: List<RecurringPayment> = emptyList(),
+    onHide: (RecurringPayment) -> Unit = {},
+    onRestore: (RecurringPayment) -> Unit = {}
 ) {
     val now = remember(payments) { System.currentTimeMillis() }
     val dateFormat = remember { SimpleDateFormat("d MMM yyyy", Locale.getDefault()) }
@@ -425,12 +439,15 @@ fun RecurringPaymentsAllSheet(
     RecurringPaymentsSheet(
         active = active,
         lapsed = lapsed,
+        hidden = hidden,
         now = now,
         dateFormat = dateFormat,
         monthlyTotal = monthlyTotal,
         necessities = necessities,
         onAddToFixedCosts = onAddToFixedCosts,
-        onDismiss = onDismiss
+        onDismiss = onDismiss,
+        onHide = onHide,
+        onRestore = onRestore
     )
 }
 
@@ -439,21 +456,35 @@ fun RecurringPaymentsAllSheet(
 private fun RecurringPaymentsSheet(
     active: List<RecurringPayment>,
     lapsed: List<RecurringPayment>,
+    hidden: List<RecurringPayment> = emptyList(),
     now: Long,
     dateFormat: SimpleDateFormat,
     monthlyTotal: Long,
     necessities: List<NecessityItem>,
     onAddToFixedCosts: (NecessityItem) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onHide: (RecurringPayment) -> Unit = {},
+    onRestore: (RecurringPayment) -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     // Open on the cancelled tab only if there is nothing active to show
-    var showLapsed by remember { mutableStateOf(active.isEmpty()) }
-    val list = if (showLapsed) lapsed else active
+    var tab by remember { mutableStateOf(if (active.isEmpty() && lapsed.isNotEmpty()) RecurringTab.LAPSED else RecurringTab.ACTIVE) }
+    val tabs = buildList {
+        add(RecurringTab.ACTIVE to "Active (${active.size})")
+        if (lapsed.isNotEmpty()) add(RecurringTab.LAPSED to "Cancelled? (${lapsed.size})")
+        if (hidden.isNotEmpty()) add(RecurringTab.HIDDEN to "Hidden (${hidden.size})")
+    }
+    // A tab that just emptied (last hidden item restored) must not leave the user on a blank page.
+    val currentTab = if (tabs.any { it.first == tab }) tab else RecurringTab.ACTIVE
+    val list = when (currentTab) {
+        RecurringTab.ACTIVE -> active
+        RecurringTab.LAPSED -> lapsed
+        RecurringTab.HIDDEN -> hidden
+    }
 
-    ModalBottomSheet(
+    ResistantModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
@@ -468,7 +499,7 @@ private fun RecurringPaymentsSheet(
             Text(
                 "Recurring payments",
                 fontWeight = FontWeight.Bold,
-                fontSize = 22.sp,
+                fontSize = 22.sp, letterSpacing = (-0.3).sp,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(2.dp))
@@ -479,7 +510,7 @@ private fun RecurringPaymentsSheet(
             )
 
             // Segmented control (same look as the Dashboard's time-range selector)
-            if (lapsed.isNotEmpty()) {
+            if (tabs.size > 1) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Surface(
                     shape = RoundedCornerShape(AppRadius.pill),
@@ -489,11 +520,8 @@ private fun RecurringPaymentsSheet(
                         .height(40.dp)
                 ) {
                     Row(modifier = Modifier.fillMaxWidth().padding(4.dp)) {
-                        listOf(
-                            false to "Active (${active.size})",
-                            true to "Possibly cancelled (${lapsed.size})"
-                        ).forEach { (isLapsedTab, label) ->
-                            val isSelected = showLapsed == isLapsedTab
+                        tabs.forEach { (tabId, label) ->
+                            val isSelected = currentTab == tabId
                             val segmentColor by animateColorAsState(
                                 targetValue = if (isSelected) MaterialTheme.colorScheme.surfaceBright
                                 else MaterialTheme.colorScheme.surface.copy(alpha = 0f),
@@ -507,7 +535,7 @@ private fun RecurringPaymentsSheet(
                                     .clip(RoundedCornerShape(AppRadius.pill))
                                     .quietClickable(pressedAlpha = 0.8f) {
                                         if (!isSelected) haptic.tap()
-                                        showLapsed = isLapsedTab
+                                        tab = tabId
                                     },
                                 shape = RoundedCornerShape(AppRadius.pill),
                                 color = segmentColor,
@@ -517,6 +545,7 @@ private fun RecurringPaymentsSheet(
                                     Text(
                                         label,
                                         fontSize = 12.sp,
+                                        maxLines = 1,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                         color = if (isSelected) MaterialTheme.colorScheme.onSurface
                                         else MaterialTheme.colorScheme.onSurfaceVariant
@@ -528,13 +557,14 @@ private fun RecurringPaymentsSheet(
                 }
             }
 
-            if (showLapsed) {
+            val helper = when (currentTab) {
+                RecurringTab.LAPSED -> "No charge seen for a while. These may have been cancelled."
+                RecurringTab.HIDDEN -> "You marked these as not recurring. Restore any that were hidden by mistake."
+                RecurringTab.ACTIVE -> null
+            }
+            if (helper != null) {
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    "No charge seen for a while. These may have been cancelled.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text(helper, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -550,22 +580,26 @@ private fun RecurringPaymentsSheet(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    itemsIndexed(
+                    items(
                         items = list,
-                        key = { index, payment -> "${payment.payee}_${payment.amount}_${payment.cadence.name}_$index" }
-                    ) { _, payment ->
+                        key = { payment -> "${currentTab.name}_${RecurringPaymentDetector.groupKey(payment.payee)}_${payment.cadence.name}" }
+                    ) { payment ->
                         RecurringPaymentCard(
+                            modifier = Modifier.animateItem(),
                             payment = payment,
                             now = now,
                             dateFormat = dateFormat,
-                            lapsed = showLapsed,
+                            lapsed = currentTab == RecurringTab.LAPSED,
+                            hiddenMode = currentTab == RecurringTab.HIDDEN,
                             tracked = necessities.any {
                                 NecessityManager.matches(it, payment.payee, payment.category)
                             },
                             onAddToFixedCosts = { item ->
                                 onDismiss()
                                 onAddToFixedCosts(item)
-                            }
+                            },
+                            onHide = { onHide(payment) },
+                            onRestore = { onRestore(payment) }
                         )
                     }
                 }
@@ -576,24 +610,28 @@ private fun RecurringPaymentsSheet(
 
 @Composable
 private fun RecurringPaymentCard(
+    modifier: Modifier = Modifier,
     payment: RecurringPayment,
     now: Long,
     dateFormat: SimpleDateFormat,
     lapsed: Boolean,
+    hiddenMode: Boolean = false,
     tracked: Boolean,
-    onAddToFixedCosts: (NecessityItem) -> Unit
+    onAddToFixedCosts: (NecessityItem) -> Unit,
+    onHide: () -> Unit = {},
+    onRestore: () -> Unit = {}
 ) {
     val scheme = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
     val iconKey = payment.payee + " " + payment.category
     val categoryIcon = getCategoryIcon(iconKey)
     val categoryColor = getCategoryColor(iconKey)
-    val tentative = !lapsed && payment.confidence < TENTATIVE_BELOW
+    val tentative = !lapsed && !hiddenMode && payment.confidence < TENTATIVE_BELOW
 
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .alpha(if (lapsed) 0.7f else 1f),
+            .alpha(if (lapsed || hiddenMode) 0.75f else 1f),
         shape = RoundedCornerShape(AppRadius.medium),
         color = scheme.surface,
         border = BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.5f))
@@ -638,7 +676,7 @@ private fun RecurringPaymentCard(
                     if (payment.cadence != Cadence.MONTHLY) {
                         Text(
                             "${rupees(payment.monthlyCost)}/mo",
-                            fontSize = 11.5.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = scheme.onSurfaceVariant
                         )
@@ -653,55 +691,72 @@ private fun RecurringPaymentCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                RecurringBadge(
-                    text = dueLabel(payment, now, lapsed, dateFormat),
-                    color = dueColor(payment, now, lapsed)
-                )
+                if (hiddenMode) {
+                    Text(
+                        "Last paid ${dateFormat.format(Date(payment.lastSeen))}",
+                        fontSize = 12.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(AppRadius.pill),
+                        color = scheme.onSurface.copy(alpha = 0.06f),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(AppRadius.pill))
+                            .quietClickable { haptic.tap(); onRestore() }
+                    ) {
+                        Text(
+                            "Restore",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = scheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                        )
+                    }
+                } else {
+                    RecurringBadge(
+                        text = dueLabel(payment, now, lapsed, dateFormat),
+                        color = dueColor(payment, now, lapsed)
+                    )
+                    // Low-emphasis escape hatch for a wrongly detected payment.
+                    Text(
+                        "Not recurring",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(AppRadius.pill))
+                            .quietClickable { haptic.tap(); onHide() }
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                }
+            }
 
-                if (!lapsed) {
-                    if (tracked) {
-                        Surface(
-                            shape = RoundedCornerShape(AppRadius.pill),
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    "In fixed costs",
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+            if (!hiddenMode && !lapsed) {
+                Spacer(modifier = Modifier.height(10.dp))
+                if (tracked) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Check, contentDescription = null, tint = AppColors.positive, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Counted in your fixed costs", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = scheme.onSurfaceVariant)
+                    }
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(AppRadius.pill),
+                        color = scheme.onSurface.copy(alpha = 0.06f),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(AppRadius.pill))
+                            .quietClickable {
+                                haptic.tap()
+                                onAddToFixedCosts(buildFixedCostDraft(payment))
                             }
-                        }
-                    } else {
-                        Surface(
-                            shape = RoundedCornerShape(AppRadius.pill),
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(AppRadius.pill))
-                                .quietClickable {
-                                    haptic.tap()
-                                    onAddToFixedCosts(buildFixedCostDraft(payment))
-                                }
-                        ) {
-                            Text(
-                                "+ Fixed costs",
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                            )
-                        }
+                    ) {
+                        Text(
+                            "+ Add to fixed costs",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = scheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                        )
                     }
                 }
             }
