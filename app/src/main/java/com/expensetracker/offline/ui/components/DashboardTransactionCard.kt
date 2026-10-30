@@ -515,9 +515,9 @@ fun DashboardTransactionCard(
                         )
                     }
 
-                    if (hasStatusRow && statusText != null) {
+                    if (hasStatusRow) {
                         StatusLine(
-                            text = statusText,
+                            text = statusText.orEmpty(),
                             dotColor = statusDot,
                             icon = statusIcon,
                             textColor = statusColor,

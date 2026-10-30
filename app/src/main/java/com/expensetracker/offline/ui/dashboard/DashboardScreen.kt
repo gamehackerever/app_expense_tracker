@@ -1360,19 +1360,14 @@ fun DashboardScreen(
                 runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
             },
             onRequestBatteryUnrestricted = {
-                val directIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = android.net.Uri.parse("package:${context.packageName}")
+                val appInfoIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = android.net.Uri.fromParts("package", context.packageName, null)
                 }
-                val launched = runCatching {
-                    context.startActivity(directIntent)
-                    true
-                }.getOrDefault(false)
+                val launched = runCatching { context.startActivity(appInfoIntent); true }.getOrDefault(false)
                 if (!launched) {
-                    val appInfoIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = android.net.Uri.fromParts("package", context.packageName, null)
-                    }
-                    runCatching { context.startActivity(appInfoIntent) }
-                    showSnack("Tap 'Battery' and select 'Unrestricted'")
+                    showSnack("Open Android Settings > Apps > Expense Tracker > Battery")
+                } else {
+                    showSnack("In App Info, open Battery and choose Unrestricted if available")
                 }
             },
             onSwitchToManualMode = {

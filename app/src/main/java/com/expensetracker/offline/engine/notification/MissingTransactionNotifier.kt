@@ -6,7 +6,6 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.expensetracker.offline.MainActivity
 import java.util.Locale
@@ -14,7 +13,6 @@ import kotlin.math.abs
 
 object MissingTransactionNotifier {
 
-    private const val TAG = "MissingTxnNotifier"
     private const val CHANNEL_ID = "discrepancy_channel"
     private const val NOTIFICATION_ID = 1005
 
@@ -51,8 +49,6 @@ object MissingTransactionNotifier {
 
         // Dynamically guess if they missed logging an expense or an income
         val gapType = if (discrepancyAmount > 0) "expense" else "income"
-
-        Log.d(TAG, "Notifying missing transaction: ₹$formattedDiff gap detected.")
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             // Use alpha-only system vector to prevent solid white square rendering bug

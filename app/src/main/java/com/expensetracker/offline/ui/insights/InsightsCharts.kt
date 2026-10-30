@@ -48,7 +48,7 @@ import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material3.*
@@ -887,7 +887,7 @@ internal fun SmartInsightsCard(
                     else -> InsightsColors.positive
                 }
                 val icon = when {
-                    item.kind == SmartExpenseEngine.InsightKind.MICRO_SPEND -> Icons.Default.ReceiptLong
+                    item.kind == SmartExpenseEngine.InsightKind.MICRO_SPEND -> Icons.AutoMirrored.Filled.ReceiptLong
                     item.kind == SmartExpenseEngine.InsightKind.TIME_PATTERN -> Icons.Default.Schedule
                     item.kind == SmartExpenseEngine.InsightKind.ANOMALY -> Icons.AutoMirrored.Filled.TrendingUp
                     item.category != null && hasCategoryIcon(item.category) -> getCategoryIcon(item.category)

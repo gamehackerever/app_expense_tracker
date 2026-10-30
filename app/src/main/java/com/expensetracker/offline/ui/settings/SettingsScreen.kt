@@ -674,22 +674,16 @@ fun SettingsScreen(
                         if (!isIgnoringBatteryOptimizations) {
                             OutlinedButton(
                                 onClick = {
-                                    val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                        data = Uri.parse("package:${context.packageName}")
+                                    val appInfo = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                        data = Uri.fromParts("package", context.packageName, null)
                                     }
-                                    val ok = runCatching { context.startActivity(direct); true }.getOrDefault(false)
-                                    if (!ok) {
-                                        val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                            data = Uri.fromParts("package", context.packageName, null)
-                                        }
-                                        context.startActivitySafely(fallback)
-                                    }
+                                    context.startActivitySafely(appInfo)
                                 },
                                 modifier = Modifier.fillMaxWidth().height(40.dp),
                                 shape = RoundedCornerShape(AppRadius.small),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
-                            ) { Text("Set battery to Unrestricted", fontSize = 14.sp, fontWeight = FontWeight.Medium) }
+                            ) { Text("Open app battery settings", fontSize = 14.sp, fontWeight = FontWeight.Medium) }
                         }
                     }
                 }
@@ -1908,7 +1902,7 @@ if (openPage == "health") {
                     icon = if (isIgnoringBatteryOptimizations) Icons.Default.BatteryFull else Icons.Default.BatteryAlert,
                     iconTint = if (isIgnoringBatteryOptimizations) AppColors.positive else MaterialTheme.colorScheme.error,
                     title = "Battery Optimization",
-                    subtitle = if (isIgnoringBatteryOptimizations) "Unrestricted (OS won't kill listener)" else "Restricted (OS may kill background listener)"
+                    subtitle = if (isIgnoringBatteryOptimizations) "Unrestricted (background work allowed)" else "Restricted (background work may be delayed)"
                 )
 
                 if (!isIgnoringBatteryOptimizations) {
@@ -1941,23 +1935,17 @@ if (openPage == "health") {
                                 OutlinedButton(
                                     onClick = {
                                         haptic.tap()
-                                        val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                            data = Uri.parse("package:${context.packageName}")
+                                        val appInfo = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                            data = Uri.fromParts("package", context.packageName, null)
                                         }
-                                        val ok = runCatching { context.startActivity(direct); true }.getOrDefault(false)
-                                        if (!ok) {
-                                            val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                                data = Uri.fromParts("package", context.packageName, null)
-                                            }
-                                            context.startActivitySafely(fallback)
-                                        }
+                                        context.startActivitySafely(appInfo)
                                     },
                                     modifier = Modifier.fillMaxWidth().height(48.dp),
                                     shape = RoundedCornerShape(AppRadius.small),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
                                 ) {
-                                    Text("Allow Unrestricted Battery", fontWeight = FontWeight.SemiBold)
+                                    Text("Open app battery settings", fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }

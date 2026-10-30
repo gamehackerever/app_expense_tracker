@@ -46,7 +46,11 @@ class CaptureWorker(
             if (!parsed.isFinancial) return Result.success() // rejected; nothing to persist
 
             val result = CaptureDispatcher.dispatch(app, parsed, sender, timestamp, source)
-            if (result == null && runAttemptCount < MAX_ATTEMPTS) Result.retry() else Result.success()
+            when {
+                result != null -> Result.success()
+                runAttemptCount < MAX_ATTEMPTS -> Result.retry()
+                else -> Result.failure()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Capture work failed (attempt $runAttemptCount)", e)
             if (runAttemptCount < MAX_ATTEMPTS) Result.retry() else Result.failure()
@@ -73,9 +77,11 @@ class CaptureWorker(
             source: TransactionSource
         ) {
             val data = Data.Builder()
-                .putString(KEY_SENDER, sender)
-                .putString(KEY_BODY, body.take(4000))   // WorkManager input limit is 10 KB
-                .putString(KEY_TITLE, title)
+                .putString(KEY_SENDER, sender.take(256))
+                // A character cap (not a byte cap) keeps UTF-8 encoded WorkManager Data comfortably
+                // below its 10 KB limit even when notification text contains multibyte Unicode.
+                .putString(KEY_BODY, body.take(1800))
+                .putString(KEY_TITLE, title?.take(256))
                 .putLong(KEY_TIMESTAMP, timestamp)
                 .putString(KEY_SOURCE, source.name)
                 .build()

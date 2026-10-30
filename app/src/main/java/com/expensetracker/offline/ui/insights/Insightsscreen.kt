@@ -21,7 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -767,7 +767,7 @@ fun InsightsScreen(
                             )
                             InsightsStatTile(
                                 modifier = Modifier.weight(1f),
-                                icon = Icons.Default.ReceiptLong,
+                                icon = Icons.AutoMirrored.Filled.ReceiptLong,
                                 label = "Largest",
                                 value = formatRupees(stats.largestAmount),
                                 amountPaise = stats.largestAmount,

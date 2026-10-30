@@ -21,7 +21,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -60,7 +60,7 @@ fun SheetReceiptCard(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         SheetInfoRow(
-            icon = Icons.Default.ReceiptLong,
+            icon = Icons.AutoMirrored.Filled.ReceiptLong,
             title = "Bill / Receipt Photo",
             subtitle = if (receiptBitmap == null) "Optional" else if (hasScannedItems) "Items extracted below" else "Extract line items & split by dish",
             trailing = if (receiptBitmap != null) {

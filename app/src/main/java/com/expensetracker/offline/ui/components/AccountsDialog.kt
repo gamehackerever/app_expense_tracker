@@ -98,7 +98,6 @@ import java.time.temporal.ChronoUnit
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
-import kotlin.math.roundToLong
 
 private fun <T> smoothSize() = spring<T>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
 
@@ -549,7 +548,11 @@ fun AccountsDialog(
         var newCcDueDay by remember { mutableIntStateOf(5) }
 
         val parsedBalancePaise = remember(balanceStr) {
-            balanceStr.trim().replace(",", "").toDoubleOrNull()?.takeIf { it >= 0.0 }?.let { (it * 100.0).roundToLong() }
+            balanceStr.trim().replace(",", "").toBigDecimalOrNull()
+                ?.takeIf { it.signum() >= 0 }
+                ?.movePointRight(2)
+                ?.setScale(0, java.math.RoundingMode.HALF_UP)
+                ?.longValueExact()
         }
 
         AppDialog(
@@ -723,8 +726,14 @@ fun AccountsDialog(
                 haptic.confirm()
 
                 // 1. Update Balance if it changed
-                val newBal = balanceStr.trim().replace(",", "").toDoubleOrNull()?.let { (it * 100.0).roundToLong() } ?: 0L
-                if (newBal != (targetAccount.latestBalance ?: 0L)) {
+                // Blank means "leave unchanged"; an explicit 0 is still a valid reconciled balance.
+                val newBal = balanceStr.trim().takeIf { it.isNotEmpty() }
+                    ?.replace(",", "")
+                    ?.toBigDecimalOrNull()
+                    ?.movePointRight(2)
+                    ?.setScale(0, java.math.RoundingMode.HALF_UP)
+                    ?.longValueExact()
+                if (newBal != null && newBal != targetAccount.latestBalance) {
                     onUpdateBalance(targetAccount.bankName, targetAccount.accountNumber, newBal)
                 }
 

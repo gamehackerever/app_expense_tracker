@@ -39,7 +39,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -293,7 +293,7 @@ internal fun SectionHeader(
 
 @Composable
 internal fun EmptyInsightState(text: String) {
-    com.expensetracker.offline.ui.components.EmptyState(title = text, icon = Icons.Default.ReceiptLong)
+    com.expensetracker.offline.ui.components.EmptyState(title = text, icon = Icons.AutoMirrored.Filled.ReceiptLong)
 }
 
 /**

@@ -1,0 +1,5 @@
+• Preserved bank balance accuracy when adding backdated transactions
+• Protected original expense exclusions when editing custom budget settings
+• Rejected oversized statements instead of silently importing partial files
+• Improved backup restore rollback and unsupported-version handling
+• Clarified transaction source and account balance adjustments

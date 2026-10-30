@@ -14,12 +14,10 @@ object ImageUtil {
     private const val TAG = "BillUpload"
 
     fun loadScaledBitmap(context: Context, pathOrUri: String, maxDimension: Int = 1024): Bitmap? {
-        Log.d(TAG, "loadScaledBitmap called with: $pathOrUri")
         return try {
             val file = File(pathOrUri)
             val isFile = file.exists()
             val uri = if (isFile) null else Uri.parse(pathOrUri)
-            Log.d(TAG, "Is file? $isFile. URI: $uri")
 
             // 1. Decode bounds first
             val options = BitmapFactory.Options().apply {
@@ -36,9 +34,7 @@ object ImageUtil {
                 }
             }
 
-            Log.d(TAG, "Bounds decoded. outWidth: ${options.outWidth}, outHeight: ${options.outHeight}")
             if (options.outWidth <= 0 || options.outHeight <= 0) {
-                Log.e(TAG, "Invalid bounds. Returning null.")
                 return null
             }
 
@@ -48,8 +44,6 @@ object ImageUtil {
             while (largestDim / inSampleSize > maxDimension) {
                 inSampleSize *= 2
             }
-            Log.d(TAG, "Calculated inSampleSize: $inSampleSize")
-
             // 3. Decode actual bitmap
             options.inJustDecodeBounds = false
             options.inSampleSize = inSampleSize

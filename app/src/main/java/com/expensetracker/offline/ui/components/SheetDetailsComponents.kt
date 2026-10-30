@@ -11,7 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Fastfood
-import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -113,7 +113,7 @@ fun SheetDetailsSection(
             SheetChip(
                 text = if (receiptActive) "Bill / Receipt" else "Attach bill",
                 isSelected = receiptActive,
-                icon = if (receiptActive) Icons.Default.ReceiptLong else Icons.Default.Add,
+                icon = if (receiptActive) Icons.AutoMirrored.Filled.ReceiptLong else Icons.Default.Add,
                 onClick = {
                     if (receiptUri == null) pickReceipt() else receiptOpen = !receiptOpen
                 }

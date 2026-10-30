@@ -45,6 +45,8 @@ sealed class RestoreResult {
 object BackupManager {
 
     private const val DATABASE_NAME = "expense_tracker.db"
+    // Migrations begin at v4. Restoring v1-v3 would otherwise trigger Room's destructive fallback.
+    private const val MIN_MIGRATABLE_DATABASE_VERSION = 4
     private const val PREFS_NAME = SettingsRepository.PREFS_NAME
 
     private val MAGIC_V2 = "ETBK_V2_".toByteArray(Charsets.UTF_8)
@@ -208,6 +210,12 @@ object BackupManager {
         val dbPath = context.getDatabasePath(DATABASE_NAME)
         val tmpDbFile = File(dbPath.parentFile, "$DATABASE_NAME.restore_tmp")
         val backupDbFile = File(dbPath.parentFile, "$DATABASE_NAME.bak")
+        val walFile = File(dbPath.path + "-wal")
+        val shmFile = File(dbPath.path + "-shm")
+        val backupWalFile = File(dbPath.path + "-bak-wal")
+        val backupShmFile = File(dbPath.path + "-bak-shm")
+        var databaseSwapped = false
+        var originalSettingsBytes: ByteArray? = null
 
         try {
             val uri = Uri.parse(backupFileUri)
@@ -299,22 +307,38 @@ object BackupManager {
             AppDatabase.closeAndResetInstance()
 
             // 5. Move current DB to .bak (Safety rollback mechanism)
-            val walFile = File(dbPath.path + "-wal")
-            val shmFile = File(dbPath.path + "-shm")
             val journalFile = File(dbPath.path + "-journal")
 
-            if (dbPath.exists()) dbPath.renameTo(backupDbFile)
-            val backupWalFile = File(dbPath.path + "-bak-wal")
-            val backupShmFile = File(dbPath.path + "-bak-shm")
-            if (walFile.exists()) walFile.renameTo(backupWalFile) else backupWalFile.delete()
-            if (shmFile.exists()) shmFile.renameTo(backupShmFile) else backupShmFile.delete()
+            // Never overwrite a recovery copy left by a previous interrupted restore.
+            if (backupDbFile.exists()) {
+                return@withContext RestoreResult.Error("A previous recovery copy exists; current data was not changed.")
+            }
+            if (dbPath.exists() && !dbPath.renameTo(backupDbFile)) {
+                return@withContext RestoreResult.Error("Could not preserve the current database; restore cancelled.")
+            }
+            if (walFile.exists() && !walFile.renameTo(backupWalFile)) {
+                if (backupDbFile.exists()) backupDbFile.renameTo(dbPath)
+                return@withContext RestoreResult.Error("Could not preserve the current database journal; restore cancelled.")
+            }
+            if (shmFile.exists() && !shmFile.renameTo(backupShmFile)) {
+                if (backupWalFile.exists()) backupWalFile.renameTo(walFile)
+                if (backupDbFile.exists()) backupDbFile.renameTo(dbPath)
+                return@withContext RestoreResult.Error("Could not preserve the current database journal; restore cancelled.")
+            }
             journalFile.delete()
 
             // 6. Swap new DB into place
-            tmpDbFile.renameTo(dbPath)
+            if (!tmpDbFile.renameTo(dbPath)) {
+                if (backupWalFile.exists()) backupWalFile.renameTo(walFile)
+                if (backupShmFile.exists()) backupShmFile.renameTo(shmFile)
+                if (backupDbFile.exists()) backupDbFile.renameTo(dbPath)
+                return@withContext RestoreResult.Error("Could not install the backup database; current data was restored.")
+            }
+            databaseSwapped = true
 
             // 7. Check SQLite Integrity
             var isDbValid = false
+            var hasUnsupportedDbVersion = false
             try {
                 val testDb = android.database.sqlite.SQLiteDatabase.openDatabase(
                     dbPath.absolutePath,
@@ -329,8 +353,9 @@ object BackupManager {
                 testDb.rawQuery("PRAGMA user_version", null).use { cursor ->
                     if (cursor.moveToFirst()) {
                         val dbVersion = cursor.getInt(0)
-                        if (dbVersion > AppDatabase.DATABASE_VERSION) {
+                        if (dbVersion !in MIN_MIGRATABLE_DATABASE_VERSION..AppDatabase.DATABASE_VERSION) {
                             isDbValid = false
+                            hasUnsupportedDbVersion = true
                         }
                     }
                 }
@@ -344,13 +369,17 @@ object BackupManager {
                 if (backupDbFile.exists()) backupDbFile.renameTo(dbPath)
                 if (backupWalFile.exists()) backupWalFile.renameTo(walFile)
                 if (backupShmFile.exists()) backupShmFile.renameTo(shmFile)
-                return@withContext RestoreResult.Error("Backup contains a corrupt database or is from a newer version of the app. Restored old database.")
+                databaseSwapped = false
+                val reason = if (hasUnsupportedDbVersion) {
+                    "Backup database version isn't supported by this app. Restored old database."
+                } else {
+                    "Backup contains a corrupt database. Restored old database."
+                }
+                return@withContext RestoreResult.Error(reason)
             }
 
-            // 8. Success. Clean up and apply settings
-            backupDbFile.delete()
-            backupWalFile.delete()
-            backupShmFile.delete()
+            // Preserve current preferences too, in case applying backup settings or Room migrations fails.
+            originalSettingsBytes = serializeSettings(context)
             val restoredSettings = settingsBytes
             if (restoredSettings != null) {
                 when (detectedVersion) {
@@ -360,14 +389,31 @@ object BackupManager {
                 }
             }
 
-            // Eagerly reopen the new database instance so any concurrent observer gets a live pool
+            // Force Room to open and migrate the restored database before discarding the rollback copy.
             AppDatabase.getInstance(context)
+                .query(SimpleSQLiteQuery("SELECT COUNT(*) FROM sqlite_master"))
+                .use { cursor -> check(cursor.moveToFirst()) { "Restored database could not be opened." } }
+
+            backupDbFile.delete()
+            backupWalFile.delete()
+            backupShmFile.delete()
+            databaseSwapped = false
 
             RestoreResult.SuccessRestart
         } catch (e: Exception) {
-            e.printStackTrace()
             tmpDbFile.delete()
-            if (!dbPath.exists() && backupDbFile.exists()) backupDbFile.renameTo(dbPath)
+            if (databaseSwapped) {
+                AppDatabase.closeAndResetInstance()
+                dbPath.delete()
+                walFile.delete()
+                shmFile.delete()
+                if (backupDbFile.exists()) backupDbFile.renameTo(dbPath)
+                if (backupWalFile.exists()) backupWalFile.renameTo(walFile)
+                if (backupShmFile.exists()) backupShmFile.renameTo(shmFile)
+                originalSettingsBytes?.let { previous ->
+                    runCatching { applySettingsV4(context, previous) }
+                }
+            }
             RestoreResult.Error("Restore failed: ${e.localizedMessage}")
         }
     }
@@ -406,7 +452,11 @@ object BackupEngine {
 
         val factory = SecretKeyFactory.getInstance(algorithm)
         val spec = PBEKeySpec(effectivePassphrase.toCharArray(), salt, 100_000, 256)
-        return SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+        return try {
+            SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+        } finally {
+            spec.clearPassword()
+        }
     }
 
     fun encryptBackupStream(
@@ -652,7 +702,12 @@ object BackupEngine {
         val staticSalt = "XpenseTrkr_S4lt".toByteArray(Charsets.UTF_8)
         val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
         val spec = PBEKeySpec(staticPassphrase, staticSalt, 10000, 256)
-        val secretKey = SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+        val secretKey = try {
+            SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+        } finally {
+            spec.clearPassword()
+            staticPassphrase.fill('\u0000')
+        }
 
         val iv = encryptedPayload.copyOfRange(0, IV_SIZE)
         val encryptedData = encryptedPayload.copyOfRange(IV_SIZE, encryptedPayload.size)

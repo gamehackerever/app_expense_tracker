@@ -1563,7 +1563,7 @@ fun AutoCaptureSetupSheet(
                         )
                     ) {
                         Text(
-                            "Allow Background Activity",
+                            "Open battery settings",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
@@ -2147,8 +2147,6 @@ internal fun NecessityBreakdownDialog(
     }
 }
 
-internal val dayLabelFormat = SimpleDateFormat("EEE, d MMM yyyy", Locale.getDefault())
-
 internal fun dayLabel(ts: Long): String {
     val todayStart = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
@@ -2158,7 +2156,7 @@ internal fun dayLabel(ts: Long): String {
     return when {
         ts >= todayStart -> "Today"
         ts in yesterdayStart until todayStart -> "Yesterday"
-        else -> synchronized(dayLabelFormat) { dayLabelFormat.format(Date(ts)) }
+        else -> SimpleDateFormat("EEE, d MMM yyyy", Locale.getDefault()).format(Date(ts))
     }
 }
 
@@ -2974,9 +2972,9 @@ private fun CategoryBudgetListContent(
                                     )
                                 }
 
+                                val isOverAllocated = totalAllocatedPaise > monthlyBudgetPaise
+                                val diffPaise = kotlin.math.abs(monthlyBudgetPaise - totalAllocatedPaise)
                                 if (monthlyBudgetPaise > 0L) {
-                                    val isOverAllocated = totalAllocatedPaise > monthlyBudgetPaise
-                                    val diffPaise = kotlin.math.abs(monthlyBudgetPaise - totalAllocatedPaise)
                                     Column(horizontalAlignment = Alignment.End) {
                                         Text(
                                             "Monthly target",
@@ -3241,13 +3239,14 @@ private fun CategoryBudgetFormContent(
     onRemove: () -> Unit
 ) {
     val focusManager = LocalFocusManager.current
-    val hasLimit = currentLimitPaise != null && currentLimitPaise > 0L
+    val existingLimitPaise = currentLimitPaise?.takeIf { it > 0L }
+    val hasLimit = existingLimitPaise != null
 
     var amountStr by remember(category, currentLimitPaise) {
         mutableStateOf(
-            if (hasLimit && currentLimitPaise != null) {
-                if (currentLimitPaise % 100L == 0L) (currentLimitPaise / 100L).toString()
-                else String.format(Locale.US, "%.2f", currentLimitPaise / 100.0)
+            if (existingLimitPaise != null) {
+                if (existingLimitPaise % 100L == 0L) (existingLimitPaise / 100L).toString()
+                else String.format(Locale.US, "%.2f", existingLimitPaise / 100.0)
             } else ""
         )
     }

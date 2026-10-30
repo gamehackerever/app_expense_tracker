@@ -19,7 +19,7 @@ import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.LocalHospital
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.ShoppingCart
@@ -107,7 +107,7 @@ private enum class CategoryKind(val color: Color?, val icon: ImageVector, val ke
         setOf("household", "services", "maid", "cook", "laundry", "dryclean", "cleaning", "plumber", "electrician", "carpenter", "urban", "lpg", "cylinder", "indane", "bharatgas", "bisleri")
     ),
     BILLS(
-        Color(0xFF0891B2), Icons.Default.ReceiptLong, // Cyan-Blue
+        Color(0xFF0891B2), Icons.AutoMirrored.Filled.ReceiptLong, // Cyan-Blue
         setOf("bills", "bill", "utilities", "utility", "electricity", "internet", "wifi",
             "insurance", "kseb", "bescom", "tneb", "msedcl", "water", "gas", "bbps")
     ),

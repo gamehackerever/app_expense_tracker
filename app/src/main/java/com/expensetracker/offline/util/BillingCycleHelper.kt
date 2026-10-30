@@ -7,10 +7,6 @@ import java.util.Locale
 
 object BillingCycleHelper {
 
-    // Pre-compile formatters to save CPU cycles (DateTimeFormatter is completely thread-safe)
-    private val START_DATE_FORMATTER = DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.getDefault())
-    private val CYCLE_LABEL_FORMATTER = DateTimeFormatter.ofPattern("dd MMM", Locale.getDefault())
-
     /**
      * Core logic to determine the LocalDate boundaries of the active billing cycle.
      * Start day is clamped to 1..28 to safely avoid February leap year edge cases.
@@ -90,13 +86,14 @@ object BillingCycleHelper {
 
     fun getCycleStartDateFormatted(startDay: Int, referenceDate: LocalDate = LocalDate.now()): String {
         val (cycleStart, _) = getCycleDates(startDay, referenceDate)
-        return cycleStart.format(START_DATE_FORMATTER)
+        return cycleStart.format(DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.getDefault()))
     }
 
     fun getCycleLabel(startDay: Int, referenceDate: LocalDate = LocalDate.now()): String {
         val (cycleStart, cycleEnd) = getCycleDates(startDay, referenceDate)
-        val s = cycleStart.format(CYCLE_LABEL_FORMATTER)
-        val e = cycleEnd.format(CYCLE_LABEL_FORMATTER)
+        val formatter = DateTimeFormatter.ofPattern("dd MMM", Locale.getDefault())
+        val s = cycleStart.format(formatter)
+        val e = cycleEnd.format(formatter)
         return "$s – $e"
     }
 

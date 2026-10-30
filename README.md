@@ -1,16 +1,16 @@
-# Expense Tracker (v1.2.0)
+# Expense Tracker (v1.2.1)
 
 A 100% offline Android expense tracker built for Indian banking and UPI workflows. It automatically captures transactions from bank SMS and UPI app notifications on your phone, categorizes them with an on-device intelligence engine, and stores everything locally.
 
 The app declares **no `INTERNET` permission**—your financial data cannot leave your device.
 
-`Package: com.expensetracker.offline` · `App ID: com.srinand.expensetracker.offline` · `Version: 1.2.0` · `Min SDK 26 (Android 8.0+)` · `Target / Compile SDK 36`
+`Package: com.expensetracker.offline` · `App ID: com.srinand.expensetracker.offline` · `Version: 1.2.1` · `Min SDK 26 (Android 8.0+)` · `Target / Compile SDK 36`
 
 ---
 
 ## Quick Install (APK)
 
-1. **Download the APK** from the [Releases](https://github.com/gamehackerever/app_expense_tracker/releases) page (`ExpenseTracker-v1.2.0.apk` / `app-release.apk`) and tap to open it.
+1. **Download the APK** from the [Releases](https://github.com/gamehackerever/app_expense_tracker/releases) page (`ExpenseTracker-v1.2.1.apk` / `app-release.apk`) and tap to open it.
 2. **If Google Play Protect shows *"App scan recommended"*:** tap **Scan app**. Play Protect will scan the APK, verify that it is safe, and prompt you to tap **Install**.
 3. **Open Expense Tracker** and complete the quick 2-step setup (choose **Automatic Hands-Free Tracking** or **Manual Mode**, and optionally set a monthly budget).
 
@@ -30,7 +30,7 @@ Need help with Android 13+ *"Restricted settings"* (for live UPI notifications) 
 
 ---
 
-## Key Features in v1.2.0
+## Key Features in v1.2.1
 
 * **Hands-Free Auto-Capture**:
   * **Bank SMS Interceptor (`SmsCaptureReceiver`)**: Reads incoming bank debit/credit alerts and updates account balances offline.
@@ -58,7 +58,8 @@ Need help with Android 13+ *"Restricted settings"* (for live UPI notifications) 
 | `RECEIVE_SMS`, `READ_SMS` | Read incoming bank transaction SMS and scan past SMS history | Only for automatic SMS capture |
 | Notification Listener Access | Capture real-time UPI/bank app payment notifications | Optional (for live UPI app alerts) |
 | `POST_NOTIFICATIONS` | Daily digest, low-balance alerts, and bill reminders | Optional |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Keep background capture active without OS sleep restrictions | Recommended for auto-capture |
+
+On some Android devices, allowing background activity in the system's battery settings can improve capture reliability. This is optional and is not an app permission.
 
 ---
 
@@ -104,4 +105,3 @@ app/src/main/java/com/expensetracker/offline/
 ## License
 
 This project is licensed under the [MIT License](LICENSE) - see the [LICENSE](LICENSE) file for details.
-

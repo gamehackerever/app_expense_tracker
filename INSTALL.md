@@ -1,4 +1,4 @@
-# Installation & Setup Guide (v1.2.0)
+# Installation & Setup Guide (v1.2.1)
 
 Expense Tracker is **100% offline** (it has no `INTERNET` permission, so your data never leaves your phone). Because you download the APK directly from GitHub Releases instead of the Play Store, Android may ask you to confirm the install.
 
@@ -9,7 +9,7 @@ Expense Tracker is **100% offline** (it has no `INTERNET` permission, so your da
 ## Quick Install (Takes ~60 Seconds)
 
 ### 1. Download & Open the APK
-1. Download the latest APK (`ExpenseTracker-v1.2.0.apk` or `app-release.apk`) from the [Releases](https://github.com/gamehackerever/app_expense_tracker/releases) page.
+1. Download the latest APK (`ExpenseTracker-v1.2.1.apk` or `app-release.apk`) from the [Releases](https://github.com/gamehackerever/app_expense_tracker/releases) page.
 2. Tap the downloaded file to open it.
 3. If your browser or file manager asks for permission to install apps, tap **Settings** → turn on **Allow from this source**, then press back.
 
@@ -57,7 +57,7 @@ Google occasionally updates Play Protect rules for apps that use SMS permissions
   3. Install the Expense Tracker APK, then **turn Play Protect back on immediately**.
 
 ### Keeping Background Auto-Capture Reliable (Battery Settings)
-During setup, tap **Allow Background Activity** when prompted so Android sets Expense Tracker to **Unrestricted** battery use. If your phone brand still delays background alerts, check these quick brand settings:
+If Android delays background alerts, open **App Info → Battery** and choose **Unrestricted** or **Allow background activity** if your device offers that option. This is optional and varies by phone brand:
 * **Samsung (One UI):** *App Info → Battery → Unrestricted*, and ensure the app is not in *Settings → Battery → Background usage limits → Deep sleeping apps*.
 * **Xiaomi / Redmi / POCO (HyperOS / MIUI):** *App Info → Battery saver → No restrictions*, and enable **Autostart**.
 * **OnePlus / Oppo / Realme (OxygenOS / ColorOS):** *App Info → Battery usage → Allow background activity*.
