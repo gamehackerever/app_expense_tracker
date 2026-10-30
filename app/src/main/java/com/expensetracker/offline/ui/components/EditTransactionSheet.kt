@@ -40,11 +40,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.dao.AccountInfo
 import com.expensetracker.offline.data.local.entity.TransactionEntity
+import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.data.repository.CustomBudget
 import com.expensetracker.offline.ui.dashboard.BudgetPickerRow
 import com.expensetracker.offline.ui.theme.AppRadius
+import com.expensetracker.offline.util.ImportedSource
 import com.expensetracker.offline.util.NecessityManager
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -79,6 +81,7 @@ fun EditTransactionSheet(
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    var showOriginalMessage by rememberSaveable(transaction.id) { mutableStateOf(false) }
     var selectedBudgetId by remember { mutableStateOf(transaction.budgetId) }
     val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
@@ -298,6 +301,35 @@ fun EditTransactionSheet(
                         }
                     }
                 )
+
+                val importedFrom = ImportedSource.shortLabel(transaction.rawContent)
+                val sourceDescription = when {
+                    importedFrom != null -> "Statement import · $importedFrom"
+                    transaction.source == TransactionSource.SMS -> "Captured from bank SMS"
+                    transaction.source == TransactionSource.NOTIFICATION -> "Captured from payment notification"
+                    transaction.source == TransactionSource.MERGED -> "Matched SMS and payment notification"
+                    else -> "Manually entered"
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(sourceDescription, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (transaction.rawContent.isNotBlank() && transaction.rawContent != "Manual Entry" && importedFrom == null) {
+                        TextButton(
+                            onClick = { showOriginalMessage = !showOriginalMessage },
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text(if (showOriginalMessage) "Hide original message" else "View original message", fontSize = 12.sp)
+                        }
+                        if (showOriginalMessage) {
+                            Text(
+                                transaction.rawContent,
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
 
                 AnimatedVisibility(
                     visible = suggestedSettlementName != null && suggestedSettlementAmount != null && onSettleSuggested != null,
@@ -719,7 +751,8 @@ fun EditTransactionSheet(
                             excludeFromSpend = excludeFromSpend,
                             budgetId = selectedBudgetId,
                             timestamp = transactionDateMillis,
-                            note = null,
+                            // Editing a transaction must not silently erase its user note/details.
+                            note = note.trim().ifBlank { null },
                             itemsSummary = itemsSummary.trim().ifBlank { null },
                             receiptImageUri = receiptImageUri,
                             bankName = editedBankName,

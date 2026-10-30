@@ -761,13 +761,32 @@ fun AccountsDialog(
                 OutlinedTextField(
                     value = balanceStr,
                     onValueChange = { balanceStr = it.filter { c -> c.isDigit() || c == '.' }.take(12) },
-                    label = { Text("Current Balance (₹)") },
+                    label = { Text("Balance shown by your bank (₹)") },
                     placeholder = { Text("0.00") },
                     singleLine = true,
                     shape = RoundedCornerShape(AppRadius.small),
                     colors = sheetFieldColors(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
+                )
+                val enteredBalancePaise = balanceStr.trim().replace(",", "").toBigDecimalOrNull()
+                    ?.movePointRight(2)?.setScale(0, java.math.RoundingMode.HALF_UP)?.longValueExact()
+                val recordedBalancePaise = targetAccount.latestBalance
+                if (enteredBalancePaise != null && recordedBalancePaise != null) {
+                    val difference = enteredBalancePaise - recordedBalancePaise
+                    val sign = if (difference > 0L) "+" else if (difference < 0L) "−" else ""
+                    val differenceText = String.format(Locale.US, "₹%.2f", kotlin.math.abs(difference) / 100.0)
+                    Text(
+                        text = if (difference == 0L) "Matches the latest balance recorded in Expense Tracker."
+                        else "Difference from the app's recorded balance: $sign$differenceText.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    text = "Saving records a balance checkpoint for this account; it does not add income or spending.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
