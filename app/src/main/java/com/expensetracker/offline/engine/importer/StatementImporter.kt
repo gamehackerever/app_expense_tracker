@@ -178,27 +178,45 @@ class StatementImporter(private val context: Context, private val database: AppD
         return when {
             lower.endsWith(".pdf") || mime == "application/pdf" -> open().use { extractPdfText(it) }
             lower.endsWith(".zip") || mime == "application/zip" -> open().use { readZip(it) }
-            else -> open().use { it.readBytes().take(MAX_BYTES).toByteArray().toString(Charsets.UTF_8) }
+            else -> open().use { readBounded(it, MAX_BYTES).toString(Charsets.UTF_8) }
         }
     }
 
     /** Google Takeout zip: use the Google Pay activity files (and any CSV), ignore everything else. */
     private fun readZip(input: InputStream): String {
         val sb = StringBuilder()
+        var totalBytes = 0
         ZipInputStream(input).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
                 val n = entry.name.lowercase()
                 val wanted = !entry.isDirectory && (n.endsWith(".csv") ||
                     ((n.endsWith(".html") || n.endsWith(".json")) && (n.contains("google pay") || n.contains("gpay") || n.contains("my activity"))))
-                if (wanted && sb.length < MAX_BYTES) {
-                    sb.append(zip.readBytes().toString(Charsets.UTF_8)).append('\n')
+                if (wanted && totalBytes < MAX_BYTES) {
+                    val bytes = readBounded(zip, MAX_BYTES - totalBytes)
+                    totalBytes += bytes.size
+                    sb.append(bytes.toString(Charsets.UTF_8)).append('\n')
                 }
                 zip.closeEntry()
                 entry = zip.nextEntry
             }
         }
         return sb.toString()
+    }
+
+    /** Reads at most [maxBytes]; calling readBytes() before truncating can exhaust memory on huge files. */
+    private fun readBounded(input: InputStream, maxBytes: Int): ByteArray {
+        val output = java.io.ByteArrayOutputStream(minOf(maxBytes, 8 * 1024))
+        val buffer = ByteArray(8 * 1024)
+        var remaining = maxBytes
+        while (remaining > 0) {
+            val read = input.read(buffer, 0, minOf(buffer.size, remaining))
+            if (read < 0) break
+            if (read == 0) continue
+            output.write(buffer, 0, read)
+            remaining -= read
+        }
+        return output.toByteArray()
     }
 
     /** Uses PDFBox-Android through reflection so the app still builds (and the rest still works) without it. */

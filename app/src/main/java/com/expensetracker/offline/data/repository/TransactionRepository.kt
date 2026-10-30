@@ -921,24 +921,25 @@ class TransactionRepository(
 
         var totalInserted = 0
         val indexed = transactions.mapIndexed { idx, txn -> idx to txn }.sortedBy { it.second.timestamp }
+        // Compare against the database state at the start of this import, not against rows earlier in
+        // the same file. Two identical statement rows can be two distinct purchases; on a repeated
+        // import, the persisted multiplicity below still prevents adding them again.
+        val existingRows = transactionDao.getTransactionsInRangeSync(
+            indexed.first().second.timestamp - 1000L,
+            indexed.last().second.timestamp + 1000L
+        )
+        val existingCounts = HashMap<TxnDedupeKey, Int>(existingRows.size * 2)
+        for (e in existingRows) {
+            val key = TxnDedupeKey(
+                epochSecond = Math.floorDiv(e.timestamp, 1000L),
+                amount = e.amount,
+                type = e.type,
+                payee = e.payee
+            )
+            existingCounts[key] = (existingCounts[key] ?: 0) + 1
+        }
         for (chunk in indexed.chunked(500)) {
-            val minTime = chunk.first().second.timestamp - 1000L
-            val maxTime = chunk.last().second.timestamp + 1000L
-
             val chunkInserted = database.withTransaction {
-                val existing = transactionDao.getTransactionsInRangeSync(minTime, maxTime)
-                val existingKeys = HashSet<TxnDedupeKey>(existing.size * 2)
-                for (e in existing) {
-                    existingKeys.add(
-                        TxnDedupeKey(
-                            epochSecond = Math.floorDiv(e.timestamp, 1000L),
-                            amount = e.amount,
-                            type = e.type,
-                            payee = e.payee
-                        )
-                    )
-                }
-
                 val freshPairs = chunk.filter { (_, t) ->
                     val key = TxnDedupeKey(
                         epochSecond = Math.floorDiv(t.timestamp, 1000L),
@@ -946,7 +947,13 @@ class TransactionRepository(
                         type = t.type,
                         payee = t.payee
                     )
-                    existingKeys.add(key)
+                    val existingCount = existingCounts[key] ?: 0
+                    if (existingCount > 0) {
+                        existingCounts[key] = existingCount - 1
+                        false
+                    } else {
+                        true
+                    }
                 }
 
                 if (freshPairs.isNotEmpty()) {
