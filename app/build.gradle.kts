@@ -18,6 +18,9 @@ android {
     namespace = "com.expensetracker.offline"
     compileSdk = 36
 
+    // MigrationTestHelper loads exported Room schemas from the instrumentation APK's assets.
+    sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
+
     defaultConfig {
         applicationId = "com.srinand.expensetracker.offline"
         minSdk = 26
@@ -104,6 +107,7 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.room.testing)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
