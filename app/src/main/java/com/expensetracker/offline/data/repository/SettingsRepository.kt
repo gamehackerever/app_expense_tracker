@@ -8,7 +8,9 @@ data class CreditCardConfig(
     val isCreditCard: Boolean = true,
     val creditLimitPaise: Long = 0L, // 0 = not set by the user (no utilisation % shown)
     val statementDay: Int = 15,
-    val dueDay: Int = 5
+    val dueDay: Int = 5,
+    /** Comma-separated names this card shows up as when you pay its bill (e.g. in GPay / UPI). */
+    val payeeAliases: String = ""
 )
 
 class SettingsRepository(context: Context) {
@@ -141,6 +143,34 @@ class SettingsRepository(context: Context) {
         get() = prefs.getBoolean(KEY_DAILY_DIGEST_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_DAILY_DIGEST_ENABLED, value).apply()
 
+    /** Evening nudge (folded into the daily digest) when captured transactions are waiting in Review. */
+    var reviewRemindersEnabled: Boolean
+        get() = prefs.getBoolean("key_review_reminders_enabled", true)
+        set(value) = prefs.edit().putBoolean("key_review_reminders_enabled", value).apply()
+
+    // ── Split people linked to phone contacts (name -> digits with country code) ─────────────
+
+    fun linkContact(name: String, rawPhone: String) {
+        val digits = rawPhone.filter { it.isDigit() }
+        val phone = when {
+            digits.length == 10 -> "91$digits"          // bare Indian mobile number
+            digits.length == 11 && digits.startsWith("0") -> "91${digits.drop(1)}"
+            else -> digits
+        }
+        if (name.isBlank() || phone.length < 8) return
+        val obj = try { org.json.JSONObject(prefs.getString("key_contact_links_json", "{}") ?: "{}") }
+                  catch (_: Exception) { org.json.JSONObject() }
+        obj.put(name.trim().lowercase(), phone)
+        prefs.edit().putString("key_contact_links_json", obj.toString()).apply()
+    }
+
+    fun getLinkedPhone(name: String): String? = try {
+        org.json.JSONObject(prefs.getString("key_contact_links_json", "{}") ?: "{}")
+            .optString(name.trim().lowercase(), "").takeIf { it.isNotBlank() }
+    } catch (_: Exception) {
+        null
+    }
+
     var billRemindersEnabled: Boolean
         get() = prefs.getBoolean(KEY_BILL_REMINDERS_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_BILL_REMINDERS_ENABLED, value).apply()
@@ -179,6 +209,34 @@ class SettingsRepository(context: Context) {
     fun setMerchantAlias(oldPayee: String, newPayee: String) {
         prefs.edit().putString("$MERCHANT_ALIAS_PREFIX${oldPayee.trim().lowercase()}", newPayee.trim()).apply()
     }
+
+    /** Recurring-payment keys (see RecurringPaymentDetector.groupKey) the user marked "not recurring". */
+    var hiddenRecurringKeys: Set<String>
+        get() = prefs.getStringSet(KEY_HIDDEN_RECURRING, emptySet())?.toSet() ?: emptySet()
+        set(value) = prefs.edit().putStringSet(KEY_HIDDEN_RECURRING, value.toSet()).apply()
+
+    /** Categories left out of (or, in "only" mode, singled out in) the dashboard's spend breakdown. */
+    var spendLensCategories: Set<String>
+        get() = prefs.getStringSet(KEY_SPEND_LENS_CATEGORIES, emptySet())?.toSet() ?: emptySet()
+        set(value) = prefs.edit().putStringSet(KEY_SPEND_LENS_CATEGORIES, value.toSet()).apply()
+
+    /** Whether the spend breakdown card is pinned to the dashboard. Off by default: it opens on demand from the list header. */
+    var spendLensPinned: Boolean
+        get() = prefs.getBoolean("key_spend_lens_pinned", false)
+        set(value) = prefs.edit().putBoolean("key_spend_lens_pinned", value).apply()
+
+    /** true = "only these categories", false = "everything except these categories". */
+    var spendLensOnlyMode: Boolean
+        get() = prefs.getBoolean(KEY_SPEND_LENS_ONLY, false)
+        set(value) = prefs.edit().putBoolean(KEY_SPEND_LENS_ONLY, value).apply()
+
+    /** When the heavy startup repair pass last finished, and with which HEAL_VERSION. */
+    var lastHealAt: Long
+        get() = prefs.getLong("key_last_heal_at", 0L)
+        set(value) = prefs.edit().putLong("key_last_heal_at", value).apply()
+    var healVersion: Int
+        get() = prefs.getInt("key_heal_version", -1)
+        set(value) = prefs.edit().putInt("key_heal_version", value).apply()
 
     var lastImportedTxnIds: List<Long>
         get() = prefs.getString(KEY_LAST_SCAN_TXNS, "")?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
@@ -491,7 +549,8 @@ class SettingsRepository(context: Context) {
                     isCreditCard = item.optBoolean("isCc", true),
                     creditLimitPaise = item.optLong("limit", 0L),
                     statementDay = item.optInt("stmtDay", 15).coerceIn(1, 28),
-                    dueDay = item.optInt("dueDay", 5).coerceIn(1, 28)
+                    dueDay = item.optInt("dueDay", 5).coerceIn(1, 28),
+                    payeeAliases = item.optString("aliases", "")
                 )
             }
             map
@@ -537,10 +596,69 @@ class SettingsRepository(context: Context) {
                 put("limit", c.creditLimitPaise)
                 put("stmtDay", c.statementDay.coerceIn(1, 28))
                 put("dueDay", c.dueDay.coerceIn(1, 28))
+                put("aliases", c.payeeAliases)
             })
         }
         prefs.edit().putString(KEY_CREDIT_CARD_CONFIGS_JSON, obj.toString()).apply()
     }
+
+    /**
+     * Lower-case payee fragments that identify a payment to one of the user's own cards:
+     * the names they typed as aliases plus each card's bank name. Matched against the PAYEE only.
+     */
+    fun cardPayeeHints(): List<String> {
+        val out = linkedSetOf<String>()
+        getCreditCardConfigs().values.forEach { c ->
+            if (!c.isCreditCard) return@forEach
+            c.payeeAliases.split(',', ';', '\n')
+                .map { it.trim().lowercase() }
+                .filter { it.length >= 3 }
+                .forEach { out.add(it) }
+            val bank = c.accountKey.substringBefore('|').removeSuffix(" cc").trim()
+            if (bank.length >= 4) out.add(bank)
+        }
+        return out.toList()
+    }
+
+    // ── One-off budget for a single billing cycle (unforeseen expenses) ──────────────────────
+    // Keyed by the cycle's start time, so it expires on its own when the next cycle begins.
+
+    fun getBudgetOverride(cycleStartMillis: Long): Long? = try {
+        val obj = org.json.JSONObject(prefs.getString("budget_overrides_json", "{}") ?: "{}")
+        val key = cycleStartMillis.toString()
+        if (obj.has(key)) obj.getLong(key).takeIf { it > 0L } else null
+    } catch (_: Exception) {
+        null
+    }
+
+    /** @param rupees null (or <= 0) clears the override. */
+    fun setBudgetOverride(cycleStartMillis: Long, rupees: Long?) {
+        val obj = try {
+            org.json.JSONObject(prefs.getString("budget_overrides_json", "{}") ?: "{}")
+        } catch (_: Exception) {
+            org.json.JSONObject()
+        }
+        val key = cycleStartMillis.toString()
+        if (rupees == null || rupees <= 0L) obj.remove(key) else obj.put(key, rupees)
+        // Keep the store tiny: only the 24 most recent cycles matter.
+        obj.keys().asSequence().toList()
+            .sortedBy { it.toLongOrNull() ?: 0L }
+            .dropLast(24)
+            .forEach { obj.remove(it) }
+        prefs.edit().putString("budget_overrides_json", obj.toString()).apply()
+    }
+
+    private fun currentCycleStart(): Long =
+        com.expensetracker.offline.util.BillingCycleHelper.getCycleRange(startDayOfMonth).first
+
+    /** The one-off budget for the cycle we are in right now, if the user set one. */
+    fun currentCycleBudgetOverride(): Long? = getBudgetOverride(currentCycleStart())
+
+    fun setCurrentCycleBudgetOverride(rupees: Long?) = setBudgetOverride(currentCycleStart(), rupees)
+
+    /** What the dashboard should measure against: this cycle's one-off budget, else the usual monthly budget. */
+    val effectiveMonthlyBudget: Long
+        get() = currentCycleBudgetOverride() ?: monthlyBudget
 
     /** Latest "Avl Lmt" seen in an SMS for a card (paise + SMS time). Older SMS never overwrite newer ones. */
     fun recordCardAvailableLimit(bankName: String, accountNumber: String?, limitPaise: Long, timestamp: Long) {
@@ -601,6 +719,9 @@ class SettingsRepository(context: Context) {
         const val KEY_APP_THEME_MODE = "key_app_theme_mode"
         const val KEY_MY_UPI_VPA = "key_my_upi_vpa"
         const val KEY_CUSTOM_CATEGORIES = "key_custom_categories"
+        const val KEY_HIDDEN_RECURRING = "key_hidden_recurring"
+        const val KEY_SPEND_LENS_CATEGORIES = "key_spend_lens_categories"
+        const val KEY_SPEND_LENS_ONLY = "key_spend_lens_only"
         const val KEY_LAST_SCAN_TXNS = "key_last_scan_txns"
         const val KEY_LAST_SCAN_REVIEWS = "key_last_scan_reviews"
         const val KEY_PENDING_DELETE_TXN_IDS = "key_pending_delete_txn_ids"

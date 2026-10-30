@@ -330,6 +330,60 @@ class TransactionRepository(
         refreshWidget()
     }
 
+    /**
+     * International card alerts only give the foreign amount, so the parser books an estimate. When this card's
+     * previous available limit is known, "previous limit - new limit" is the exact INR the bank charged (including
+     * its markup and GST), so use that instead, but only if it is close to the estimate. A payment or an
+     * unseen spend in between would otherwise produce a nonsense difference.
+     */
+    private fun resolveForeignAmount(parsed: com.expensetracker.offline.engine.parser.ParsedTransaction, timestamp: Long): Long? {
+        val estimate = parsed.amount ?: return null
+        if (!parsed.amountIsApproximate) return estimate
+        val bank = parsed.bankName
+        val newLimit = parsed.availableLimit
+        if (parsed.accountType != "CREDIT_CARD" || bank == null || newLimit == null) return estimate
+        val previous = settingsRepo?.getCardAvailableLimit(bank, parsed.accountNumber) ?: return estimate
+        if (previous.second >= timestamp) return estimate
+        val delta = previous.first - newLimit
+        return if (delta >= estimate * 7 / 10 && delta <= estimate * 15 / 10) delta else estimate
+    }
+
+    /** Tags [ids] to a custom budget (and keeps them out of the monthly total if that budget says so). */
+    suspend fun tagToBudget(ids: List<Long>, budgetId: String, excludeFromMonthly: Boolean) {
+        if (ids.isEmpty()) return
+        ids.chunked(500).forEach { transactionDao.tagToBudget(it, budgetId, if (excludeFromMonthly) 1 else 0) }
+        refreshWidget()
+    }
+
+    /** Removes the budget tag from [ids]; [restoreCount] puts them back into the monthly total. */
+    suspend fun untagFromBudget(ids: List<Long>, restoreCount: Boolean) {
+        if (ids.isEmpty()) return
+        ids.chunked(500).forEach { transactionDao.untagFromBudget(it, if (restoreCount) 1 else 0) }
+        refreshWidget()
+    }
+
+    suspend fun budgetIdsOf(ids: List<Long>): List<String> =
+        ids.chunked(500).flatMap { transactionDao.budgetIdsOf(it) }.distinct()
+
+    suspend fun clearBudget(budgetId: String, restoreCount: Boolean) {
+        transactionDao.clearBudget(budgetId, if (restoreCount) 1 else 0)
+        refreshWidget()
+    }
+
+    suspend fun setBudgetExclusion(budgetId: String, exclude: Boolean) {
+        transactionDao.setBudgetExclusion(budgetId, if (exclude) 1 else 0)
+        refreshWidget()
+    }
+
+    /** Categorises all uncategorised spends to [payee] at once and remembers it for future payments. */
+    suspend fun categorizePayee(payee: String, category: String): Int {
+        if (category.isBlank() || category.equals("Uncategorized", ignoreCase = true)) return 0
+        val changed = transactionDao.categorizeUncategorizedByPayee(payee, category)
+        learnCategoryRule(payee, category)
+        refreshWidget()
+        return changed
+    }
+
     suspend fun learnCategoryRule(payee: String, category: String) {
         if (CategoryClassifier.isGenericPayee(payee)) return
         val pattern = payee.trim().lowercase()
@@ -381,6 +435,15 @@ class TransactionRepository(
             }
             CategoryClassifier.clearCache()
 
+            // The heavy repair pass re-parses stored SMS, so it must not run on every launch. It runs after an app
+            // update (a full pass, so parser/categoriser improvements reach old rows) and then at most every 20 min,
+            // looking only at recent or still-uncategorised rows.
+            val healNow = System.currentTimeMillis()
+            val lastHeal = settingsRepo?.lastHealAt ?: 0L
+            val fullPass = (settingsRepo?.healVersion ?: -1) != HEAL_VERSION
+            val healDue = settingsRepo == null || fullPass || healNow - lastHeal > HEAL_INTERVAL_MS
+            val healCutoff = lastHeal - 24L * 3600_000L
+            if (healDue) {
             transactionDao.healFalseCreditCardAccounts()
             transactionDao.normalizeAccountNumbersToLast4()
             reviewItemDao.healFalseCreditCardReviewItems()
@@ -406,15 +469,23 @@ class TransactionRepository(
             val duplicateWindowMs = 12L * 3600_000L
             database.withTransaction {
                 val namedTxns = recentAll.filter { !CategoryClassifier.isGenericPayee(it.payee) }
+                // Amount buckets (per rupee) so each generic row is compared with a handful of rows, not all of them.
+                val namedBuckets = namedTxns.groupBy { it.type to (it.amount / 100L) }
                 val genericSmsIdsToDelete = mutableListOf<Long>()
 
                 for (txn in recentAll) {
                     val currentPayee = txn.payee.trim()
                     val isCurrentGeneric = CategoryClassifier.isGenericPayee(currentPayee)
+                    if (!fullPass && !isCurrentGeneric && txn.timestamp < healCutoff &&
+                        !txn.category.equals("Uncategorized", ignoreCase = true)
+                    ) continue
 
                     // Check if a generic SMS row ("UPI Payment" / "Bank Transfer") is a duplicate of a named transaction
                     if (isCurrentGeneric && txn.source == TransactionSource.SMS) {
-                        val matchingNamed = namedTxns.firstOrNull { named ->
+                        val bucket = txn.amount / 100L
+                        val matchingNamed = (bucket - 1..bucket + 1).asSequence()
+                            .flatMap { namedBuckets[txn.type to it].orEmpty().asSequence() }
+                            .firstOrNull { named ->
                             named.id != txn.id &&
                                 named.type == txn.type &&
                                 (named.amount == txn.amount || kotlin.math.abs(named.amount - txn.amount) <= 99L) &&
@@ -469,6 +540,7 @@ class TransactionRepository(
                         else -> currentPayee
                     }
 
+                    val isStillGeneric = CategoryClassifier.isGenericPayee(healedPayee)
                     val currentCat = txn.category.trim()
                     val trueCat = CategoryClassifier.classifySync(healedPayee, txn.rawContent)
 
@@ -531,6 +603,8 @@ class TransactionRepository(
                 CategoryClassifier.clearCache()
                 refreshWidget()
             }
+            settingsRepo?.let { it.lastHealAt = healNow; it.healVersion = HEAL_VERSION }
+            } // healDue
         }
 
         val recent = transactionDao.getRecentTransactions(500)
@@ -986,7 +1060,7 @@ class TransactionRepository(
         val reviewThreshold = REVIEW_THRESHOLD_PAISE
 
         val result = database.withTransaction {
-            val amount = parsed.amount
+            val amount = resolveForeignAmount(parsed, timestamp)
             val type = parsed.type ?: learnedEval.inferredType
             if (amount == null || amount <= 0L) {
                 if (!parsed.rawText.startsWith("Silent Deduction", ignoreCase = true)) {
@@ -1078,9 +1152,10 @@ class TransactionRepository(
                     CardPaymentReconciler.markBankLeg(transactionDao, amount, timestamp)
                     false
                 }
-                parsed.accountType != "CREDIT_CARD" && type == TransactionType.DEBIT && !parsed.isTransfer &&
-                    CardPaymentReconciler.looksLikeCardBill(parsed.payee, parsed.rawText) ->
-                    CardPaymentReconciler.hasCardCredit(transactionDao, amount, timestamp)
+                parsed.accountType != "CREDIT_CARD" && type == TransactionType.DEBIT && !parsed.isTransfer ->
+                    (CardPaymentReconciler.looksLikeCardBill(parsed.payee, parsed.rawText) &&
+                        CardPaymentReconciler.hasCardCredit(transactionDao, amount, timestamp)) ||
+                        CardPaymentReconciler.hasCardPaymentCredit(transactionDao, amount, timestamp)
                 else -> false
             }
 
@@ -1181,6 +1256,10 @@ class TransactionRepository(
 
 
     companion object {
+        /** Bump when the parser/categoriser changes so the next launch repairs old rows once. */
+        private const val HEAL_VERSION = 2
+        private const val HEAL_INTERVAL_MS = 20L * 60_000L
+
         const val REVIEW_THRESHOLD_PAISE = 100_000L
         private const val DEDUPE_WINDOW_MS = 300_000L
         private const val WILDCARD_MATCH_WINDOW_MS = 120_000L
