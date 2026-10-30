@@ -10,6 +10,11 @@ fun HapticFeedback.tick() {
     performHapticFeedback(HapticFeedbackType.TextHandleMove)
 }
 
+/** The one light tick used for every tap, toggle and selection in the app. */
+fun HapticFeedback.tap() {
+    performHapticFeedback(HapticFeedbackType.TextHandleMove)
+}
+
 fun HapticFeedback.click() {
     performHapticFeedback(HapticFeedbackType.TextHandleMove)
 }
