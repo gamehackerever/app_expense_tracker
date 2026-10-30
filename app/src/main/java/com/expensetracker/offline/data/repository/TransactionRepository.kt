@@ -242,7 +242,15 @@ class TransactionRepository(
     suspend fun updateTransaction(transaction: TransactionEntity) {
         database.withTransaction {
             val before = transactionDao.getTransactionById(transaction.id)
-            transactionDao.updateTransaction(transaction)
+            // Recompute the derived account balance from the pre-update contribution so edits
+            // (amount/payee/type) never leave a stale balance behind, mirroring insertTransaction.
+            val effectiveTxn = if (before != null) {
+                val originalNet = if (before.type == TransactionType.DEBIT) -before.amount else before.amount
+                val newNet = if (transaction.type == TransactionType.DEBIT) -transaction.amount else transaction.amount
+                val derivedBalance = before.balance?.plus(newNet - originalNet)
+                transaction.copy(balance = derivedBalance ?: transaction.balance)
+            } else transaction
+            transactionDao.updateTransaction(effectiveTxn)
             setOfNotNull(before?.linkedDebtId, transaction.linkedDebtId).forEach { reconcileDebt(it) }
         }
         if (transaction.rawContent.isNotBlank() && transaction.rawContent != "Manual Entry") {
