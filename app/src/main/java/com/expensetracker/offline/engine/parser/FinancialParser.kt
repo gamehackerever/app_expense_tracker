@@ -39,7 +39,7 @@ object FinancialParser {
 
     // Removed "cr." and "dr." from generic matchers to fix the "Dr. Sharma" bug. Prefer verbs.
     private val CREDIT_PATTERN = Pattern.compile("(?i)\\b(credit|credited|received|refunded|deposited|added|sent you|paid you|transfer(?:red)? from|int\\.pd|interest\\s+credited)\\b")
-    private val DEBIT_PATTERN = Pattern.compile("(?i)\\b(debit|debited|spent|paid(?!\\s+you)|deducted|withdrawn|sent(?!\\s+you)|transfer(?:red)? to|autopay|charged|used\\s+(?:for|at)\\s+(?:a\\s+)?(?:transaction|purchase|payment)|purchase\\s+of|mandate\\s+executed)\\b")
+    private val DEBIT_PATTERN = Pattern.compile("(?i)\\b(debit|debited|spent|paid(?!\\s+you)|deducted|withdrawn|sent(?!\\s+you)|transfer(?:red)? to|autopay|charged|used\\s+(?:for|at)\\s+(?:a\\s+)?(?:transaction|purchase|payment)|purchase\\s+of|mandate\\s+executed|thank\\s+you\\s+for\\s+using\\s+(?:your\\s+)?[A-Za-z0-9 ]{0,30}?card)\\b")
     private val CREDIT_CARD_PATTERN = Pattern.compile("(?i)\\bcredit\\s*(?:card|limit|line|bill)\\b")
     private val CC_ACCOUNT_DETECT_PATTERN = Pattern.compile("(?i)\\b(credit\\s*card|cc\\s+xx|cc\\s+ending|onecard|slice\\s+card|amex|american\\s+express|lazypay|simpl)\\b")
     // NOTE: upi/imps/neft/rtgs are deliberately NOT here. A RuPay credit card used over UPI says
@@ -66,6 +66,10 @@ object FinancialParser {
 
     private val AVAILABLE_LIMIT_VALUE_PATTERN = Pattern.compile("(?i)\\b(?:avl|avail(?:able)?)\\.?\\s*(?:cr(?:edit)?\\.?\\s*)?(?:lmt|limit)\\b[^0-9]{0,14}([0-9][0-9,]*(?:\\.[0-9]{1,2})?)")
     private val BALANCE_SANITIZER_REGEX = BALANCE_PATTERN.toRegex()
+    // "Avl limit INR 38898.03" is what is LEFT on the card after the spend; it must never be read as the amount.
+    private val LIMIT_SANITIZER_REGEX = Regex("(?i)\\b(?:total\\s+)?(?:avl|avail(?:able)?)\\.?\\s*(?:cr(?:edit)?\\.?\\s*)?(?:lmt|limit)\\b[^0-9]{0,14}[0-9][0-9,]*(?:\\.[0-9]{1,2})?")
+    private val FOREIGN_AMOUNT_REGEX = Regex("(?<![A-Za-z])(" + ForeignCurrency.codes.joinToString("|") + ")\\s*[:.]?\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)")
+    private val DOLLAR_AMOUNT_REGEX = Regex("(?<![A-Za-z0-9])(?:US)?\\$\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)")
     private val QUOTED_NOTE_REGEX = Regex("""["“]([^"”\n\r]{2,80})["”]""")
     private val PREFIX_NOTE_REGEX = Regex("""(?i)(?:note\s*[:\-]\s*|for\s+["']?)([^"'\n\r,]+)(?:["']|\s*(?:using|via|upi|ref|$))""")
     private val SYSTEM_NOISE_REGEX = Regex("""(?i)(upi ref|transaction id|paid using|bank account|google pay|\d{10,16})""")
@@ -159,13 +163,33 @@ object FinancialParser {
     private const val PAYEE_TERMINATOR =
         "(?=(?:\\s*\\(|\\s+(?:from|on|using|via|ref|rrn|utr|upi|avl|bal|avail|final|umrn|info|chq|thru|not\\s+you|if\\s+not)|[.,;()]|\\s+-|$))"
 
+    /** "A/c XX123 debited", "your a/c no. XXXX1234 is debited", "Acct XX1 has been credited": the first verb after the user's own account. */
+    private val OWN_ACCOUNT_VERB_PATTERN = Pattern.compile(
+        "(?i)\\b(?:a/?c|acct|account|card)(?:\\b|(?=[xX*\\d]))[^;\\n]{0,45}?\\b(debited|credited)\\b"
+    )
+
+    /** "Rs.250 debited A/cXX1234", "credited to your a/c XX1": the verb written before the account. */
+    private val VERB_THEN_OWN_ACCOUNT_PATTERN = Pattern.compile(
+        "(?i)\\b(debited|credited)\\b(?:\\s+(?:from|to|in|into))?\\s+(?:your\\s+|my\\s+)?(?:a/?c|acct|account|card)(?:\\b|(?=[xX*\\d]))"
+    )
+
+    private val ATM_PATTERN = Pattern.compile(
+        "(?i)\\b(?:atm\\s*(?:wdl|withdrawal|cash|txn)|cash\\s+withdrawal\\s+at\\s+atm|withdrawn\\s+(?:at|from)\\s+atm|nfs\\s*(?:cash|wdl))\\b"
+    )
+
     private val PAYEE_PATTERNS = listOf(
+        // ICICI debit alerts: "...debited for Rs 500.00 on 12-Oct-25; SWIGGY credited. UPI:123"
+        Pattern.compile("(?i);\\s*([A-Za-z0-9@._\\-&'\\s]{2,35}?)\\s+credited\\b"),
+        // "Info: UPI-529012345678-MAIN CANTEEN": skip the channel + reference, keep the merchant
+        Pattern.compile("(?i)\\binfo[:\\s]+(?:upi|imps|neft|rtgs)[-/]\\d{6,}[-/]([A-Za-z0-9@._\\-&'\\s]{2,35}?)$PAYEE_TERMINATOR"),
         Pattern.compile("(?i)(?:^|.*?[\\n:])\\s*([A-Za-z0-9\\s._\\-]{2,35}?)\\s+(?:paid|sent)\\s+you", Pattern.MULTILINE),
         Pattern.compile("(?i)(?:via\\s+upi\\s+to|upi\\s+to|by\\s+upi\\s+to)\\s+([A-Za-z0-9@._\\-\\s]{2,35}?)$PAYEE_TERMINATOR"),
         Pattern.compile("(?i)(?:received(?:\\s+[₹Rs\\d,.]+)?\\s+from)\\s+([A-Za-z0-9@._\\-\\s]{2,35}?)$PAYEE_TERMINATOR"),
         Pattern.compile("(?i)(?:by transfer from|transferred from|transfer from|trf from)\\s+([A-Za-z0-9@._\\-\\s]{2,35}?)$PAYEE_TERMINATOR"),
         Pattern.compile("(?i)by UPI\\s*[:\\-]\\s*([A-Za-z0-9\\s._\\-]{2,35}?)$PAYEE_TERMINATOR"),
         Pattern.compile("(?i)(?:linked to VPA|from VPA|to VPA|vpa[:\\s])\\s*([A-Za-z0-9@._\\-]+)"),
+        // Kotak-style: "Sent Rs.120.00 from Kotak Bank AC X1234 to nidhi@ybl on 12-10-25"
+        Pattern.compile("(?i)\\bsent\\s+(?:inr|rs\\.?|₹)\\s*[0-9,.]+\\s+from\\s+[A-Za-z0-9 ]{2,40}?\\s+to\\s+([A-Za-z0-9@._\\-\\s]{2,35}?)$PAYEE_TERMINATOR"),
         Pattern.compile("(?i)(?:paid|sent)\\s+(?:inr|rs\\.?|₹)?\\s*[0-9,.]*\\s+to\\s+([A-Za-z0-9@._\\-\\s]{2,35}?)$PAYEE_TERMINATOR"),
         Pattern.compile("(?i)(?:you\\s+paid|you\\s+sent)\\s+([A-Za-z0-9@._\\-\\s]{2,35}?)(?=\\s+(?:inr|rs\\.?|₹|[0-9]))"),
         Pattern.compile("(?i)(?:paid to|transferred to|by transfer to|transfer to|trf to|sent to|credited to)\\s+([A-Za-z0-9@._\\-\\s]{2,35}?)$PAYEE_TERMINATOR"),
@@ -178,7 +202,7 @@ object FinancialParser {
 
     // Note: [.,;()] is outside \s+ so "UPI/6284123456/MERCHANT. Final balance" stops cleanly at the period!
     private val UPI_SLASH_PATTERN = Pattern.compile(
-        "(?i)UPI[:/]([A-Za-z0-9/_\\-.\\s]+?)(?=(?:\\s*\\(|\\s+(?:on|using|via|ref|rrn|utr|avl|bal|avail|final)|[.,;()]|\\s+-|$))"
+        "(?i)UPI[:/]([A-Za-z0-9/_\\-.\\s]+?)(?=(?:\\s*\\(|\\s+(?:on|using|via|ref|rrn|utr|avl|bal|avail|final|sms|call|not\\s+you)|[.,;()]|\\s+-|$))"
     )
 
     private val REF_ID_PATTERNS = listOf(
@@ -246,7 +270,11 @@ object FinancialParser {
         val cleanedForPayee = DISCLAIMER_PATTERN.matcher(combinedText).replaceAll("").trim()
 
         val balance = extractBalance(combinedText)
-        val amount = extractAmount(combinedText)
+        val inrAmount = extractAmount(combinedText)
+        // International spend: "USD 2.12 spent on ... Avl limit INR 38898.03" has no INR amount of its own.
+        val foreign = extractForeign(combinedText)
+        val foreignEstimate = if (inrAmount == null && foreign != null) ForeignCurrency.approxInrPaise(foreign.first, foreign.second) else null
+        val amount = inrAmount ?: foreignEstimate
 
         // A message with no monetary amount and no account balance is never a financial transaction
         if ((amount == null || amount <= 0L) && balance == null && !learnedEval.isConfirmedTransaction) {
@@ -265,7 +293,8 @@ object FinancialParser {
         val isRefund = REFUND_FLAG_PATTERN.matcher(combinedText).find()
         val extractedNote = extractGPayNote(rawText = rawText, title = title)
         val note = when {
-            extractedNote != null -> extractedNote
+            extractedNote != null && foreign == null -> extractedNote
+            foreign != null -> "International · ${foreign.first} ${foreign.second}"
             isRefund && type == TransactionType.CREDIT -> "Refund / Cashback"
             else -> null
         }
@@ -315,7 +344,10 @@ object FinancialParser {
             isTransfer = isTransferFlag,
             excludeFromSpend = isCcPayment || isRefund || isSelfTransfer,
             confidence = if (type != null && amount != null) 1.0f else 0.5f,
-            availableLimit = if (isCreditCard) extractAvailableLimit(combinedText) else null
+            availableLimit = if (isCreditCard) extractAvailableLimit(combinedText) else null,
+            foreignCurrency = foreign?.first,
+            foreignAmountText = foreign?.second,
+            amountIsApproximate = foreignEstimate != null
         )
     }
 
@@ -387,7 +419,7 @@ object FinancialParser {
     }
 
     private fun extractAmount(text: String): Long? {
-        val sanitized = text.replace(BALANCE_SANITIZER_REGEX, "")
+        val sanitized = text.replace(BALANCE_SANITIZER_REGEX, "").replace(LIMIT_SANITIZER_REGEX, "")
         for (pattern in AMOUNT_PATTERNS) {
             val matcher = pattern.matcher(sanitized)
             if (matcher.find()) {
@@ -398,6 +430,14 @@ object FinancialParser {
                 if (parsed != null && parsed > 0L) return parsed
             }
         }
+        return null
+    }
+
+    /** (currency code, amount text) of a foreign-currency amount such as "USD 2.12" or "$2.12", if any. */
+    private fun extractForeign(text: String): Pair<String, String>? {
+        val sanitized = text.replace(BALANCE_SANITIZER_REGEX, "").replace(LIMIT_SANITIZER_REGEX, "")
+        FOREIGN_AMOUNT_REGEX.find(sanitized)?.let { return it.groupValues[1].uppercase() to it.groupValues[2] }
+        DOLLAR_AMOUNT_REGEX.find(sanitized)?.let { return "USD" to it.groupValues[1] }
         return null
     }
 
@@ -413,6 +453,7 @@ object FinancialParser {
     }
 
     private fun extractPayee(text: String, title: String?, type: TransactionType): String? {
+        if (type == TransactionType.DEBIT && ATM_PATTERN.matcher(text).find()) return "ATM Withdrawal"
         for (pattern in PAYEE_PATTERNS) {
             val matcher = pattern.matcher(text)
             while (matcher.find()) {
@@ -564,6 +605,25 @@ object FinancialParser {
         return when {
             hasCredit && !hasDebit -> TransactionType.CREDIT
             hasDebit && !hasCredit -> TransactionType.DEBIT
+            // Both verbs present ("Acct XX123 debited for Rs 500; SWIGGY credited", IMPS/NEFT alerts):
+            // the verb that belongs to the user's own account decides.
+            hasCredit && hasDebit -> {
+                // Whichever own-account phrasing appears first in the text wins.
+                val after = OWN_ACCOUNT_VERB_PATTERN.matcher(sanitized)
+                val before = VERB_THEN_OWN_ACCOUNT_PATTERN.matcher(sanitized)
+                val afterAt = if (after.find()) after.start() else Int.MAX_VALUE
+                val beforeAt = if (before.find()) before.start() else Int.MAX_VALUE
+                val verb = when {
+                    afterAt == Int.MAX_VALUE && beforeAt == Int.MAX_VALUE -> null
+                    afterAt <= beforeAt -> after.group(1)
+                    else -> before.group(1)
+                }
+                when {
+                    verb == null -> null
+                    verb.lowercase(Locale.ROOT).startsWith("debit") -> TransactionType.DEBIT
+                    else -> TransactionType.CREDIT
+                }
+            }
             else -> null
         }
     }

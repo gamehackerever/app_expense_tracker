@@ -25,7 +25,12 @@ data class ParsedTransaction(
     val rejectReason: String? = null,
     val parserVersion: Int = 2,
     /** Credit cards only: "Avl Lmt" from the SMS, in paise. */
-    val availableLimit: Long? = null
+    val availableLimit: Long? = null,
+    /** International spends: the currency/amount as written in the SMS, e.g. "USD" / "2.12". */
+    val foreignCurrency: String? = null,
+    val foreignAmountText: String? = null,
+    /** True when [amount] is an estimate converted from [foreignCurrency] rather than the bank's INR figure. */
+    val amountIsApproximate: Boolean = false
 ) {
     val isFullyParsed: Boolean
         get() = isFinancial && amount != null && amount > 0L && type != null && bankName != null
