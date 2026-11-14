@@ -33,6 +33,17 @@ object FinancialParser {
         "\\bonelink\\.me\\b"
     ).map { Pattern.compile("(?i)$it") }
 
+    // A scheduled mandate is an upcoming commitment, not a completed transaction. Keep this
+    // separate from the generic reject list so completed AutoPay debits remain recognizable.
+    private val UPCOMING_PAYMENT_PATTERNS = listOf(
+        Pattern.compile("(?is)\\bupcoming\\s+(?:(?:upi\\s+)?auto[\\s-]?pay|upi\\s+mandate)\\s+(?:payment|debit)\\b"),
+        Pattern.compile("(?is)\\b(?:upi\\s+)?auto[\\s-]?pay\\b.{0,160}\\b(?:scheduled|upcoming|due\\s+(?:on|by)|will\\s+be\\s+(?:debited|presented|processed)|to\\s+be\\s+(?:presented|processed))\\b"),
+        Pattern.compile("(?is)\\b(?:scheduled|upcoming|due\\s+(?:on|by))\\b.{0,120}\\b(?:upi\\s+)?auto[\\s-]?pay\\b"),
+        Pattern.compile("(?is)\\b(?:upi\\s+)?mandate\\b.{0,160}\\b(?:scheduled|upcoming|due|will\\s+be\\s+(?:debited|presented|processed)|to\\s+be\\s+(?:presented|processed))\\b"),
+        Pattern.compile("(?is)\\b(?:scheduled|upcoming|due\\s+(?:on|by))\\b.{0,120}\\b(?:upi\\s+)?mandate\\b"),
+        Pattern.compile("(?is)\\b(?:upi\\s+)?(?:auto[\\s-]?pay|mandate)\\b.{0,160}\\bensure\\s+sufficient\\s+balance\\b")
+    )
+
     // A reversal puts money back into the account. Messages that are both failed and reversed
     // ("payment failed, amount reversed") are still rejected by REJECT_PATTERNS.
     private val REVERSAL_PATTERN = Pattern.compile("(?i)\\breversed\\b")
@@ -236,6 +247,10 @@ object FinancialParser {
             rawText
         }
 
+        if (isUpcomingPaymentReminder(combinedText)) {
+            return createRejected(rawText, "Scheduled autopay or mandate reminder")
+        }
+
         // 0. Consult SmsPatternLearner for user-approved or user-discarded message templates
         val learnedEval = SmsPatternLearner.evaluate(title, rawText)
         if (learnedEval.isBlockedNonTransaction) {
@@ -349,6 +364,13 @@ object FinancialParser {
             foreignAmountText = foreign?.second,
             amountIsApproximate = foreignEstimate != null
         )
+    }
+
+    /** True when text describes a future AutoPay/mandate debit rather than a completed payment. */
+    fun isUpcomingPaymentReminder(text: String?, title: String? = null): Boolean {
+        val combined = listOfNotNull(title?.takeIf { it.isNotBlank() }, text?.takeIf { it.isNotBlank() })
+            .joinToString(" ")
+        return combined.isNotBlank() && UPCOMING_PAYMENT_PATTERNS.any { it.matcher(combined).find() }
     }
 
     private fun extractAvailableLimit(text: String): Long? {

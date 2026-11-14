@@ -93,6 +93,34 @@ class FinancialParserTest {
     }
 
     @Test
+    fun scheduledAutopaySmsAndUpcomingNotificationAreRejected() {
+        val bankReminder = "Dear SRINAND E K UPI auto pay for SPOTIFY INDIA PVT LTD debit of Rs 69.00 is scheduled on 16/11/2026, .Please ensure sufficient balance in your account.-South Indian Bank."
+        assertFalse(sms(bankReminder, "South Indian Bank").isFinancial)
+
+        val notificationReminder = notif(
+            "Rs 69.00 · scheduled for 16/11/2026",
+            "Upcoming Autopay Payment To Spotify India Pvt"
+        )
+        assertFalse(notificationReminder.isFinancial)
+
+        assertFalse(
+            sms("UPI mandate for Spotify India of Rs 69.00 will be presented on 16/11/2026", "SIBSMS").isFinancial
+        )
+    }
+
+    @Test
+    fun completedAutopayDebitIsStillRecognized() {
+        val p = sms(
+            "UPI AutoPay of Rs 69.00 was debited from A/c XX1234 on 16/11/2026 to Spotify India Pvt Ltd. UPI Ref 123456789012",
+            "SIBSMS"
+        )
+
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(6_900L, p.amount)
+    }
+
+    @Test
     fun promoAndBalanceEnquiryAreRejected() {
         assertFalse(sms("Recharge now Rs 299 plan 28 days validity unlimited data", "JIOINF").isFinancial)
         assertFalse(sms("Your A/c XX1234 balance is Rs 15000.00 as on 05-10-26", "HDFCBK").isFinancial)

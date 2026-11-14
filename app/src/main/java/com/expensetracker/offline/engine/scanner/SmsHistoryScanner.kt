@@ -94,6 +94,7 @@ class SmsHistoryScanner(
                     val address = c.getString(addressCol).orEmpty()
                     val body = c.getString(bodyCol).orEmpty()
                     if (body.isBlank() || !SenderFilter.isAllowedSmsSender(address)) continue
+                    if (FinancialParser.isUpcomingPaymentReminder(body, address)) continue
                     if (!MISSED_MONEY_HINT.containsMatchIn(body) || !MISSED_MOVEMENT_HINT.containsMatchIn(body)) continue
                     if (MISSED_NOISE_HINT.containsMatchIn(body)) continue
 
