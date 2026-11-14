@@ -44,7 +44,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Category
 import com.expensetracker.offline.ui.theme.getCategoryColor
@@ -100,6 +99,7 @@ import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
 import com.expensetracker.offline.util.BillingCycleHelper
+import com.expensetracker.offline.util.countsAsSpend
 import com.expensetracker.offline.util.NecessityItem
 import kotlinx.coroutines.flow.first
 import kotlin.math.ceil
@@ -147,7 +147,7 @@ internal fun TransactionUndoBar(
                     modifier = Modifier.weight(1f)
                 ) {
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.small),
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier.size(40.dp)
                     ) {
@@ -280,12 +280,7 @@ fun ManageCategoriesDialog(
             val key = txn.category.trim().lowercase()
             if (key.isEmpty()) continue
             countByLower[key] = (countByLower[key] ?: 0) + 1
-            if (txn.type == TransactionType.DEBIT &&
-                !txn.excludeFromSpend &&
-                txn.category != "Split Settlement" &&
-                !txn.category.equals("Transfer", ignoreCase = true) &&
-                txn.timestamp >= cycleStartMillis
-            ) {
+            if (txn.countsAsSpend() && txn.timestamp >= cycleStartMillis) {
                 cycleSpendByLower[key] = (cycleSpendByLower[key] ?: 0L) + mySpendShare(item)
             }
         }
@@ -395,7 +390,7 @@ fun ManageCategoriesDialog(
                         ) {
                             SheetHeader(
                                 title = "Categories",
-                                subtitle = "${categoryRows.size} categories · $customCount custom"
+                                subtitle = "${com.expensetracker.offline.util.pluralize(categoryRows.size, "category", "categories")} · $customCount custom"
                             )
 
                             Spacer(modifier = Modifier.height(14.dp))
@@ -410,7 +405,7 @@ fun ManageCategoriesDialog(
                                     Box(contentAlignment = Alignment.BottomEnd) {
                                         if (trimmedInput.isEmpty()) {
                                             Surface(
-                                                shape = RoundedCornerShape(10.dp),
+                                                shape = RoundedCornerShape(AppRadius.small),
                                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
                                                 modifier = Modifier.size(38.dp)
                                             ) {
@@ -967,7 +962,7 @@ private fun CategoryDetailManagementContent(
                 ) {
                     SheetCard(contentPadding = 14.dp, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            "Reassign all ${row.totalTxnCount} transactions and learned auto-categorization rules from \"${row.name}\" into another category:",
+                            "Reassign all ${com.expensetracker.offline.util.pluralize(row.totalTxnCount, "transaction")} and learned auto-categorization rules from \"${row.name}\" into another category:",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 18.sp
@@ -1258,7 +1253,7 @@ fun SelectTargetDialog(
             ),
             keyboardActions = KeyboardActions(onDone = {
                 focusManager.clearFocus()
-                if (isValid) parsedValue?.let(save)
+                if (isValid) parsedValue.let(save)
             }),
             modifier = Modifier.fillMaxWidth(),
             decorationBox = { inner ->
@@ -1675,7 +1670,7 @@ internal fun OnboardingTaskItem(
                         .size(36.dp)
                         .background(
                             color = if (isDone) AppColors.positive.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(AppRadius.small)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1865,7 +1860,7 @@ internal fun ToolbarCell(
             Modifier
                 .fillMaxSize()
                 .padding(3.dp)
-                .clip(RoundedCornerShape(9.dp))
+                .clip(RoundedCornerShape(AppRadius.small))
                 .background(highlight)
         )
         Icon(
@@ -1937,7 +1932,7 @@ internal fun QuickStatCard(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Surface(shape = RoundedCornerShape(AppRadius.small), color = MaterialTheme.colorScheme.surfaceVariant) {
                     AnimatedContent(
                         targetState = icon,
                         transitionSpec = { (scaleIn(spring(stiffness = Spring.StiffnessMediumLow)) + fadeIn()) togetherWith (scaleOut(spring(stiffness = Spring.StiffnessMediumLow)) + fadeOut()) },
@@ -2361,7 +2356,7 @@ internal fun CategoryBadgeTile(
     @Suppress("UNUSED_PARAMETER") iconSize: androidx.compose.ui.unit.Dp = 18.dp
 ) {
     // Single shared glyph: see CategoryAvatar for the icon / initial rules.
-    com.expensetracker.offline.ui.components.CategoryAvatar(category = category, size = size)
+    CategoryAvatar(category = category, size = size)
 }
 
 @Composable
@@ -2641,7 +2636,7 @@ fun CategoryBudgetWarningBanner(
             verticalAlignment = Alignment.Top
         ) {
             Surface(
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(AppRadius.small),
                 color = accentColor.copy(alpha = 0.10f),
                 modifier = Modifier.size(36.dp)
             ) {

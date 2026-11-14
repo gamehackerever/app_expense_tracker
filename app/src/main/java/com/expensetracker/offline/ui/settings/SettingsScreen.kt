@@ -69,7 +69,6 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Restore
@@ -82,7 +81,6 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.TableView
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -149,6 +147,7 @@ import com.expensetracker.offline.engine.backup.SecurePassphraseStore
 import com.expensetracker.offline.engine.scanner.ScanResponse
 import com.expensetracker.offline.engine.scanner.SmsHistoryScanner
 import com.expensetracker.offline.ui.components.AppDialog
+import com.expensetracker.offline.ui.components.AppScreenTopBar
 import com.expensetracker.offline.ui.components.PremiumDropdownField
 import com.expensetracker.offline.ui.components.SheetSegmentedControl
 import com.expensetracker.offline.ui.theme.AppColors
@@ -189,7 +188,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
-    val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
+    val prefs = remember { context.getSharedPreferences(SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE) }
     val app = context.applicationContext as ExpenseTrackerApp
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -257,7 +256,11 @@ fun SettingsScreen(
             is RestoreResult.SuccessRestart -> {
                 isRestoringBackup = true
                 viewModel.refreshAfterRestore()
-                showSnack("Backup restored successfully!")
+                if (result.isLegacyV1) {
+                    showSnack("Backup restored! Note: This was an older unencrypted backup. We recommend creating a new encrypted backup now.")
+                } else {
+                    showSnack("Backup restored successfully!")
+                }
                 Handler(Looper.getMainLooper()).postDelayed({
                     val activity = (context as? android.app.Activity)
                     if (activity != null && !activity.isFinishing) {
@@ -386,8 +389,8 @@ fun SettingsScreen(
     var showMissedSmsDialog by remember { mutableStateOf(false) }
     var statementBusy by remember { mutableStateOf(false) }
     var statementOutcome by remember { mutableStateOf<com.expensetracker.offline.engine.importer.StatementImporter.Outcome?>(null) }
-    val statementPicker = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    val statementPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
             statementBusy = true
@@ -609,28 +612,13 @@ fun SettingsScreen(
             }
         },
         topBar = {
-            Column {
-                TopAppBar(
-                    title = {
-                        Text(
-                            text = settingsPageTitle(openPage),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp,
-                            letterSpacing = (-0.3).sp
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = {
-                            haptic.tap()
-                            if (openPage != null) openPage = null else onBack()
-                        }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-            }
+            AppScreenTopBar(
+                titleContent = { Text(settingsPageTitle(openPage)) },
+                onBack = {
+                    haptic.tap()
+                    if (openPage != null) openPage = null else onBack()
+                }
+            )
         }
     ) { padding ->
         Column(
@@ -1222,7 +1210,7 @@ if (openPage == "capture") {
 
                                 settingsRepo.clearLastScanBatch()
 
-                                showSnack("Scan undone! Removed $count items.")
+                                showSnack("Scan undone! Removed ${com.expensetracker.offline.util.pluralize(count, "item")}.")
                             },
                             enabled = !isScanning,
                             colors = ButtonDefaults.outlinedButtonColors(
@@ -1239,7 +1227,7 @@ if (openPage == "capture") {
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                "Undo Last Scan ($totalBatchCount items)",
+                                "Undo Last Scan (${com.expensetracker.offline.util.pluralize(totalBatchCount, "item")})",
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -1880,7 +1868,7 @@ if (openPage == "health") {
                                     onClick = {
                                         haptic.tap()
                                         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                            data = android.net.Uri.fromParts("package", context.packageName, null)
+                                            data = Uri.fromParts("package", context.packageName, null)
                                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                         }
                                         context.startActivitySafely(intent)
@@ -2179,7 +2167,7 @@ if (openPage == "health") {
                 val a = outcome.analysis
                 var replaceEarlier by remember(a) { mutableStateOf(false) }
                 val importCount = if (replaceEarlier) a.replaceRows.size else a.newRows.size
-                val fmt = remember { java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()) }
+                val fmt = remember { SimpleDateFormat("d MMM yyyy", Locale.getDefault()) }
                 AppDialog(
                     title = a.format.label,
                     onDismiss = { statementOutcome = null },
@@ -2217,7 +2205,7 @@ if (openPage == "health") {
                                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
                                 )
                                 Text(
-                                    (if (r.isDebit) "-" else "+") + "₹" + String.format(java.util.Locale.US, "%,.2f", r.amountPaise / 100.0),
+                                    (if (r.isDebit) "-" else "+") + com.expensetracker.offline.ui.components.CurrencyFormat.withSymbol(r.amountPaise),
                                     fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                                     color = if (r.isDebit) MaterialTheme.colorScheme.onSurface else AppColors.positive
                                 )
@@ -2264,7 +2252,7 @@ if (openPage == "health") {
             onConfirm = {
                 if (!missedList.isNullOrEmpty()) {
                     val text = missedList.joinToString("\n\n") { "${it.sender} · ${it.reason}\n${it.redactedBody}" }
-                    val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                     cm.setPrimaryClip(android.content.ClipData.newPlainText("Missed bank SMS", text))
                     showSnack("Copied ${missedList.size} messages (account numbers and UPI ids hidden)")
                 }
@@ -2285,7 +2273,7 @@ if (openPage == "health") {
                         "These looked like payments but could not be read. Copy them and share to get the pattern added. Account numbers and UPI ids are hidden.",
                         fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    val dateFmt = remember { java.text.SimpleDateFormat("d MMM, h:mm a", java.util.Locale.getDefault()) }
+                    val dateFmt = remember { SimpleDateFormat("d MMM, h:mm a", Locale.getDefault()) }
                     missedList.forEach { m ->
                         Surface(
                             shape = RoundedCornerShape(AppRadius.small),
@@ -2343,7 +2331,7 @@ if (openPage == "health") {
 
                                 val totalFound = result.directImportedCount + result.reviewCount
                                 if (totalFound > 0) {
-                                    showSnack("Imported ${result.directImportedCount} transactions${if (result.reviewCount > 0) ", ${result.reviewCount} to Review." else "."}")
+                                    showSnack("Imported ${com.expensetracker.offline.util.pluralize(result.directImportedCount, "transaction")}${if (result.reviewCount > 0) ", ${result.reviewCount} to Review." else "."}")
                                 } else {
                                     showSnack("Scanned ${result.scannedCount} SMS • No new transactions")
                                 }
@@ -2389,7 +2377,7 @@ if (openPage == "health") {
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            textAlign = TextAlign.Center,
                             color = if (selected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
                         )
@@ -2405,7 +2393,7 @@ if (openPage == "health") {
                 Text(
                     text = if (scanRange == "CYCLE") "Scanning from:\n${BillingCycleHelper.getCycleStartDateFormatted(scanDay.toInt())} to Now"
                     else if (scanRange == "ALL") "Scanning:\nEvery bank message on this phone"
-                    else "Scanning from:\n${java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(scanSinceMillis(scanRange, scanDay.toInt())))} to Now",
+                    else "Scanning from:\n${SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(java.util.Date(scanSinceMillis(scanRange, scanDay.toInt())))} to Now",
                     fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(12.dp), lineHeight = 18.sp
                 )
@@ -2434,11 +2422,11 @@ if (openPage == "health") {
 
 /** Where an inbox scan starts: this billing cycle (adjustable day), a fixed look-back, or the whole inbox. */
 private fun scanSinceMillis(range: String, cycleStartDay: Int): Long {
-    val cal = java.util.Calendar.getInstance()
+    val cal = Calendar.getInstance()
     return when (range) {
-        "3M" -> cal.apply { add(java.util.Calendar.MONTH, -3) }.timeInMillis
-        "6M" -> cal.apply { add(java.util.Calendar.MONTH, -6) }.timeInMillis
-        "1Y" -> cal.apply { add(java.util.Calendar.YEAR, -1) }.timeInMillis
+        "3M" -> cal.apply { add(Calendar.MONTH, -3) }.timeInMillis
+        "6M" -> cal.apply { add(Calendar.MONTH, -6) }.timeInMillis
+        "1Y" -> cal.apply { add(Calendar.YEAR, -1) }.timeInMillis
         "ALL" -> 0L
         else -> BillingCycleHelper.getCycleRange(cycleStartDay).first
     }

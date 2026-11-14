@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -447,7 +446,7 @@ internal fun FixedCostsRow(
         ) {
             Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
-                    shape = RoundedCornerShape(11.dp),
+                    shape = RoundedCornerShape(AppRadius.small),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
                     modifier = Modifier.size(42.dp)
                 ) {

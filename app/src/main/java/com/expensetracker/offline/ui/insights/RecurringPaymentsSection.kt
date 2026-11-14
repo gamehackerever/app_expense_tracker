@@ -1,5 +1,6 @@
 package com.expensetracker.offline.ui.insights
 
+import com.expensetracker.offline.ui.components.CurrencyFormat
 import com.expensetracker.offline.ui.components.quietClickable
 import com.expensetracker.offline.util.tap
 import com.expensetracker.offline.ui.components.ResistantModalBottomSheet
@@ -48,17 +49,16 @@ private const val RECURRING_DAY_MS = 86_400_000L
 private const val UPCOMING_PREVIEW_COUNT = 3
 private const val TENTATIVE_BELOW = 0.6
 
-// Same hues as the Dashboard's private AppColors, so status colors read identically on both screens.
+// Thin alias so status colors read identically on every screen (single source: AppColors).
 private object RecurringColors {
-    val positive @Composable get() = if (isSystemInDarkTheme()) Color(0xFF10B981) else Color(0xFF059669)
-    val warning @Composable get() = if (isSystemInDarkTheme()) Color(0xFFF59E0B) else Color(0xFFD97706)
-    val negative @Composable get() = if (isSystemInDarkTheme()) Color(0xFFEF4444) else Color(0xFFDC2626)
+    val positive @Composable get() = AppColors.positive
+    val warning @Composable get() = AppColors.warning
+    val negative @Composable get() = AppColors.negative
 }
 
 // Uses HapticFeedback.tap() from util/HapticUtil.kt
 
-private fun rupees(value: Long): String =
-    "₹" + String.format(Locale.getDefault(), "%,.0f", value / 100.0)
+private fun rupees(value: Long): String = CurrencyFormat.withSymbol(value, 0)
 
 private fun startOfDayMillis(t: Long): Long = java.util.Calendar.getInstance().apply {
     timeInMillis = t
@@ -134,7 +134,7 @@ private fun RecurringEmptyState(hiddenCount: Int = 0, onManageHidden: (() -> Uni
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                shape = RoundedCornerShape(11.dp),
+                shape = RoundedCornerShape(AppRadius.small),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
                 modifier = Modifier.size(42.dp)
             ) {
@@ -366,7 +366,7 @@ private fun RecurringCompactRow(
 
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Surface(
-            shape = RoundedCornerShape(10.dp),
+            shape = RoundedCornerShape(AppRadius.small),
             color = categoryColor.copy(alpha = 0.12f),
             modifier = Modifier.size(38.dp)
         ) {
@@ -640,7 +640,7 @@ private fun RecurringPaymentCard(
 
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(AppRadius.small),
                     color = categoryColor.copy(alpha = 0.12f),
                     modifier = Modifier.size(44.dp)
                 ) {

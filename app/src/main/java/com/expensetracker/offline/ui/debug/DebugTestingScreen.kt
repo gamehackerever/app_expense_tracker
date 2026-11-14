@@ -12,7 +12,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Cancel
@@ -39,6 +38,7 @@ import com.expensetracker.offline.engine.ml.SmartExpenseEngine
 import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.ui.components.AppDialog
 import com.expensetracker.offline.ui.components.CurrencyFormat
+import com.expensetracker.offline.ui.components.AppScreenTopBar
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
@@ -207,30 +207,13 @@ fun DebugTestingScreen(
             }
         },
         topBar = {
-            Column {
-                TopAppBar(
-                    title = {
-                        Text(
-                            "Offline Engine Testing",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp,
-                            letterSpacing = (-0.3).sp
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = {
-                            haptic.tap()
-                            onBack()
-                        }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.background
-                    )
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-            }
+            AppScreenTopBar(
+                titleContent = { Text("Offline Engine Testing") },
+                onBack = {
+                    haptic.tap()
+                    onBack()
+                }
+            )
         }
     ) { padding ->
         Column(
@@ -597,7 +580,7 @@ private fun MlDiagnosticsCard(
                     modifier = Modifier.weight(1f)
                 ) {
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(AppRadius.small),
                         color = AppColors.positive.copy(alpha = 0.14f),
                         modifier = Modifier.size(36.dp)
                     ) {

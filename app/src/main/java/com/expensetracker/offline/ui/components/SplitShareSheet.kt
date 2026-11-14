@@ -245,7 +245,7 @@ fun MultiSplitShareSheet(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val prefs = remember(context) { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
+    val prefs = remember(context) { context.getSharedPreferences(com.expensetracker.offline.data.repository.SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE) }
     var userPresets by remember { mutableStateOf(SplitPresetManager.loadPresets(prefs)) }
     var showSavePresetDialog by remember { mutableStateOf(false) }
     var newPresetNameInput by remember { mutableStateOf("") }
@@ -337,7 +337,7 @@ fun MultiSplitShareSheet(
                 }
                 if (extracted.isNotEmpty()) {
                     scannedReceiptItems = extracted
-                    Toast.makeText(context, "Found ${extracted.size} items! Tap names under each item to assign.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Found ${com.expensetracker.offline.util.pluralize(extracted.size, "item")}! Tap names under each item to assign.", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(context, "Could not detect priced items on receipt.", Toast.LENGTH_SHORT).show()
                 }
@@ -657,7 +657,7 @@ fun MultiSplitShareSheet(
 
     // Picks one phone number from the system contact picker. The picker hands us read access to just
     // that entry, so no READ_CONTACTS permission is needed.
-    val splitContext = androidx.compose.ui.platform.LocalContext.current
+    val splitContext = LocalContext.current
     val contactPicker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -901,7 +901,7 @@ fun MultiSplitShareSheet(
                                 Box(
                                     modifier = Modifier
                                         .size(36.dp)
-                                        .clip(RoundedCornerShape(10.dp))
+                                        .clip(RoundedCornerShape(AppRadius.small))
                                         .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)),
                                     contentAlignment = Alignment.Center
                                 ) {

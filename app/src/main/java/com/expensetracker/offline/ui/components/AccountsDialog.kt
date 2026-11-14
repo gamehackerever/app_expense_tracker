@@ -89,6 +89,7 @@ import com.expensetracker.offline.ui.dashboard.SafeToSpendBreakdown
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.util.BillingCycleHelper
+import com.expensetracker.offline.util.countsAsSpend
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
@@ -207,7 +208,7 @@ fun AccountsDialog(
                     if (totalCreditCardDebt > 0L) {
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            "Total CC Debt: ₹${String.format(Locale.US, "%,.2f", totalCreditCardDebt / 100.0)}",
+                            "Total CC Debt: ${CurrencyFormat.withSymbol(totalCreditCardDebt)}",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = AppColors.negative
@@ -307,7 +308,7 @@ fun AccountsDialog(
                 val activeAccountInsight = remember(accountBalances, selectedAccount, single) {
                     if (single) accountBalances.first()
                     else accountBalances.firstOrNull {
-                        it.bankName == selectedAccount?.bankName && it.accountNumber == selectedAccount?.accountNumber
+                        it.bankName == selectedAccount?.bankName && it.accountNumber == selectedAccount.accountNumber
                     }
                 }
 
@@ -332,10 +333,7 @@ fun AccountsDialog(
                                 val (stmtStart, stmtEnd) = BillingCycleHelper.getCreditCardCycleRange(ccConfig.statementDay)
                                 transactions.asSequence()
                                     .filter {
-                                        it.type == TransactionType.DEBIT &&
-                                                !it.excludeFromSpend &&
-                                                !it.category.equals("Transfer", ignoreCase = true) &&
-                                                it.category != "Split Settlement" &&
+                                        it.countsAsSpend() &&
                                                 it.bankName == account.bankName &&
                                                 it.accountNumber == account.accountNumber &&
                                                 it.timestamp in stmtStart..stmtEnd
@@ -351,7 +349,8 @@ fun AccountsDialog(
                                 accountNumber = account.accountNumber,
                                 ccConfig = ccConfig,
                                 ccUnbilledPaise = remember(account, ccConfig, ccUnbilledPaise, transactions) {
-                                    ccConfig?.let { usedFromAvailableLimit(settingsRepo, account.bankName, account.accountNumber, it, ccUnbilledPaise) } ?: ccUnbilledPaise
+                                    ccConfig.let { usedFromAvailableLimit(settingsRepo, account.bankName, account.accountNumber, it, ccUnbilledPaise) }
+                                        ?: ccUnbilledPaise
                                 },
                                 onConfigureCc = {
                                     haptic.tap()
@@ -443,7 +442,7 @@ fun AccountsDialog(
                                 )
                             }
                             itemsIndexed(accountBalances, key = { idx, it -> "${it.bankName}|${it.accountNumber ?: "none"}|$idx" }) { _, account ->
-                                val isSelected = selectedAccount?.bankName == account.bankName && selectedAccount?.accountNumber == account.accountNumber
+                                val isSelected = selectedAccount?.bankName == account.bankName && selectedAccount.accountNumber == account.accountNumber
                                 val ccConfig = remember(account, ccConfigVersion) {
                                     settingsRepo.getCreditCardConfig(account.bankName, account.accountNumber)
                                 }
@@ -453,10 +452,7 @@ fun AccountsDialog(
                                         val (stmtStart, stmtEnd) = BillingCycleHelper.getCreditCardCycleRange(ccConfig.statementDay)
                                         transactions.asSequence()
                                             .filter {
-                                                it.type == TransactionType.DEBIT &&
-                                                        !it.excludeFromSpend &&
-                                                        !it.category.equals("Transfer", ignoreCase = true) &&
-                                                        it.category != "Split Settlement" &&
+                                                it.countsAsSpend() &&
                                                         it.bankName == account.bankName &&
                                                         it.accountNumber == account.accountNumber &&
                                                         it.timestamp in stmtStart..stmtEnd
@@ -609,7 +605,7 @@ fun AccountsDialog(
                     OutlinedTextField(
                         value = acctNumInput,
                         onValueChange = { acctNumInput = it.filter { c -> c.isDigit() }.take(4) },
-                        label = { Text("Last 4 Digits (Opt)") },
+                        label = { Text("Last 4 digits (optional)") },
                         placeholder = { Text("1234") },
                         singleLine = true,
                         shape = RoundedCornerShape(AppRadius.small),
@@ -673,7 +669,7 @@ fun AccountsDialog(
                             OutlinedTextField(
                                 value = newCcStmtDay.toString(),
                                 onValueChange = { v -> v.toIntOrNull()?.let { newCcStmtDay = it.coerceIn(1, 28) } },
-                                label = { Text("Statement Day") },
+                                label = { Text("Statement day") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(AppRadius.small),
                                 colors = sheetFieldColors(),
@@ -683,7 +679,7 @@ fun AccountsDialog(
                             OutlinedTextField(
                                 value = newCcDueDay.toString(),
                                 onValueChange = { v -> v.toIntOrNull()?.let { newCcDueDay = it.coerceIn(1, 28) } },
-                                label = { Text("Due Day") },
+                                label = { Text("Due day") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(AppRadius.small),
                                 colors = sheetFieldColors(),
@@ -788,7 +784,7 @@ fun AccountsDialog(
                 if (enteredBalancePaise != null && recordedBalancePaise != null) {
                     val difference = enteredBalancePaise - recordedBalancePaise
                     val sign = if (difference > 0L) "+" else if (difference < 0L) "−" else ""
-                    val differenceText = String.format(Locale.US, "₹%.2f", kotlin.math.abs(difference) / 100.0)
+                    val differenceText = CurrencyFormat.withSymbol(kotlin.math.abs(difference))
                     Text(
                         text = if (difference == 0L) "Matches the latest balance recorded in Expense Tracker."
                         else "Difference from the app's recorded balance: $sign$differenceText.",
@@ -846,7 +842,7 @@ fun AccountsDialog(
                             OutlinedTextField(
                                 value = stmtDay.toString(),
                                 onValueChange = { v -> v.toIntOrNull()?.let { stmtDay = it.coerceIn(1, 28) } },
-                                label = { Text("Stmt Day") },
+                                label = { Text("Statement day") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(AppRadius.small),
                                 colors = sheetFieldColors(),
@@ -856,7 +852,7 @@ fun AccountsDialog(
                             OutlinedTextField(
                                 value = dueDay.toString(),
                                 onValueChange = { v -> v.toIntOrNull()?.let { dueDay = it.coerceIn(1, 28) } },
-                                label = { Text("Due Day") },
+                                label = { Text("Due day") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(AppRadius.small),
                                 colors = sheetFieldColors(),
@@ -1177,7 +1173,7 @@ private fun BalanceFlipCard(
     val context = LocalContext.current
     val density = LocalDensity.current
 
-    val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
+    val prefs = remember { context.getSharedPreferences(SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE) }
 
     var isFlipped by remember { mutableStateOf(prefs.getBoolean("key_balance_card_flipped", false)) }
     var showBills by remember { mutableStateOf(false) }

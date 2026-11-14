@@ -78,7 +78,7 @@ fun AddExpenseSheet(
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
-    val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
+    val prefs = remember { context.getSharedPreferences(com.expensetracker.offline.data.repository.SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
     var selectedBudgetId by remember { mutableStateOf<String?>(null) }
 
@@ -350,7 +350,7 @@ fun AddExpenseSheet(
                         smartPredictions.forEach { pred ->
                             val typicalRupees = pred.typicalAmountPaise / 100L
                             val chipLabel = if (typicalRupees > 0L) {
-                                "${pred.payee} · ₹$typicalRupees"
+                                "${pred.payee} · ${CurrencyFormat.smart(pred.typicalAmountPaise)}"
                             } else {
                                 pred.payee
                             }

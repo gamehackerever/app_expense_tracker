@@ -22,6 +22,7 @@ import com.expensetracker.offline.ui.components.*
 import com.expensetracker.offline.data.local.dao.AccountInfo
 import com.expensetracker.offline.data.local.entity.DebtStatus
 import com.expensetracker.offline.util.BillingCycleHelper
+import com.expensetracker.offline.util.countsAsSpend
 import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
 import com.expensetracker.offline.util.NecessityManager
@@ -53,8 +54,8 @@ internal val REPAID_FOR_REGEX = Regex("""(?i)repaid for\s+([^(]+)""")
 internal val REFUND_KEYWORD_REGEX = Regex("""\brefund\b""", RegexOption.IGNORE_CASE)
 
 data class DebtInfo(
-    val debt: com.expensetracker.offline.data.local.entity.SplitDebtEntity,
-    val parentTransaction: com.expensetracker.offline.data.local.entity.TransactionEntity,
+    val debt: SplitDebtEntity,
+    val parentTransaction: TransactionEntity,
     val totalOwed: Long,
     val repaidSoFar: Long,
     val outstanding: Long
@@ -167,7 +168,7 @@ fun computeSafeToSpend(
         val ts = item.transaction.timestamp
         if (ts > cycleEnd) continue
         if (isDesc && ts < cycleStart) break
-        if (ts in cycleStart..cycleEnd && item.transaction.type == TransactionType.DEBIT && !item.transaction.excludeFromSpend && item.transaction.category != "Split Settlement" && !item.transaction.category.equals("Transfer", ignoreCase = true)) {
+        if (ts in cycleStart..cycleEnd && item.transaction.countsAsSpend()) {
             validTxns.add(item)
         }
     }
@@ -272,15 +273,18 @@ data class CategorySpendStats(
 private const val CYCLE_DAY_MS = 86_400_000.0
 
 internal fun isRefundCredit(txn: TransactionEntity): Boolean {
-    if (txn.type != TransactionType.CREDIT || txn.linkedDebtId != null) return false
-    return txn.note?.let { REFUND_KEYWORD_REGEX.containsMatchIn(it) } == true ||
-            txn.itemsSummary?.let { REFUND_KEYWORD_REGEX.containsMatchIn(it) } == true
+    return !(txn.type != TransactionType.CREDIT || txn.linkedDebtId != null) && (txn.note?.let { REFUND_KEYWORD_REGEX.containsMatchIn(it) } == true ||
+            txn.itemsSummary?.let { REFUND_KEYWORD_REGEX.containsMatchIn(it) } == true)
 }
 
 internal fun matchesAccountFilter(txn: TransactionEntity, accountFilter: AccountInfo?): Boolean {
     if (accountFilter == null) return true
     if (accountFilter.bankName == "Unspecified") return txn.bankName == null
-    return txn.bankName == accountFilter.bankName && txn.accountNumber == accountFilter.accountNumber
+    // Older rows may still carry a " CC" suffix on the bank name; treat them as the same account.
+    val bank = txn.bankName
+    val sameBank = bank == accountFilter.bankName ||
+        bank?.removeSuffix(" CC")?.removeSuffix(" cc")?.trim() == accountFilter.bankName
+    return sameBank && txn.accountNumber == accountFilter.accountNumber
 }
 
 /**
@@ -309,7 +313,7 @@ internal fun computeCycleCategoryNetSpend(
         val key = txn.category.trim().lowercase()
         if (key.isEmpty() || key == "split settlement") continue
 
-        if (txn.type == TransactionType.DEBIT && !txn.excludeFromSpend && !key.equals("transfer", ignoreCase = true)) {
+        if (txn.countsAsSpend()) {
             val myShare = mySpendShare(item)
             grossByKey[key] = (grossByKey[key] ?: 0L) + myShare
             countByKey[key] = (countByKey[key] ?: 0) + 1

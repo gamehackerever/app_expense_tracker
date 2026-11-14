@@ -66,6 +66,10 @@ import com.expensetracker.offline.data.local.dao.PayeeInsight
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.ui.components.CurrencyFormat
+import com.expensetracker.offline.util.countsAsSpend
+import com.expensetracker.offline.util.isSplitSettlementCategory
+import com.expensetracker.offline.util.isTransferCategory
 import com.expensetracker.offline.ui.components.DashboardTransactionCard
 import com.expensetracker.offline.ui.components.TransactionGroup
 import com.expensetracker.offline.ui.components.TransactionRowDivider
@@ -86,15 +90,16 @@ import kotlin.math.roundToInt
 internal const val DAY_MS = 86_400_000L
 internal const val TOP_N_BY_DEFAULT = 5
 
-// Same hues as the Dashboard's AppColors.
+// Thin alias kept so existing Insights call sites read the same palette as the Dashboard (AppColors).
 internal object InsightsColors {
-    val positive @Composable get() = if (isSystemInDarkTheme()) Color(0xFF10B981) else Color(0xFF059669)
-    val negative @Composable get() = if (isSystemInDarkTheme()) Color(0xFFEF4444) else Color(0xFFDC2626)
+    val positive @Composable get() = AppColors.positive
+    val negative @Composable get() = AppColors.negative
 }
 
 
+// Whole-rupee display for compact UI (hero facts, chart rows). Same en-IN grouping as CurrencyFormat everywhere else.
 internal fun formatRupees(value: Double): String =
-    "₹" + String.format(Locale.getDefault(), "%,.0f", value / 100.0)
+    CurrencyFormat.withSymbol(Math.round(value), 0)
 
 internal fun formatRupees(value: Long): String =
     formatRupees(value.toDouble())
@@ -109,35 +114,23 @@ internal data class CycleStats(
     val spendFreeDays: Int = 0
 )
 
+// Same account rules as the Dashboard filter (incl. the "Unspecified" bucket for manual/imported entries).
 internal fun matchesAccount(txn: TransactionEntity, filter: AccountInfo?): Boolean =
-    filter == null || (
-        (txn.bankName == filter.bankName || txn.bankName?.removeSuffix(" CC")?.removeSuffix(" cc")?.trim() == filter.bankName) &&
-        txn.accountNumber == filter.accountNumber
-    )
+    com.expensetracker.offline.ui.dashboard.matchesAccountFilter(txn, filter)
 
-// Your own share of a bill = amount minus what other people owe (or your debt row when a friend paid).
-internal fun myShareOf(item: TransactionWithDebts): Long {
-    val paidBy = item.transaction.paidBy?.trim()
-    return if (paidBy != null && paidBy.isNotEmpty() && !paidBy.equals("You", ignoreCase = true)) {
-        item.debts.firstOrNull { it.debtorName.trim().equals("You", ignoreCase = true) }?.amountOwed ?: 0L
-    } else {
-        val othersSum = item.debts.filter { !it.debtorName.trim().equals("You", ignoreCase = true) }.sumOf { it.amountOwed.toLong() }
-        (item.transaction.amount - othersSum).coerceAtLeast(0L)
-    }
-}
+// Your own share of a bill. Single source of truth lives in the dashboard math (mySpendShare) so Insights
+// and the Dashboard can never disagree about a split bill.
+internal fun myShareOf(item: TransactionWithDebts): Long =
+    com.expensetracker.offline.ui.dashboard.mySpendShare(item)
 
-internal fun isSpendDebit(txn: TransactionEntity): Boolean =
-    txn.type == TransactionType.DEBIT &&
-            !txn.excludeFromSpend &&
-            txn.category != "Split Settlement" &&
-            !txn.category.equals("Transfer", ignoreCase = true)
+internal fun isSpendDebit(txn: TransactionEntity): Boolean = txn.countsAsSpend()
 
 internal fun isIncomeCredit(txn: TransactionEntity): Boolean =
     txn.type == TransactionType.CREDIT &&
             txn.linkedDebtId == null &&
             !txn.excludeFromSpend &&
-            txn.category != "Split Settlement" &&
-            !txn.category.equals("Transfer", ignoreCase = true) &&
+            !txn.isSplitSettlementCategory() &&
+            !txn.isTransferCategory() &&
             !com.expensetracker.offline.ui.dashboard.isRefundCredit(txn)
 
 /**
@@ -311,8 +304,8 @@ internal fun MoneyHero(
     val animVal by rememberAnimatedValue(amount.toFloat(), key = amount, sessionKey = sessionKey)
     val currentAmount = animVal.toDouble()
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    val text = String.format(Locale.getDefault(), "%,.${fractionDigits}f", currentAmount)
-    val sep = java.text.DecimalFormatSymbols.getInstance(Locale.getDefault()).decimalSeparator
+    val text = CurrencyFormat.rupees(currentAmount, fractionDigits)
+    val sep = CurrencyFormat.decimalSeparator
     val cut = if (fractionDigits > 0) text.lastIndexOf(sep) else -1
     val whole = if (cut >= 0) text.substring(0, cut) else text
     val fraction = if (cut >= 0) text.substring(cut) else ""
@@ -448,7 +441,7 @@ internal fun InsightsStatTile(
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
-                    shape = RoundedCornerShape(9.dp),
+                    shape = RoundedCornerShape(AppRadius.small),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
                 ) {
                     Icon(icon, contentDescription = null, modifier = Modifier.padding(6.dp).size(16.dp), tint = accent)

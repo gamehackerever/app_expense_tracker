@@ -43,6 +43,7 @@ import com.expensetracker.offline.data.local.dao.PayeeInsight
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
 import com.expensetracker.offline.engine.ml.SmartExpenseEngine
 import com.expensetracker.offline.ui.components.AppDialog
+import com.expensetracker.offline.ui.components.AppScreenTopBar
 import com.expensetracker.offline.ui.components.EditTransactionSheet
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
@@ -80,7 +81,7 @@ fun InsightsScreen(
     val haptic = LocalHapticFeedback.current
 
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
+    val prefs = remember { context.getSharedPreferences(com.expensetracker.offline.data.repository.SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE) }
     val startDayOfMonth by viewModel.startDayOfMonth.collectAsStateWithLifecycle()
     var necessities by remember { mutableStateOf(NecessityManager.loadNecessities(prefs)) }
 
@@ -418,32 +419,11 @@ fun InsightsScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            Column(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
-                TopAppBar(
-                    title = {
-                        Text("Insights", fontWeight = FontWeight.Bold, fontSize = 20.sp, letterSpacing = (-0.3).sp)
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = {
-                            haptic.tap()
-                            onBack()
-                        }) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.background
-                    )
-                )
-                HorizontalDivider(
-                    thickness = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f * headerDividerAlpha)
-                )
-            }
+            AppScreenTopBar(
+                titleContent = { Text("Insights") },
+                onBack = { haptic.tap(); onBack() },
+                dividerAlpha = headerDividerAlpha
+            )
         }
     ) { padding ->
         LazyColumn(

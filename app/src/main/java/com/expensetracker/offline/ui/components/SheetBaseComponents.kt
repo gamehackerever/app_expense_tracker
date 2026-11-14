@@ -160,7 +160,7 @@ fun SheetIconTile(
     contentDescription: String? = null,
     onClick: (() -> Unit)? = null
 ) {
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(AppRadius.small)
     Surface(
         shape = shape,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
@@ -432,7 +432,7 @@ fun SheetTextField(
                     Box(
                         modifier = Modifier
                             .size(36.dp)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(AppRadius.small))
                             .background(colors.onSurface.copy(alpha = 0.04f)),
                         contentAlignment = Alignment.Center
                     ) {

@@ -192,7 +192,7 @@ fun SettleDebtDialog(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .clip(RoundedCornerShape(13.dp))
+                            .clip(RoundedCornerShape(AppRadius.small))
                             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)),
                         contentAlignment = Alignment.Center
                     ) {
@@ -646,7 +646,7 @@ private fun PersonGroupHeader(group: PersonGroup, isFirst: Boolean) {
             )
             if (group.debts.size > 1) {
                 Spacer(Modifier.width(8.dp))
-                Text("${group.debts.size} bills", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                Text(com.expensetracker.offline.util.pluralize(group.debts.size, "bill"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
         }
         if (group.debts.size > 1) {

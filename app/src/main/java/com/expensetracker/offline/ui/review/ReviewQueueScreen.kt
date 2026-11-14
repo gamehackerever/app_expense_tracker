@@ -83,12 +83,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.filled.AutoAwesome
 import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.ui.components.AppDialog
+import com.expensetracker.offline.ui.components.AppScreenTopBar
 import com.expensetracker.offline.ui.components.PaymentMethodSelector
 import com.expensetracker.offline.ui.components.SheetChip
 import com.expensetracker.offline.ui.components.SheetSegmentedControl
 import com.expensetracker.offline.ui.theme.AppColors
-import com.expensetracker.offline.ui.theme.ExpenseRed
-import com.expensetracker.offline.ui.theme.IncomeGreen
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
 import com.expensetracker.offline.ui.theme.getCategoryColor
@@ -122,7 +121,7 @@ fun ReviewQueueScreen(
     val transactionsHistory by viewModel.allTransactions.collectAsStateWithLifecycle()
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
+    val prefs = remember { context.getSharedPreferences(com.expensetracker.offline.data.repository.SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE) }
 
     // The "tips" banner only needs to be seen until the user dismisses it once
     var tipDismissed by remember { mutableStateOf(prefs.getBoolean("key_review_tip_dismissed", false)) }
@@ -166,53 +165,43 @@ fun ReviewQueueScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            Column {
-                TopAppBar(
-                    title = {
-                        AnimatedContent(
-                            targetState = if (isSelectionMode) "${selectedIds.size} Selected" else "Needs Review",
-                            transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
-                            label = "reviewTopBarTitle"
-                        ) { titleText ->
-                            Text(titleText, fontWeight = FontWeight.Bold, fontSize = 20.sp, letterSpacing = (-0.3).sp)
-                        }
-                    },
-                    navigationIcon = {
+            AppScreenTopBar(
+                titleContent = {
+                    AnimatedContent(
+                        targetState = if (isSelectionMode) "${selectedIds.size} Selected" else "Needs Review",
+                        transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+                        label = "reviewTopBarTitle"
+                    ) { titleText -> Text(titleText) }
+                },
+                onBack = {
+                    if (isSelectionMode) {
+                        isSelectionMode = false
+                        selectedIds = emptySet()
+                    } else {
+                        haptic.tap()
+                        onBack()
+                    }
+                },
+                actions = {
+                    if (isSelectionMode) {
                         IconButton(onClick = {
-                            if (isSelectionMode) {
-                                isSelectionMode = false
-                                selectedIds = emptySet()
-                            } else {
-                                haptic.tap()
-                                onBack()
-                            }
-                        }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    actions = {
-                        if (isSelectionMode) {
-                            IconButton(onClick = {
-                                haptic.tap()
-                                confirmBulkApprove = true
-                            }) { Icon(Icons.Default.CheckCircle, tint = MaterialTheme.colorScheme.onSurface, contentDescription = "Approve selected") }
+                            haptic.tap()
+                            confirmBulkApprove = true
+                        }) { Icon(Icons.Default.CheckCircle, contentDescription = "Approve selected") }
 
-                            IconButton(onClick = {
-                                haptic.tap()
-                                confirmBulkDiscard = true
-                            }) { Icon(Icons.Default.DeleteOutline, tint = ExpenseRed, contentDescription = "Discard selected") }
-                        } else if (items.isNotEmpty()) {
-                            IconButton(onClick = {
-                                haptic.tap()
-                                isSelectionMode = true
-                                selectedIds = items.map { it.id }.toSet()
-                            }) { Icon(Icons.Default.SelectAll, contentDescription = "Select All") }
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            }
+                        IconButton(onClick = {
+                            haptic.tap()
+                            confirmBulkDiscard = true
+                        }) { Icon(Icons.Default.DeleteOutline, tint = MaterialTheme.colorScheme.error, contentDescription = "Discard selected") }
+                    } else if (items.isNotEmpty()) {
+                        IconButton(onClick = {
+                            haptic.tap()
+                            isSelectionMode = true
+                            selectedIds = items.map { it.id }.toSet()
+                        }) { Icon(Icons.Default.SelectAll, contentDescription = "Select all") }
+                    }
+                }
+            )
         }
     ) { padding ->
         if (items.isEmpty()) {
@@ -395,15 +384,15 @@ private fun ReviewExplainer(
                     modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 46.dp),
                     shape = RoundedCornerShape(AppRadius.small),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                    border = BorderStroke(1.dp, ExpenseRed.copy(alpha = 0.5f))
+                    border = BorderStroke(1.dp, AppColors.negative.copy(alpha = 0.5f))
                 ) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = ExpenseRed, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = AppColors.negative, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = if (count == 1) "Discard" else "Discard All ($count)",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = ExpenseRed,
+                        color = AppColors.negative,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -562,7 +551,7 @@ fun ReviewCard(
 
     val context = LocalContext.current
     val customCategories = remember {
-        context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+        context.getSharedPreferences(com.expensetracker.offline.data.repository.SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE)
             .getStringSet("key_custom_categories", emptySet()) ?: emptySet()
     }
     val standardCategories = remember(customCategories) {
@@ -610,6 +599,8 @@ fun ReviewCard(
     }
 
     val commitScope = rememberCoroutineScope()
+    val positiveColor = AppColors.positive
+    val negativeColor = AppColors.negative
     fun commit(label: String, seedColor: Color, action: () -> Unit) {
         if (stage != CardStage.SWIPING) return
         pendingLabel = label
@@ -673,14 +664,14 @@ fun ReviewCard(
                             val payee = payeeText.trim().ifBlank { FinancialParser.inferFallbackPayee(item.rawContent, transactionType) }
                             val category = categoryText.trim().ifBlank { "Uncategorized" }
                             val (finalBank, finalAcct) = resolvedBankInfo()
-                            commit("Approved · ₹${String.format(AMOUNT_LOCALE, "%.2f", parsedAmt / 100.0)} to $payee", IncomeGreen) {
+                            commit("Approved · ${com.expensetracker.offline.ui.components.CurrencyFormat.withSymbol(parsedAmt)} to $payee", positiveColor) {
                                 onResolve(parsedAmt, payee, transactionType, category, finalBank, finalAcct)
                             }
                             true
                         } else false
                     }
                     SwipeToDismissBoxValue.EndToStart -> {
-                        commit("Discarded · Pattern learned to ignore similar alerts", ExpenseRed) { onDiscard() }
+                        commit("Discarded · Pattern learned to ignore similar alerts", negativeColor) { onDiscard() }
                         true
                     }
                     else -> false
@@ -818,7 +809,7 @@ fun ReviewCard(
                                         Spacer(Modifier.width(12.dp))
                                         val needsAmount = ((amountText.toDoubleOrNull()?.times(100))?.toLong() ?: 0L) <= 0L
                                         Text(
-                                            if (needsAmount) "Add amount" else "₹$amountText",
+                                            if (needsAmount) "Add amount" else com.expensetracker.offline.ui.components.CurrencyFormat.rupeesWithSymbol(amountText.toDoubleOrNull() ?: 0.0),
                                             fontWeight = FontWeight.Bold, fontSize = 16.sp,
                                             color = if (needsAmount) AppColors.warning else MaterialTheme.colorScheme.onSurface
                                         )
@@ -950,7 +941,7 @@ fun ReviewCard(
                                                                     modifier = Modifier.size(12.dp)
                                                                 )
                                                                 Text(
-                                                                    text = if (pred.typicalAmountPaise > 0L) "${pred.payee} · ₹${pred.typicalAmountPaise / 100}" else pred.payee,
+                                                                    text = if (pred.typicalAmountPaise > 0L) "${pred.payee} · ${com.expensetracker.offline.ui.components.CurrencyFormat.smart(pred.typicalAmountPaise)}" else pred.payee,
                                                                     fontSize = 12.sp,
                                                                     fontWeight = FontWeight.SemiBold,
                                                                     color = MaterialTheme.colorScheme.onSurface,
@@ -1007,7 +998,7 @@ fun ReviewCard(
                                                         // Light red tint for semantics
                                                         color = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
                                                         modifier = Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(AppRadius.small)).quietClickable {
-                                                            commit("Discarded · Pattern learned to ignore similar alerts", ExpenseRed) { onDiscard() }
+                                                            commit("Discarded · Pattern learned to ignore similar alerts", negativeColor) { onDiscard() }
                                                         }
                                                     ) {
                                                         Box(contentAlignment = Alignment.Center) {
@@ -1026,7 +1017,7 @@ fun ReviewCard(
                                                                 val payee = payeeText.trim().ifBlank { FinancialParser.inferFallbackPayee(item.rawContent, transactionType) }
                                                                 val category = categoryText.trim().ifBlank { "Uncategorized" }
                                                                 val (finalBank, finalAcct) = resolvedBankInfo()
-                                                                commit("Approved · ₹${String.format(AMOUNT_LOCALE, "%.2f", parsedAmt / 100.0)} to $payee", IncomeGreen) {
+                                                                commit("Approved · ${com.expensetracker.offline.ui.components.CurrencyFormat.withSymbol(parsedAmt)} to $payee", positiveColor) {
                                                                     onResolve(parsedAmt, payee, transactionType, category, finalBank, finalAcct)
                                                                 }
                                                             }
@@ -1066,7 +1057,7 @@ private fun UndoBar(
     ) {
         Box {
             Row(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxSize().padding(horizontal = AppSpacing.screenPadding),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {

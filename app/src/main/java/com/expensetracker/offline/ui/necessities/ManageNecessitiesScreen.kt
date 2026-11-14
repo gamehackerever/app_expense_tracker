@@ -45,6 +45,8 @@ import com.expensetracker.offline.ui.dashboard.computeSafeToSpend
 import com.expensetracker.offline.ui.insights.MoneyHero
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
+import com.expensetracker.offline.ui.theme.AppSpacing
+import com.expensetracker.offline.ui.components.AppScreenTopBar
 import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
@@ -102,7 +104,7 @@ fun ManageNecessitiesScreen(
 
     val context = LocalContext.current
     val startDayOfMonth = remember {
-        context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+        context.getSharedPreferences(com.expensetracker.offline.data.repository.SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE)
             .getInt("key_start_day_of_month", 1)
     }
     val cycleKey = NecessityManager.currentCycleKey(startDayOfMonth)
@@ -192,28 +194,10 @@ fun ManageNecessitiesScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            Column {
-                TopAppBar(
-                    title = {
-                        Text(
-                            "Fixed Costs & Bills",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp,
-                            letterSpacing = (-0.3).sp
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = {
-                            haptic.tap()
-                            onNavigateBack()
-                        }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            }
+            AppScreenTopBar(
+                titleContent = { Text("Fixed Costs & Bills") },
+                onBack = { haptic.tap(); onNavigateBack() }
+            )
         },
         floatingActionButton = {
             if (localItems.isNotEmpty()) {
@@ -252,7 +236,7 @@ fun ManageNecessitiesScreen(
                 .fillMaxSize()
                 .nestedScroll(fabScrollConnection)
                 .padding(paddingValues)
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = AppSpacing.screenPadding),
             contentPadding = PaddingValues(top = 12.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {

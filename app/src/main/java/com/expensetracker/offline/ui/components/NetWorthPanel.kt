@@ -185,7 +185,7 @@ private fun ManualAccountRow(a: ManualAccount, onClick: () -> Unit) {
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Surface(shape = RoundedCornerShape(10.dp), color = tint.copy(alpha = 0.12f), modifier = Modifier.size(36.dp)) {
+        Surface(shape = RoundedCornerShape(AppRadius.small), color = tint.copy(alpha = 0.12f), modifier = Modifier.size(36.dp)) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(a.kind.icon(), contentDescription = null, tint = tint, modifier = Modifier.size(19.dp))
             }

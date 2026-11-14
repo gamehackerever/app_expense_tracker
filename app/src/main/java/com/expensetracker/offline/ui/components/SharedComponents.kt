@@ -6,8 +6,11 @@ import android.app.Activity
 import android.content.ContextWrapper
 import android.view.WindowManager
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -61,6 +64,48 @@ fun SecureScreenEffect(enabled: Boolean = true) {
         } else {
             onDispose { }
         }
+    }
+}
+
+/** Shared app-bar treatment for secondary screens: one title scale, back affordance and divider. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppScreenTopBar(
+    titleContent: @Composable () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    backContentDescription: String = "Back",
+    dividerAlpha: Float = 1f,
+    actions: @Composable RowScope.() -> Unit = {}
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(modifier = modifier.fillMaxWidth().background(colors.background)) {
+        TopAppBar(
+            title = {
+                ProvideTextStyle(
+                    MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                ) {
+                    titleContent()
+                }
+            },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = backContentDescription)
+                }
+            },
+            actions = actions,
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = colors.background,
+                scrolledContainerColor = colors.background,
+                titleContentColor = colors.onSurface,
+                navigationIconContentColor = colors.onSurface,
+                actionIconContentColor = colors.onSurface
+            )
+        )
+        HorizontalDivider(
+            thickness = 1.dp,
+            color = colors.outlineVariant.copy(alpha = 0.5f * dividerAlpha.coerceIn(0f, 1f))
+        )
     }
 }
 

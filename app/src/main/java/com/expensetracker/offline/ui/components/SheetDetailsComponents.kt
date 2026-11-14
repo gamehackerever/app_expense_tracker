@@ -70,7 +70,7 @@ fun SheetDetailsSection(
                     onNoteChange(summary)
                     onReceiptScanned?.invoke(summary, scannedGrandTotalPaise)
                     if (!autoTriggered) {
-                        Toast.makeText(context, "Extracted ${receipt.items.size} items from bill", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Extracted ${com.expensetracker.offline.util.pluralize(receipt.items.size, "item")} from bill", Toast.LENGTH_SHORT).show()
                     }
                 } else if (!autoTriggered) {
                     Toast.makeText(context, "Could not detect priced items on this photo. You can add items manually below.", Toast.LENGTH_SHORT).show()

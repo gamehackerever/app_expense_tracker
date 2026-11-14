@@ -7,6 +7,7 @@ val GreenPrimary = Color(0xFF10B981)    // Emerald Green
 val GreenSecondary = Color(0xFF34D399)
 val AlertOrange = Color(0xFFF59E0B)
 val ExpenseRed = Color(0xFFEF4444)
+val LightExpenseRed = Color(0xFFDC2626)
 val IncomeGreen = Color(0xFF10B981)
 
 // Dark Theme Palette (Zinc / AMOLED)

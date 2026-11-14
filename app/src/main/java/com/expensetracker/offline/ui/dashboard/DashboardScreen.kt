@@ -111,6 +111,7 @@ import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
 import com.expensetracker.offline.util.BillingCycleHelper
+import com.expensetracker.offline.util.countsAsSpend
 import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
 import com.expensetracker.offline.util.NecessityManager
@@ -219,7 +220,7 @@ fun DashboardScreen(
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val activity = context as? android.app.Activity
-    val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
+    val prefs = remember { context.getSharedPreferences(SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -304,7 +305,7 @@ fun DashboardScreen(
     
     LaunchedEffect(chunkLimit, isLoadingNecessities) {
         if (!isLoadingNecessities && necessitiesList.isEmpty() && chunkLimit > 0L && !prefs.getBoolean(KEY_NECESSITIES_MIGRATED, false)) {
-            val migrated = listOf(NecessityItem(java.util.UUID.randomUUID().toString(), "Fixed costs", chunkLimit))
+            val migrated = listOf(NecessityItem(UUID.randomUUID().toString(), "Fixed costs", chunkLimit))
             necessitiesList = migrated
             withContext(Dispatchers.IO) {
                 saveNecessities(prefs, migrated)
@@ -554,9 +555,9 @@ fun DashboardScreen(
     val previousCycleLabel = remember(selectedTimeRange, startDayOfMonth) {
         if (selectedTimeRange != TimeRange.LAST_MONTH) null
         else {
-            val fmt = java.text.SimpleDateFormat("d MMM", java.util.Locale.getDefault())
-            "${fmt.format(java.util.Date(startMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))} – " +
-                fmt.format(java.util.Date(endMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))
+            val fmt = SimpleDateFormat("d MMM", Locale.getDefault())
+            "${fmt.format(Date(startMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))} – " +
+                fmt.format(Date(endMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))
         }
     }
     val currentMonthName = remember(startDayOfMonth, java.time.LocalDate.now()) {
@@ -657,10 +658,7 @@ fun DashboardScreen(
             if (txn.timestamp < minTimestamp) {
                 if (isDesc) break else continue
             }
-            val matchesAccount = currentAccount == null ||
-                    (currentAccount.bankName == "Unspecified" && txn.bankName == null) ||
-                    ((txn.bankName == currentAccount.bankName || txn.bankName?.removeSuffix(" CC")?.removeSuffix(" cc")?.trim() == currentAccount.bankName) && txn.accountNumber == currentAccount.accountNumber)
-            if (!matchesAccount) continue
+            if (!matchesAccountFilter(txn, currentAccount)) continue
 
             val matchesCategory = when (categoryFilter) {
                 "All" -> true
@@ -669,7 +667,7 @@ fun DashboardScreen(
             }
             if (!matchesCategory) continue
             // "Top spends" only ranks real spending, so salary credits and own-account transfers never crowd the top.
-            if (sortHighest && (txn.type != TransactionType.DEBIT || txn.excludeFromSpend)) continue
+            if (sortHighest && !txn.countsAsSpend()) continue
 
             val matchesSearch = query.isBlank() ||
                     txn.payee.contains(query, ignoreCase = true) ||
@@ -708,7 +706,7 @@ fun DashboardScreen(
                 if (isDesc) break else continue
             }
             if (txn.id in pendingDeleteIds) continue
-            if (txn.type == TransactionType.DEBIT && !txn.excludeFromSpend && txn.category != "Split Settlement" && !txn.category.equals("Transfer", ignoreCase = true)) {
+            if (txn.countsAsSpend()) {
                 gross += mySpendShare(item)
             } else if (isRefundCredit(txn)) {
                 refunds += txn.amount
@@ -1614,7 +1612,7 @@ fun DashboardScreen(
 
     if (showBulkDeleteConfirm) {
         AppDialog(
-            title = "Delete ${selectedTxnIds.size} transactions?",
+            title = "Delete ${com.expensetracker.offline.util.pluralize(selectedTxnIds.size, "transaction")}?",
             onDismiss = { haptic.tap(); showBulkDeleteConfirm = false },
             confirmText = "Delete",
             destructive = true,
@@ -1725,7 +1723,7 @@ fun DashboardScreen(
 
 
 
-    data class DayGroup(val label: String, val rows: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>, val daySpentPaise: Long)
+    data class DayGroup(val label: String, val rows: List<TransactionWithDebts>, val daySpentPaise: Long)
 
     val grouped = remember(visibleTransactions, pendingDeleteIds, selectedSort) {
         if (selectedSort == "HIGHEST") {
@@ -1738,19 +1736,13 @@ fun DashboardScreen(
                 )
             )
         } else {
-        val order = linkedMapOf<String, MutableList<com.expensetracker.offline.data.local.dao.TransactionWithDebts>>()
+        val order = linkedMapOf<String, MutableList<TransactionWithDebts>>()
         visibleTransactions.forEach { txn ->
             order.getOrPut(dayLabel(txn.transaction.timestamp)) { mutableListOf() }.add(txn)
         }
         order.map { (label, rows) ->
             val daySpent = rows
-                .filter {
-                    it.transaction.type == TransactionType.DEBIT &&
-                            !it.transaction.excludeFromSpend &&
-                            it.transaction.category != "Split Settlement" &&
-                            !it.transaction.category.equals("Transfer", ignoreCase = true) &&
-                            it.transaction.id !in pendingDeleteIds
-                }
+                .filter { it.transaction.countsAsSpend() && it.transaction.id !in pendingDeleteIds }
                 .sumOf { r -> mySpendShare(r) }
             DayGroup(label, rows, daySpent)
         }
@@ -1884,7 +1876,7 @@ fun DashboardScreen(
                     .asSequence()
                     .take(200)
                     .flatMap { it.debts.asSequence() }
-                    .map { com.expensetracker.offline.ui.components.CurrencyFormat.cleanNote(it.debtorName) }
+                    .map { CurrencyFormat.cleanNote(it.debtorName) }
                     .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
                     .distinct()
                     .take(5)
@@ -1911,7 +1903,7 @@ fun DashboardScreen(
                     .take(1000)
                     .filter { it.transaction.payee.equals(targetPayee, ignoreCase = true) }
                     .flatMap { it.debts.asSequence() }
-                    .map { com.expensetracker.offline.ui.components.CurrencyFormat.cleanNote(it.debtorName) }
+                    .map { CurrencyFormat.cleanNote(it.debtorName) }
                     .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
                     .groupingBy { it }
                     .eachCount()
@@ -1927,7 +1919,7 @@ fun DashboardScreen(
                     .asSequence()
                     .take(1000)
                     .flatMap { it.debts.asSequence() }
-                    .map { com.expensetracker.offline.ui.components.CurrencyFormat.cleanNote(it.debtorName) }
+                    .map { CurrencyFormat.cleanNote(it.debtorName) }
                     .filter { it.isNotBlank() && !it.equals("You", ignoreCase = true) }
                     .groupingBy { it }
                     .eachCount()
@@ -2189,7 +2181,7 @@ fun DashboardScreen(
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Surface(
-                                                shape = RoundedCornerShape(10.dp),
+                                                shape = RoundedCornerShape(AppRadius.small),
                                                 color = MaterialTheme.colorScheme.surfaceVariant
                                             ) {
                                                 Icon(
@@ -2703,9 +2695,7 @@ fun DashboardScreen(
                                 val periodCount = remember(transactionsWithDebts, periodStart, pendingDeleteIds) {
                                     transactionsWithDebts.count {
                                         it.transaction.id !in pendingDeleteIds &&
-                                                it.transaction.type == TransactionType.DEBIT &&
-                                                !it.transaction.excludeFromSpend &&
-                                                it.transaction.category != "Split Settlement" &&
+                                                it.transaction.countsAsSpend() &&
                                                 it.transaction.timestamp >= periodStart
                                     }
                                 }
@@ -2843,7 +2833,7 @@ fun DashboardScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.size(44.dp)) {
+                                    Surface(shape = RoundedCornerShape(AppRadius.small), color = MaterialTheme.colorScheme.surface, modifier = Modifier.size(44.dp)) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(Icons.Default.RateReview, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
                                         }
@@ -2984,12 +2974,7 @@ fun DashboardScreen(
                 val filteredSpendTotal = remember(activeRows, hasActiveListFilter) {
                     if (!hasActiveListFilter) 0L
                     else activeRows
-                        .filter {
-                            it.transaction.type == TransactionType.DEBIT &&
-                                    !it.transaction.excludeFromSpend &&
-                                    it.transaction.category != "Split Settlement" &&
-                                    !it.transaction.category.equals("Transfer", ignoreCase = true)
-                        }
+                        .filter { it.transaction.countsAsSpend() }
                         // Same split-aware "my share" the hero and the day totals use.
                         .sumOf { item -> mySpendShare(item) }
                 }

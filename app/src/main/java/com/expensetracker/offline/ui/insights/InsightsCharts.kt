@@ -682,15 +682,15 @@ internal fun DailyCalendarHeatmapCard(
                                     modifier = Modifier
                                         .weight(1f)
                                         .height(38.dp)
-                                        .clip(RoundedCornerShape(8.dp))
+                                        .clip(RoundedCornerShape(AppRadius.extraSmall))
                                         .background(cellBg)
                                         .then(
                                             when {
-                                                isSel -> Modifier.border(2.dp, AppColors.info, RoundedCornerShape(8.dp))
+                                                isSel -> Modifier.border(2.dp, AppColors.info, RoundedCornerShape(AppRadius.extraSmall))
                                                 isToday -> Modifier.border(
                                                     1.25.dp,
                                                     MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-                                                    RoundedCornerShape(8.dp)
+                                                    RoundedCornerShape(AppRadius.extraSmall)
                                                 )
                                                 else -> Modifier
                                             }
@@ -914,7 +914,7 @@ internal fun SmartInsightsCard(
                     Box(
                         modifier = Modifier
                             .size(38.dp)
-                            .clip(RoundedCornerShape(11.dp))
+                            .clip(RoundedCornerShape(AppRadius.small))
                             .background(accentColor.copy(alpha = 0.14f)),
                         contentAlignment = Alignment.Center
                     ) {

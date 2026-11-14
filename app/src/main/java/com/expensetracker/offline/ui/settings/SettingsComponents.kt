@@ -166,7 +166,7 @@ internal fun ProTipsCarousel(onDismiss: () -> Unit, onTipClick: (String) -> Unit
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(AppRadius.small),
                                 color = MaterialTheme.colorScheme.surfaceVariant,
                                 modifier = Modifier.size(40.dp)
                             ) {
@@ -241,7 +241,7 @@ internal fun SettingsSection(
 @Composable
 internal fun SettingsIcon(icon: ImageVector, tint: Color, modifier: Modifier = Modifier) {
     Surface(
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(AppRadius.small),
         color = tint.copy(alpha = 0.12f),
         modifier = modifier.size(36.dp)
     ) {

@@ -85,7 +85,7 @@ fun EditTransactionSheet(
     val haptic = LocalHapticFeedback.current
     var showOriginalMessage by rememberSaveable(transaction.id) { mutableStateOf(false) }
     var selectedBudgetId by remember { mutableStateOf(transaction.budgetId) }
-    val prefs = remember { context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE) }
+    val prefs = remember { context.getSharedPreferences(com.expensetracker.offline.data.repository.SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
 
     var savedCustomCategories by remember {
@@ -105,7 +105,7 @@ fun EditTransactionSheet(
     }
 
     var payee by rememberSaveable { mutableStateOf(transaction.payee) }
-    val originalNote = transaction.note.orEmpty().takeUnless { com.expensetracker.offline.util.ImportedSource.isSystemNote(it) }.orEmpty()
+    val originalNote = transaction.note.orEmpty().takeUnless { ImportedSource.isSystemNote(it) }.orEmpty()
     var note by rememberSaveable { mutableStateOf(originalNote) }
 
     var amountStr by rememberSaveable { mutableStateOf(String.format(Locale.US, "%.2f", transaction.amount / 100.0)) }
@@ -123,7 +123,7 @@ fun EditTransactionSheet(
         mutableStateOf(initialNonTransfer)
     }
     var lastNonTransferExclude by rememberSaveable {
-        mutableStateOf(if (transaction.category.equals("Transfer", ignoreCase = true)) false else transaction.excludeFromSpend)
+        mutableStateOf(!transaction.category.equals("Transfer", ignoreCase = true) && transaction.excludeFromSpend)
     }
 
     val initialNoteText = remember(transaction.itemsSummary, transaction.note) {
@@ -673,7 +673,7 @@ fun EditTransactionSheet(
                         FilledTonalButton(
                             onClick = {
                                 haptic.tap()
-                                if (canSplit) onSplit?.invoke() else onLinkToBill?.invoke()
+                                if (canSplit) onSplit.invoke() else onLinkToBill?.invoke()
                             },
                             enabled = !hasUnsavedChanges,
                             shape = RoundedCornerShape(AppRadius.small),

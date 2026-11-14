@@ -45,7 +45,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.animation.animateContentSize
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -72,6 +71,7 @@ import com.expensetracker.offline.data.local.dao.PayeeInsight
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.ui.components.CurrencyFormat
 import com.expensetracker.offline.ui.components.DashboardTransactionCard
 import com.expensetracker.offline.ui.components.TransactionGroup
 import com.expensetracker.offline.ui.components.TransactionRowDivider
@@ -137,7 +137,7 @@ fun CategoryTransactionsSheet(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        "${categoryTxns.size} ${if (categoryTxns.size == 1) "transaction" else "transactions"} • ₹${String.format(Locale.getDefault(), "%,.2f", totalSpent / 100.0)}",
+                        "${categoryTxns.size} ${if (categoryTxns.size == 1) "transaction" else "transactions"} • ${CurrencyFormat.withSymbol(totalSpent)}",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -166,7 +166,7 @@ fun CategoryTransactionsSheet(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                if (hasBudget) "Cap: ${formatRupees(budgetPaise!!)}" else "Set cap",
+                                if (hasBudget) "Cap: ${formatRupees(budgetPaise)}" else "Set cap",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -268,7 +268,7 @@ fun MerchantTransactionsSheet(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        "${merchantTxns.size} ${if (merchantTxns.size == 1) "visit" else "visits"} • ₹${String.format(Locale.getDefault(), "%,.2f", totalSpent / 100.0)} • avg ${formatRupees(avgPerVisit)}",
+                        "${merchantTxns.size} ${if (merchantTxns.size == 1) "visit" else "visits"} • ${CurrencyFormat.withSymbol(totalSpent)} • avg ${formatRupees(avgPerVisit)}",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

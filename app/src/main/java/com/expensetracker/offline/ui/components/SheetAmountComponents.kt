@@ -89,4 +89,4 @@ fun SheetAmountCard(
 }
 
 internal fun formatSheetAmount(amount: Double): String =
-    if (amount % 1.0 == 0.0) String.format(Locale.US, "%,.0f", amount) else String.format(Locale.US, "%,.2f", amount)
+    if (amount % 1.0 == 0.0) CurrencyFormat.rupees(amount, 0) else CurrencyFormat.rupees(amount, 2)

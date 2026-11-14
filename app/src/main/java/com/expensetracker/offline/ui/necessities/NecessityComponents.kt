@@ -1262,7 +1262,7 @@ internal fun NecessityIcon(
     iconSize: Dp = 20.dp
 ) {
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(AppRadius.small),
         color = containerColor,
         modifier = modifier.size(size)
     ) {

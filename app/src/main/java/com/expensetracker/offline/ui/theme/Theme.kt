@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -30,6 +31,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -98,7 +101,7 @@ private val LightColorScheme = lightColorScheme(
     surfaceTint = Color.Transparent,
     inverseSurface = DarkSurface,
     inverseOnSurface = DarkTextPrimary,
-    error = ExpenseRed,
+    error = LightExpenseRed,
     onError = Color.White,
     errorContainer = Color(0xFFFEE2E2),
     onErrorContainer = Color(0xFF991B1B),
@@ -112,6 +115,14 @@ private val LightColorScheme = lightColorScheme(
     surfaceContainer = LightSurfaceVariant,
     surfaceContainerHigh = Color(0xFFE4E4E7),
     surfaceContainerHighest = Color(0xFFD4D4D8)
+)
+
+private val AppShapes = Shapes(
+    extraSmall = RoundedCornerShape(AppRadius.extraSmall),
+    small = RoundedCornerShape(AppRadius.small),
+    medium = RoundedCornerShape(AppRadius.medium),
+    large = RoundedCornerShape(AppRadius.large),
+    extraLarge = RoundedCornerShape(AppRadius.extraLarge)
 )
 
 /**
@@ -209,7 +220,8 @@ fun ExpenseTrackerTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography
+        typography = Typography,
+        shapes = AppShapes
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             content()

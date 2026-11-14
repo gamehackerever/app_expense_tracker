@@ -80,12 +80,14 @@ import com.expensetracker.offline.ui.theme.getCategoryIcon
 import com.expensetracker.offline.ui.theme.hasCategoryIcon
 import com.expensetracker.offline.util.ImportedSource
 import java.math.BigDecimal
+import java.math.RoundingMode
+import java.text.DecimalFormatSymbols
 import java.text.NumberFormat
 import java.util.Locale
 
 object TimeFormatCache {
     private var cachedTimeFormat: java.text.DateFormat? = null
-    private val cachedDateFormat by lazy { java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()) }
+    private val cachedDateFormat by lazy { java.text.SimpleDateFormat("d MMM", Locale.getDefault()) }
 
     private var cachedIs24h: Boolean? = null
 
@@ -115,8 +117,19 @@ object CurrencyFormat {
         return cache[d] ?: NumberFormat.getNumberInstance(inLocale).apply {
             minimumFractionDigits = d
             maximumFractionDigits = d
+            // Money rounds half-up (12.50 -> 13), never banker's rounding.
+            roundingMode = RoundingMode.HALF_UP
         }.also { cache[d] = it }
     }
+
+    /** The decimal mark used by [amount]/[rupees] (always the en-IN one, independent of the phone's language). */
+    val decimalSeparator: Char = DecimalFormatSymbols.getInstance(inLocale).decimalSeparator
+
+    /** Same Indian digit grouping as [amount], for values that are already in rupees (inputs, chart animation). */
+    fun rupees(value: Double, decimals: Int = 2): String = formatter(decimals).format(value)
+
+    /** "₹12,34,567" for a rupee value, with the same grouping as every other amount in the app. */
+    fun rupeesWithSymbol(value: Double, decimals: Int = 2): String = "₹${rupees(value, decimals)}"
 
     fun amount(paise: Long, decimals: Int = 2): String {
         val rupees = BigDecimal.valueOf(paise).divide(BigDecimal(100))

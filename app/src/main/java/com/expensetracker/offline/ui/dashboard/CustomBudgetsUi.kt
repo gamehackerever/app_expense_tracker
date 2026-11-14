@@ -57,6 +57,7 @@ import com.expensetracker.offline.ui.components.quietClickable
 import com.expensetracker.offline.ui.theme.AppColors
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.AppSpacing
+import com.expensetracker.offline.util.countsAsSpend
 import com.expensetracker.offline.util.tap
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -71,11 +72,9 @@ internal fun budgetSpentPaise(budgetId: String, transactions: List<TransactionWi
         val t = item.transaction
         if (t.budgetId != budgetId) continue
         if (t.type == TransactionType.DEBIT) {
-            if (t.excludeFromSpend) continue
-            if (t.category.equals("Transfer", ignoreCase = true)) continue
-            if (t.category == "Split Settlement") continue
+            if (!t.countsAsSpend()) continue
             total += mySpendShare(item)
-        } else if (t.type == TransactionType.CREDIT && t.linkedDebtId == null && com.expensetracker.offline.ui.dashboard.isRefundCredit(t)) {
+        } else if (t.type == TransactionType.CREDIT && t.linkedDebtId == null && isRefundCredit(t)) {
             total -= t.amount
         }
     }
