@@ -4,6 +4,7 @@ import com.expensetracker.offline.util.tap
 import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -12,11 +13,16 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,6 +32,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.dao.AccountInfo
@@ -130,10 +137,18 @@ fun DashboardSearchAndFilter(
                 )
                 PremiumFilterChip(text = "All", isSelected = selectedFilterCategory == "All", compact = true, onClick = { onCategorySelected("All") })
                 PremiumFilterChip(text = "Split only", isSelected = selectedFilterCategory == "Split Only", compact = true, onClick = { onCategorySelected("Split Only") })
-                allAvailableCategories.forEach { category ->
-                    PremiumFilterChip(text = category, isSelected = selectedFilterCategory == category, compact = true, onClick = { onCategorySelected(category) })
-                }
-                PremiumFilterChip(text = "+ Manage", isSelected = false, compact = true, onClick = onManageCategories)
+                CategoryFilterMenu(
+                    selectedCategory = selectedFilterCategory,
+                    categories = allAvailableCategories,
+                    onCategorySelected = { category ->
+                        haptic.tap()
+                        onCategorySelected(category)
+                    },
+                    onManageCategories = {
+                        haptic.tap()
+                        onManageCategories()
+                    }
+                )
             }
         }
 
@@ -179,6 +194,89 @@ fun DashboardSearchAndFilter(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun CategoryFilterMenu(
+    selectedCategory: String,
+    categories: List<String>,
+    onCategorySelected: (String) -> Unit,
+    onManageCategories: () -> Unit
+) {
+    var expanded by remember { androidx.compose.runtime.mutableStateOf(false) }
+    val isCustomCategorySelected = selectedCategory != "All" && !selectedCategory.equals("Split Only", ignoreCase = true)
+    val label = if (isCustomCategorySelected) selectedCategory else "Category"
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(AppRadius.pill)
+
+    Box {
+        Surface(
+            shape = shape,
+            color = if (isCustomCategorySelected) colors.onSurface else Color.Transparent,
+            border = if (isCustomCategorySelected) null else BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.3f)),
+            modifier = Modifier
+                .defaultMinSize(minHeight = 40.dp)
+                .clip(shape)
+                .clickable { expanded = true }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 14.sp,
+                    fontWeight = if (isCustomCategorySelected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (isCustomCategorySelected) colors.surface else colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 112.dp)
+                )
+                Icon(
+                    imageVector = Icons.Default.ExpandMore,
+                    contentDescription = "Choose category",
+                    tint = if (isCustomCategorySelected) colors.surface else colors.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("All categories") },
+                onClick = {
+                    expanded = false
+                    onCategorySelected("All")
+                },
+                trailingIcon = {
+                    if (selectedCategory == "All") Icon(Icons.Default.Check, contentDescription = "Selected")
+                }
+            )
+            categories.forEach { category ->
+                DropdownMenuItem(
+                    text = { Text(category, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    onClick = {
+                        expanded = false
+                        onCategorySelected(category)
+                    },
+                    trailingIcon = {
+                        if (selectedCategory.equals(category, ignoreCase = true)) {
+                            Icon(Icons.Default.Check, contentDescription = "Selected")
+                        }
+                    }
+                )
+            }
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("Manage categories") },
+                onClick = {
+                    expanded = false
+                    onManageCategories()
+                }
+            )
         }
     }
 }

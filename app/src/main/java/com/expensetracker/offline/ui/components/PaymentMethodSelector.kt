@@ -5,8 +5,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,6 +26,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.dao.AccountInfo
@@ -55,37 +54,39 @@ fun PaymentMethodSelector(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fadingHorizontalScroll()
-                .selectableGroup(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            val isNullSelected = selectedBankName == null
-            PaymentChip(
-                label = nullLabel,
-                icon = Icons.Default.Payments,
-                selected = isNullSelected,
-                onClick = {
-                    haptic.tap()
-                    onBankSelected(null, null)
-                }
-            )
-
-            linkedAccounts.forEach { account ->
-                val isSelected = selectedBankName == account.bankName && selectedAccountNumber == account.accountNumber
-                val label = if (account.accountNumber != null) "${account.bankName} •••• ${account.accountNumber}" else account.bankName
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val chipMaxWidth = maxWidth
+            FlowRow(
+                modifier = Modifier.fillMaxWidth().selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val isNullSelected = selectedBankName == null
                 PaymentChip(
-                    label = label,
-                    icon = Icons.Default.AccountBalance,
-                    selected = isSelected,
+                    label = nullLabel,
+                    icon = Icons.Default.Payments,
+                    selected = isNullSelected,
+                    maxWidth = chipMaxWidth,
                     onClick = {
                         haptic.tap()
-                        onBankSelected(account.bankName, account.accountNumber)
+                        onBankSelected(null, null)
                     }
                 )
+
+                linkedAccounts.forEach { account ->
+                    val isSelected = selectedBankName == account.bankName && selectedAccountNumber == account.accountNumber
+                    val label = if (account.accountNumber != null) "${account.bankName} •••• ${account.accountNumber}" else account.bankName
+                    PaymentChip(
+                        label = label,
+                        icon = Icons.Default.AccountBalance,
+                        selected = isSelected,
+                        maxWidth = chipMaxWidth,
+                        onClick = {
+                            haptic.tap()
+                            onBankSelected(account.bankName, account.accountNumber)
+                        }
+                    )
+                }
             }
         }
     }
@@ -96,6 +97,7 @@ private fun PaymentChip(
     label: String,
     icon: ImageVector,
     selected: Boolean,
+    maxWidth: Dp,
     onClick: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
@@ -115,6 +117,7 @@ private fun PaymentChip(
         color = bg,
         border = if (selected) null else BorderStroke(1.dp, border),
         modifier = Modifier
+            .widthIn(max = maxWidth)
             .clip(shape)
             .semantics { this.selected = selected }
             .clickable(role = Role.RadioButton, onClick = onClick)
