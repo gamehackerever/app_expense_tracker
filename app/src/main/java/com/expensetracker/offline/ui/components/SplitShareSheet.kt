@@ -272,7 +272,6 @@ fun MultiSplitShareSheet(
     var isScanningReceipt by remember { mutableStateOf(false) }
 
     var pendingFocusId by remember { mutableStateOf<String?>(null) }
-    var nudgeId by remember { mutableStateOf<String?>(null) }
     var showDiscardDialog by remember { mutableStateOf(false) }
     var showRemoveDialog by remember { mutableStateOf(false) }
     var isClosing by remember { mutableStateOf(false) }
@@ -360,8 +359,8 @@ fun MultiSplitShareSheet(
 
     val blocking: Hint? = when {
         totalPaise <= 0L -> Hint("This transaction has no amount to split.", true)
-        blankNameCount == 1 -> Hint("Add a name or remove the empty row to save this split.", false)
-        blankNameCount > 1 -> Hint("Add names or remove the empty rows to save this split.", false)
+        blankNameCount == 1 -> Hint("Name this person or remove the empty row.", false)
+        blankNameCount > 1 -> Hint("Name these people or remove the empty rows.", false)
         badNames.isNotEmpty() -> Hint("Each person needs a unique name.", true)
         selectedMode == SplitMode.EXACT && remaining > 0L -> Hint("${money(remaining)} left unassigned — pick a quick fix below:", false)
         selectedMode == SplitMode.EXACT && remaining < 0L -> Hint("Shares exceed the bill by ${money(-remaining)} — pick a quick fix below:", true)
@@ -440,7 +439,6 @@ fun MultiSplitShareSheet(
                     }
                 }
                 pendingFocusId = blank.id
-                nudgeId = blank.id
             }
             active.size < MAX_PEOPLE -> {
                 val p = SplitParticipant(
@@ -467,10 +465,9 @@ fun MultiSplitShareSheet(
                 fixes += QuickFixAction("Type name") {
                     tick()
                     pendingFocusId = firstBlank.id
-                    nudgeId = firstBlank.id
                 }
             }
-            if (otherCount > blankNameCount) {
+            if (blankNameCount > 0) {
                 fixes += QuickFixAction(if (blankNameCount == 1) "Remove empty row" else "Remove $blankNameCount empty rows") {
                     tick()
                     participants = participants.filter { it.isMe || it.name.isNotBlank() }
@@ -856,7 +853,13 @@ fun MultiSplitShareSheet(
                     myShare = myShare,
                     othersOwe = othersOwe,
                     paidBy = paidBy,
-                    blankNameCount = blankNameCount
+                    readinessMessage = when {
+                        blankNameCount == 1 -> "1 name needed"
+                        blankNameCount > 1 -> "$blankNameCount names needed"
+                        badNames.isNotEmpty() -> "Fix duplicate names"
+                        !hasDebtor -> "Add a person"
+                        else -> null
+                    }
                 )
 
                 if (availablePayers.size > 1) {
@@ -1080,10 +1083,11 @@ fun MultiSplitShareSheet(
                                             p.name.trim().lowercase() in badNames -> "Duplicate name"
                                             else -> null
                                         },
-                                        showNameNudge = nudgeId == p.id, isLast = index == active.lastIndex, canRemove = p.isMe || otherCount > 1,
+                                        isLast = index == active.lastIndex,
+                                        canRemove = p.isMe || otherCount > 1 || (p.name.isBlank() && otherCount == 1),
                                         remainingPaise = remaining, remainingBp = bpRemaining,
                                         requestFocus = pendingFocusId == p.id, onFocusRequested = { pendingFocusId = null },
-                                        onNameChange = { v -> nudgeId = null; update(p.id) { it.copy(name = v) } },
+                                        onNameChange = { v -> update(p.id) { it.copy(name = v) } },
                                         onExactChange = { v -> exactTouched = true; update(p.id) { it.copy(exactAmountStr = v) } },
                                         onPercentChange = { v -> percentTouched = true; update(p.id) { it.copy(percentageStr = v) } },
                                         onSharesChange = { v -> update(p.id) { it.copy(sharesStr = v) } },
@@ -1255,57 +1259,68 @@ Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ) {
                 if (blocking != null) {
                     val tint = if (blocking.isError) AppColors.negative else MaterialTheme.colorScheme.onSurfaceVariant
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(AppRadius.small))
-                            .background(tint.copy(alpha = 0.08f))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(AppRadius.small),
+                        color = tint.copy(alpha = 0.06f)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                if (blocking.isError) Icons.Default.Warning else Icons.Default.Info,
-                                contentDescription = null,
-                                tint = tint,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(blocking.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = tint)
-                        }
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    if (blocking.isError) Icons.Default.Warning else Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = tint,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    blocking.text,
+                                    modifier = Modifier.weight(1f),
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = tint
+                                )
+                            }
 
-                        if (quickFixes.isNotEmpty()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().fadingHorizontalScroll(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                quickFixes.forEachIndexed { idx, fix ->
-                                    val isPrimaryFix = idx == 0
-                                    Surface(
-                                        shape = RoundedCornerShape(AppRadius.pill),
-                                        color = if (isPrimaryFix) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
-                                        border = if (isPrimaryFix) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(AppRadius.pill))
-                                            .clickable { fix.onClick() }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                                            verticalAlignment = Alignment.CenterVertically
+                            if (quickFixes.isNotEmpty()) {
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    quickFixes.forEachIndexed { idx, fix ->
+                                        val isPrimaryFix = idx == 0
+                                        Surface(
+                                            shape = RoundedCornerShape(AppRadius.pill),
+                                            color = if (isPrimaryFix) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
+                                            border = if (isPrimaryFix) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+                                            modifier = Modifier
+                                                .defaultMinSize(minHeight = 40.dp)
+                                                .clip(RoundedCornerShape(AppRadius.pill))
+                                                .clickable { fix.onClick() }
                                         ) {
-                                            Icon(
-                                                if (isPrimaryFix) Icons.Default.AutoAwesome else Icons.Default.Check,
-                                                contentDescription = null,
-                                                tint = if (isPrimaryFix) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
-                                                modifier = Modifier.size(13.dp)
-                                            )
-                                            Spacer(Modifier.width(5.dp))
-                                            Text(
-                                                text = fix.label,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (isPrimaryFix) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface
-                                            )
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    if (isPrimaryFix) Icons.Default.AutoAwesome else Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = if (isPrimaryFix) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                                Spacer(Modifier.width(5.dp))
+                                                Text(
+                                                    text = fix.label,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isPrimaryFix) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -1333,7 +1348,7 @@ private fun SplitSummaryCard(
     myShare: Long,
     othersOwe: Long,
     paidBy: String = "You",
-    blankNameCount: Int = 0
+    readinessMessage: String? = null
 ) {
     val isPaidByMe = paidBy.equals("You", ignoreCase = true)
     val remaining = totalPaise - assignedPaise
@@ -1354,13 +1369,14 @@ private fun SplitSummaryCard(
             statusText = when { balanced -> "Fully assigned"; over -> "${fmtBp(bpSum - FULL_BP)}% over"; else -> "${fmtBp(FULL_BP - bpSum)}% left" }
         }
     }
-    val identityNeedsAttention = blankNameCount > 0
-    val displayStatusText = when {
-        identityNeedsAttention -> "$blankNameCount ${if (blankNameCount == 1) "name" else "names"} needed"
-        else -> statusText
+    val needsAttention = readinessMessage != null
+    val displayStatusText = readinessMessage ?: statusText
+    val statusColor = if (needsAttention) AppColors.warning else when {
+        over -> AppColors.negative
+        balanced -> AppColors.positive
+        else -> AppColors.warning
     }
-    val statusColor = when {
-        identityNeedsAttention -> AppColors.warning
+    val progressColor = when {
         over -> AppColors.negative
         balanced -> AppColors.positive
         else -> AppColors.warning
@@ -1378,7 +1394,7 @@ private fun SplitSummaryCard(
                 Surface(shape = RoundedCornerShape(AppRadius.pill), color = statusColor.copy(alpha = 0.12f)) {
                     Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            if (balanced && !identityNeedsAttention) Icons.Default.CheckCircle else Icons.Default.Warning,
+                            if (balanced && !needsAttention) Icons.Default.CheckCircle else Icons.Default.Warning,
                             contentDescription = null,
                             tint = statusColor,
                             modifier = Modifier.size(16.dp)
@@ -1389,7 +1405,7 @@ private fun SplitSummaryCard(
                 }
             }
 
-            LinearProgressIndicator(progress = { animatedProgress }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(AppRadius.pill)), color = statusColor, trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            LinearProgressIndicator(progress = { animatedProgress }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(AppRadius.pill)), color = progressColor, trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -1425,7 +1441,6 @@ private fun ParticipantRow(
     sharePaise: Long,
     isPayer: Boolean = false,
     nameError: String?,
-    showNameNudge: Boolean,
     isLast: Boolean,
     canRemove: Boolean,
     remainingPaise: Long,
@@ -1475,7 +1490,6 @@ private fun ParticipantRow(
 
             when {
                 nameError != null -> SubLabel(nameError, AppColors.negative)
-                showNameNudge && participant.name.isBlank() -> SubLabel("Name this person first", AppColors.negative)
                 (mode == SplitMode.PERCENTAGE || mode == SplitMode.SHARES) && sharePaise > 0L -> SubLabel(if (isPayer) "${money(sharePaise)} · Paid the bill" else money(sharePaise), variant)
                 isPayer -> SubLabel("Paid the bill", AppColors.positive, bold = true)
             }
