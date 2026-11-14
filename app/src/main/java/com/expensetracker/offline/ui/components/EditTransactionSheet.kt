@@ -12,6 +12,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,6 +50,7 @@ import com.expensetracker.offline.data.repository.CustomBudget
 import com.expensetracker.offline.ui.dashboard.BudgetPickerRow
 import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.util.ImportedSource
+import com.expensetracker.offline.util.OriginalMessageFormatter
 import com.expensetracker.offline.util.NecessityManager
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -304,6 +306,9 @@ fun EditTransactionSheet(
                 )
 
                 val importedFrom = ImportedSource.shortLabel(transaction.rawContent)
+                val originalMessage = remember(transaction.rawContent) {
+                    OriginalMessageFormatter.cleanForDisplay(transaction.rawContent)
+                }
                 val sourceDescription = when {
                     importedFrom != null -> "Statement import · $importedFrom"
                     transaction.source == TransactionSource.SMS -> "Captured from bank SMS"
@@ -313,7 +318,7 @@ fun EditTransactionSheet(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(sourceDescription, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (transaction.rawContent.isNotBlank() && transaction.rawContent != "Manual Entry" && importedFrom == null) {
+                    if (originalMessage.isNotBlank() && transaction.rawContent != "Manual Entry" && importedFrom == null) {
                         TextButton(
                             onClick = { showOriginalMessage = !showOriginalMessage },
                             contentPadding = PaddingValues(0.dp)
@@ -321,13 +326,21 @@ fun EditTransactionSheet(
                             Text(if (showOriginalMessage) "Hide original message" else "View original message", fontSize = 12.sp)
                         }
                         if (showOriginalMessage) {
-                            Text(
-                                transaction.rawContent,
-                                fontSize = 12.sp,
-                                lineHeight = 17.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(AppRadius.small),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                            ) {
+                                SelectionContainer {
+                                    Text(
+                                        originalMessage,
+                                        fontSize = 12.sp,
+                                        lineHeight = 17.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
