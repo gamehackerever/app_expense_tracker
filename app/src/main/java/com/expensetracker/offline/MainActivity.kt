@@ -1170,14 +1170,39 @@ fun AppNavigation(
     val context = LocalContext.current
     val activity = context.findFragmentActivity()
 
+    fun navigateTo(route: String, resetToDashboard: Boolean = false) {
+        val destinationKey = route.substringBefore('?')
+        val currentKey = navController.currentBackStackEntry?.destination?.route?.substringBefore('?')
+        val previousKey = navController.previousBackStackEntry?.destination?.route?.substringBefore('?')
+
+        if (!resetToDashboard && currentKey == destinationKey) {
+            if (destinationKey == "settings") {
+                navController.navigate(route) { launchSingleTop = true }
+            }
+            return
+        }
+        if (!resetToDashboard && destinationKey != "settings" && previousKey == destinationKey) {
+            navController.popBackStack()
+            return
+        }
+
+        navController.navigate(route) {
+            launchSingleTop = true
+            if (resetToDashboard) {
+                popUpTo("dashboard") {
+                    inclusive = false
+                    saveState = false
+                }
+            }
+        }
+    }
+
     LaunchedEffect(intentTrigger, isAppLocked) {
         if (!isAppLocked) {
             val targetRoute = activity?.intent?.getStringExtra("OPEN_ROUTE")
             if (!targetRoute.isNullOrBlank()) {
                 activity.intent?.removeExtra("OPEN_ROUTE")
-                navController.navigate(targetRoute) {
-                    launchSingleTop = true
-                }
+                navigateTo(targetRoute, resetToDashboard = true)
             }
         }
     }
@@ -1211,12 +1236,12 @@ fun AppNavigation(
             DashboardScreen(
                 viewModel = viewModel,
                 isAppLocked = isAppLocked,
-                onNavigateToReview = { navController.navigate("review") },
+                onNavigateToReview = { navigateTo("review") },
                 onNavigateToSettings = { target ->
-                    navController.navigate("settings?target=${target ?: ""}")
+                    navigateTo("settings?target=${target ?: ""}")
                 },
-                onNavigateToInsights = { navController.navigate("insights") },
-                onNavigateToNecessities = { navController.navigate("necessities") }
+                onNavigateToInsights = { navigateTo("insights") },
+                onNavigateToNecessities = { navigateTo("necessities") }
             )
         }
 
@@ -1225,9 +1250,9 @@ fun AppNavigation(
                 viewModel = viewModel,
                 isAppLocked = isAppLocked,
                 onBack = { navController.popBackStack() },
-                onNavigateToNecessities = { navController.navigate("necessities") },
+                onNavigateToNecessities = { navigateTo("necessities") },
                 onNavigateToSettings = { target ->
-                    navController.navigate("settings?target=${target ?: ""}")
+                    navigateTo("settings?target=${target ?: ""}")
                 }
             )
         }
@@ -1242,15 +1267,6 @@ fun AppNavigation(
             DebugTestingScreen(
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() }
-            )
-        }
-
-        composable("settings") {
-            SettingsScreen(
-                viewModel = viewModel,
-                onBack = { navController.popBackStack() },
-                onNavigateToDebug = { navController.navigate("debug") },
-                onNavigateToNecessities = { navController.navigate("necessities") }
             )
         }
 
@@ -1300,8 +1316,8 @@ fun AppNavigation(
             SettingsScreen(
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() },
-                onNavigateToDebug = { navController.navigate("debug") },
-                onNavigateToNecessities = { navController.navigate("necessities") },
+                onNavigateToDebug = { navigateTo("debug") },
+                onNavigateToNecessities = { navigateTo("necessities") },
                 scrollToSection = backStackEntry.arguments?.getString("target")
             )
         }
