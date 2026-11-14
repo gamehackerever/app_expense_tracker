@@ -360,8 +360,8 @@ fun MultiSplitShareSheet(
 
     val blocking: Hint? = when {
         totalPaise <= 0L -> Hint("This transaction has no amount to split.", true)
-        blankNameCount == 1 -> Hint("Enter a name for the person you're splitting with (or remove the empty row).", false)
-        blankNameCount > 1 -> Hint("Enter names for everyone you're splitting with (or remove empty rows).", false)
+        blankNameCount == 1 -> Hint("Add a name or remove the empty row to save this split.", false)
+        blankNameCount > 1 -> Hint("Add names or remove the empty rows to save this split.", false)
         badNames.isNotEmpty() -> Hint("Each person needs a unique name.", true)
         selectedMode == SplitMode.EXACT && remaining > 0L -> Hint("${money(remaining)} left unassigned — pick a quick fix below:", false)
         selectedMode == SplitMode.EXACT && remaining < 0L -> Hint("Shares exceed the bill by ${money(-remaining)} — pick a quick fix below:", true)
@@ -847,7 +847,17 @@ fun MultiSplitShareSheet(
                     }
                 }
 
-                SplitSummaryCard(totalPaise, selectedMode, assigned, bpSum, includeMe, myShare, othersOwe, paidBy)
+                SplitSummaryCard(
+                    totalPaise = totalPaise,
+                    mode = selectedMode,
+                    assignedPaise = assigned,
+                    bpSum = bpSum,
+                    includeMe = includeMe,
+                    myShare = myShare,
+                    othersOwe = othersOwe,
+                    paidBy = paidBy,
+                    blankNameCount = blankNameCount
+                )
 
                 if (availablePayers.size > 1) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1322,7 +1332,8 @@ private fun SplitSummaryCard(
     includeMe: Boolean,
     myShare: Long,
     othersOwe: Long,
-    paidBy: String = "You"
+    paidBy: String = "You",
+    blankNameCount: Int = 0
 ) {
     val isPaidByMe = paidBy.equals("You", ignoreCase = true)
     val remaining = totalPaise - assignedPaise
@@ -1343,7 +1354,17 @@ private fun SplitSummaryCard(
             statusText = when { balanced -> "Fully assigned"; over -> "${fmtBp(bpSum - FULL_BP)}% over"; else -> "${fmtBp(FULL_BP - bpSum)}% left" }
         }
     }
-    val statusColor = when { over -> AppColors.negative; balanced -> AppColors.positive; else -> AppColors.warning }
+    val identityNeedsAttention = blankNameCount > 0
+    val displayStatusText = when {
+        identityNeedsAttention -> "$blankNameCount ${if (blankNameCount == 1) "name" else "names"} needed"
+        else -> statusText
+    }
+    val statusColor = when {
+        identityNeedsAttention -> AppColors.warning
+        over -> AppColors.negative
+        balanced -> AppColors.positive
+        else -> AppColors.warning
+    }
     val animatedProgress by animateFloatAsState(progress, animationSpec = tween(300), label = "splitProgress")
 
     Surface(shape = RoundedCornerShape(AppRadius.medium), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)), modifier = Modifier.fillMaxWidth()) {
@@ -1356,9 +1377,14 @@ private fun SplitSummaryCard(
                 }
                 Surface(shape = RoundedCornerShape(AppRadius.pill), color = statusColor.copy(alpha = 0.12f)) {
                     Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(if (balanced) Icons.Default.CheckCircle else Icons.Default.Warning, contentDescription = null, tint = statusColor, modifier = Modifier.size(16.dp))
+                        Icon(
+                            if (balanced && !identityNeedsAttention) Icons.Default.CheckCircle else Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = statusColor,
+                            modifier = Modifier.size(16.dp)
+                        )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(statusText, fontSize = 13.sp, color = statusColor, fontWeight = FontWeight.Bold)
+                        Text(displayStatusText, fontSize = 13.sp, color = statusColor, fontWeight = FontWeight.Bold, maxLines = 1)
                     }
                 }
             }
