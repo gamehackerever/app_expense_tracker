@@ -33,7 +33,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import java.io.File
@@ -145,13 +144,6 @@ class TransactionRepository(
         database.withTransaction { splitDebtDao.markDebtSettled(debtId, timestamp) }
     }
 
-    suspend fun markDebtAsUnsettled(debtId: Long) {
-        database.withTransaction {
-            splitDebtDao.markDebtUnsettled(debtId)
-            reconcileDebt(debtId)
-        }
-    }
-
     suspend fun forgiveDebt(debtId: Long, timestamp: Long) {
         database.withTransaction { splitDebtDao.forgiveDebt(debtId, timestamp) }
     }
@@ -187,31 +179,20 @@ class TransactionRepository(
                 transactionDao.insertTransaction(
                     TransactionEntity(
                         amount = capped,
-                        payee = if (isYouOwe) (parent?.paidBy ?: debt.debtorName) else debt.debtorName,
+                        payee = if (isYouOwe) (parent.paidBy) else debt.debtorName,
                         timestamp = timestamp,
                         type = TransactionType.CREDIT,
                         source = TransactionSource.MANUAL,
                         referenceId = null,
                         rawContent = if (isYouOwe) "Manual debt settlement paid" else "Manual cash repayment",
                         category = "Split Settlement",
-                        itemsSummary = if (isYouOwe) "Paid back ${parent?.paidBy ?: ""}".trim() else "Cash repayment",
+                        itemsSummary = if (isYouOwe) "Paid back ${parent.paidBy}".trim() else "Cash repayment",
                         linkedDebtId = debtId,
                         excludeFromSpend = true
                     )
                 )
                 reconcileDebt(debtId)
             }
-        }
-        refreshWidget()
-    }
-
-    suspend fun unlinkRepayment(creditId: Long) {
-        database.withTransaction {
-            val credit = transactionDao.getTransactionById(creditId) ?: return@withTransaction
-            val debtId = credit.linkedDebtId ?: return@withTransaction
-
-            transactionDao.unlinkRepayment(creditId)
-            reconcileDebt(debtId)
         }
         refreshWidget()
     }
@@ -263,14 +244,6 @@ class TransactionRepository(
                 resolvedBankName = transaction.bankName
             )
         }
-        refreshWidget()
-    }
-
-    suspend fun renamePayeeForAll(oldPayee: String, newPayee: String) {
-        val trimmedOld = oldPayee.trim()
-        val trimmedNew = newPayee.trim()
-        transactionDao.renamePayeeForAll(trimmedOld, trimmedNew)
-        settingsRepo?.setMerchantAlias(trimmedOld, trimmedNew)
         refreshWidget()
     }
 
@@ -559,7 +532,6 @@ class TransactionRepository(
                         else -> currentPayee
                     }
 
-                    val isStillGeneric = CategoryClassifier.isGenericPayee(healedPayee)
                     val currentCat = txn.category.trim()
                     val trueCat = CategoryClassifier.classifySync(healedPayee, txn.rawContent)
 
@@ -670,102 +642,6 @@ class TransactionRepository(
         }
     }
 
-    suspend fun autoPromoteParseableReviewItems(): Int {
-        val pending = reviewItemDao.getPendingReviewItemsSync()
-        if (pending.isEmpty()) return 0
-        val fallback = settingsRepo?.scanFallbackPayee ?: "UPI Payment"
-        var promotedCount = 0
-
-        for (item in pending) {
-            val parsed = com.expensetracker.offline.engine.parser.FinancialParser.parse(
-                rawText = item.rawContent,
-                title = item.sender,
-                source = item.source
-            )
-            // If user learned to block this template, discard it from pending reviews
-            if (!parsed.isFinancial) {
-                val learnedEval = SmsPatternLearner.evaluate(item.sender, item.rawContent)
-                if (learnedEval.isBlockedNonTransaction) {
-                    reviewItemDao.updateStatus(item.id, ReviewStatus.DISCARDED)
-                    continue
-                }
-            }
-            val amt = item.extractedPartialAmount ?: parsed.amount ?: 0L
-            val type = item.type ?: parsed.type
-            if (amt <= 0L || type == null) continue
-
-            val bank = (item.bankName ?: parsed.bankName)?.let { b ->
-                if (b.endsWith(" CC", ignoreCase = true) && !parsed.accountType.equals("CREDIT_CARD", ignoreCase = true)) {
-                    b.removeSuffix(" CC").removeSuffix(" cc").trim()
-                } else b
-            }
-            val account = item.accountNumber ?: parsed.accountNumber
-            val balance = item.balance ?: parsed.balance
-
-            val existing = transactionDao.findMatchingTransaction(
-                amount = amt,
-                type = type,
-                startTime = item.timestamp - DEDUPE_WINDOW_MS,
-                endTime = item.timestamp + DEDUPE_WINDOW_MS,
-                targetTime = item.timestamp,
-                bankName = bank,
-                accountNumber = account
-            )
-            if (existing != null) {
-                reviewItemDao.updateStatus(item.id, ReviewStatus.RESOLVED)
-                continue
-            }
-
-            fun usablePayee(candidate: String?): String? = candidate?.trim()?.takeIf {
-                it.isNotBlank() &&
-                    !it.equals("Unknown", ignoreCase = true) &&
-                    !it.matches(NUMERIC_PAYEE_REGEX)
-            }
-            val rawPayee = usablePayee(item.extractedPartialPayee) ?: usablePayee(parsed.payee)
-
-            val resolvedPayee = rawPayee ?: when {
-                parsed.isTransfer -> "Self Transfer"
-                else -> com.expensetracker.offline.engine.parser.FinancialParser.inferFallbackPayee(
-                    item.rawContent,
-                    type,
-                    fallback
-                )
-            }
-            val aliasedPayee = settingsRepo?.getMerchantAlias(resolvedPayee) ?: resolvedPayee
-            val category = if (parsed.isTransfer) "Transfer" else classifyCategory(
-                payee = aliasedPayee,
-                rawContent = item.rawContent,
-                amountPaise = amt,
-                timestampMillis = item.timestamp,
-                type = type
-            )
-
-            val newTxn = TransactionEntity(
-                amount = amt,
-                payee = aliasedPayee,
-                timestamp = item.timestamp,
-                type = type,
-                source = item.source,
-                referenceId = item.referenceId ?: parsed.referenceId,
-                rawContent = item.rawContent,
-                category = category,
-                note = parsed.note,
-                balance = balance,
-                bankName = bank,
-                accountNumber = account,
-                excludeFromSpend = parsed.excludeFromSpend || parsed.isTransfer,
-                accountType = resolveAccountType(bank, account, parsed.accountType)
-            )
-            approveReviewItem(newTxn, item.id)
-            if (balance != null && context != null) {
-                BalanceCache.updateIfNewer(BalanceCache.prefs(context), bank, account, balance, item.timestamp)
-            }
-            promotedCount++
-        }
-        if (promotedCount > 0) refreshWidget()
-        return promotedCount
-    }
-
     suspend fun classifyCategory(
         payee: String,
         rawContent: String,
@@ -828,19 +704,6 @@ class TransactionRepository(
         refreshWidget()
     }
 
-    suspend fun predictSplitPartners(payee: String): List<String> {
-        return database.transactionDao().searchAndFilterTransactionsFlow(payee, "Split Only", 0L, 10)
-            .firstOrNull()
-            ?.flatMap { it.debts }
-            ?.map { it.debtorName }
-            ?.groupingBy { it }
-            ?.eachCount()
-            ?.entries
-            ?.sortedByDescending { it.value }
-            ?.map { it.key }
-            ?: emptyList()
-    }
-
     /**
      * Approves a single review item and teaches `SmsPatternLearner` that this SMS/notification
      * template is a valid financial transaction.
@@ -855,10 +718,9 @@ class TransactionRepository(
             resolvedType = transaction.type,
             resolvedBankName = transaction.bankName
         )
-        if (!reviewItem?.extractedPartialPayee.isNullOrBlank() &&
-            !reviewItem!!.extractedPartialPayee.equals(transaction.payee, ignoreCase = true)
-        ) {
-            settingsRepo?.setMerchantAlias(reviewItem.extractedPartialPayee!!, transaction.payee)
+        val partialPayee = reviewItem?.extractedPartialPayee
+        if (!partialPayee.isNullOrBlank() && !partialPayee.equals(transaction.payee, ignoreCase = true)) {
+            settingsRepo?.setMerchantAlias(partialPayee, transaction.payee)
         }
 
         val id = database.withTransaction {
@@ -1255,7 +1117,7 @@ class TransactionRepository(
                 delay((nextMidnight - now).coerceAtLeast(1_000L) + 1_000L)
             }
         }
-        return combine(configChanges, dayTicks) { _, _ -> Unit }
+        return combine(configChanges, dayTicks) { _, _ -> }
             .map {
                 val config = settings?.getCreditCardConfig(bankName, accountNumber)
                     ?: CreditCardConfig(settings?.accountKey(bankName, accountNumber) ?: "")

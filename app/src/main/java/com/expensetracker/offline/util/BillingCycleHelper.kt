@@ -86,12 +86,12 @@ object BillingCycleHelper {
 
     fun getCycleStartDateFormatted(startDay: Int, referenceDate: LocalDate = LocalDate.now()): String {
         val (cycleStart, _) = getCycleDates(startDay, referenceDate)
-        return cycleStart.format(DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.getDefault()))
+        return cycleStart.format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.getDefault()))
     }
 
     fun getCycleLabel(startDay: Int, referenceDate: LocalDate = LocalDate.now()): String {
         val (cycleStart, cycleEnd) = getCycleDates(startDay, referenceDate)
-        val formatter = DateTimeFormatter.ofPattern("dd MMM", Locale.getDefault())
+        val formatter = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
         val s = cycleStart.format(formatter)
         val e = cycleEnd.format(formatter)
         return "$s – $e"

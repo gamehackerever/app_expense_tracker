@@ -54,8 +54,7 @@ object CategoryClassifier {
     fun isGenericPayee(payee: String?): Boolean {
         if (payee.isNullOrBlank()) return true
         val norm = payee.trim().lowercase(Locale.ROOT)
-        if (norm.length < 2) return true
-        return norm in GENERIC_FALLBACK_PAYEES || norm.startsWith("balance sync") || norm.startsWith("transfer (")
+        return norm.length < 2 || norm in GENERIC_FALLBACK_PAYEES || norm.startsWith("balance sync") || norm.startsWith("transfer (")
     }
 
     // Payee-level Regex map (checked against extracted merchant/payee name).

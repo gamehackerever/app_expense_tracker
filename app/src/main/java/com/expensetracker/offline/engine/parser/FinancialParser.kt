@@ -497,15 +497,10 @@ object FinancialParser {
         if (DIGIT_ONLY_REGEX.matches(trimmed) || ACCOUNT_REF_NOISE_REGEX.matches(trimmed)) return true
 
         val lower = trimmed.lowercase(Locale.ROOT)
-        if (lower.contains("block") || lower.contains("call") || lower.contains("sms") ||
-            lower.contains("toll free") || lower.contains("final balance") || lower.contains("avl bal") ||
-            lower.contains("avail bal") || lower.contains("upi ref") || lower.contains("ref no") ||
-            lower.contains("credit card") || lower.contains("debit card")
-        ) {
-            return true
-        }
-
-        return false
+        return lower.contains("block") || lower.contains("call") || lower.contains("sms") ||
+                lower.contains("toll free") || lower.contains("final balance") || lower.contains("avl bal") ||
+                lower.contains("avail bal") || lower.contains("upi ref") || lower.contains("ref no") ||
+                lower.contains("credit card") || lower.contains("debit card")
     }
 
     private fun isAppNameOrGeneric(title: String): Boolean {
@@ -654,7 +649,8 @@ object FinancialParser {
         for (pattern in REF_ID_PATTERNS) {
             val matcher = pattern.matcher(text)
             if (matcher.find()) {
-                return if (matcher.groupCount() > 0) matcher.group(1)?.trim() else matcher.group()?.trim()
+                return if (matcher.groupCount() > 0) matcher.group(1)?.trim() else matcher.group()
+                    .trim()
             }
         }
         return null

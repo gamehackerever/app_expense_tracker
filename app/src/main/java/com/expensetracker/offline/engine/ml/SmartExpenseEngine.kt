@@ -1,6 +1,7 @@
 package com.expensetracker.offline.engine.ml
 
 import com.expensetracker.offline.data.local.dao.TransactionDao
+import com.expensetracker.offline.ui.components.CurrencyFormat
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
 import com.expensetracker.offline.data.local.entity.CategoryRuleEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
@@ -124,7 +125,7 @@ object SmartExpenseEngine {
         val targetType = if (isDebit) TransactionType.DEBIT else TransactionType.CREDIT
         val cleanQuery = query.trim().lowercase(Locale.ROOT)
         val hasEnteredAmount = amountPaise != null && amountPaise > 0L
-        val targetLogAmt = if (hasEnteredAmount) ln((amountPaise!! / 100.0).coerceAtLeast(1.0)) else 0.0
+        val targetLogAmt = if (hasEnteredAmount) ln((amountPaise / 100.0).coerceAtLeast(1.0)) else 0.0
 
         val cal = Calendar.getInstance().apply { timeInMillis = nowMillis }
         val currentHour = cal.get(Calendar.HOUR_OF_DAY) + cal.get(Calendar.MINUTE) / 60.0
@@ -194,7 +195,7 @@ object SmartExpenseEngine {
                         val diffLog = lAmt - targetLogAmt
                         val amtKernel = exp(-(diffLog * diffLog) / (2.0 * 0.25 * 0.25))
                         if (amtKernel > bestAmountKernel) bestAmountKernel = amtKernel
-                        if (abs(txn.amount - amountPaise!!) <= max(200L, (amountPaise * 0.05).toLong())) {
+                        if (abs(txn.amount - amountPaise) <= max(200L, (amountPaise * 0.05).toLong())) {
                             exactAmountMatches++
                         }
                     }
@@ -238,7 +239,9 @@ object SmartExpenseEngine {
             val bestAccount = accountCounts.maxByOrNull { it.value }?.key
 
             val reason = when {
-                hasEnteredAmount && exactAmountMatches >= 1 -> "Matches ₹${amountPaise!! / 100}"
+                hasEnteredAmount && exactAmountMatches >= 1 -> "Matches ${CurrencyFormat.smart(
+                    amountPaise
+                )}"
                 avgHourAffinity >= 0.62 && n >= 2 -> timeSlotLabel(currentHour.toInt())
                 dowMatchCount >= 2 && dowRatio >= 0.45 -> "Usual today"
                 n >= 3 -> "${n}× txns"
@@ -360,7 +363,7 @@ object SmartExpenseEngine {
             val cal = Calendar.getInstance().apply { timeInMillis = timestampMillis }
             val slot = hourToSlot(cal.get(Calendar.HOUR_OF_DAY))
             val hasAmt = amountPaise != null && amountPaise > 0L
-            val logAmt = if (hasAmt) ln((amountPaise!! / 100.0).coerceAtLeast(1.0)) else 0.0
+            val logAmt = if (hasAmt) ln((amountPaise / 100.0).coerceAtLeast(1.0)) else 0.0
             val queryTokens = if (lower.length >= 3) NaiveBayesCategorizer.tokenize(lower) else emptyList()
             if (queryTokens.isEmpty()) return "Uncategorized"
 

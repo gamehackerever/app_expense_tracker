@@ -12,13 +12,16 @@ import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.engine.interceptor.CaptureDispatcher
 import com.expensetracker.offline.util.CardPaymentReconciler
+import com.expensetracker.offline.util.ImportedSource
 import com.expensetracker.offline.widget.ExpenseWidget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.InputStream
+import java.util.Calendar
 import java.util.Locale
 import java.util.zip.ZipInputStream
+import kotlin.math.abs
 
 /** Thrown when a PDF is picked but no PDF text library is available in the app. */
 class PdfLibraryMissingException : Exception(
@@ -79,52 +82,63 @@ class StatementImporter(private val context: Context, private val database: AppD
 
         // Skip rows the app already has (SMS usually got there first). Rows within one file are never
         // treated as duplicates of each other: only as many rows as already exist are skipped.
-        val rangeStart = parsed.rows.minOf { it.timestamp }
-        val rangeEnd = parsed.rows.maxOf { it.timestamp } + 24 * 3_600_000L - 1
+        val rangeStart = localDayStart(parsed.rows.minOf { it.timestamp })
+        val rangeEnd = localDayEnd(parsed.rows.maxOf { it.timestamp })
         val earlier = dao.countImportedBetween(rangeStart, rangeEnd)
-        val consumed = HashMap<String, Int>()
-        val consumedIgnoringImports = HashMap<String, Int>()
+        // A DB row can account for only one statement row. Count based on a time bucket incorrectly
+        // reused the same existing transaction for two rows near opposite sides of a bucket edge.
+        val consumedExistingIds = HashSet<Long>()
+        val consumedNonImportedIds = HashSet<Long>()
         val fresh = ArrayList<StatementRow>()
         val freshIgnoringImports = ArrayList<StatementRow>()
         var tracked = 0
         for (row in parsed.rows) {
             val type = if (row.isDebit) TransactionType.DEBIT else TransactionType.CREDIT
             val ref = row.referenceId
-            val refAll = if (ref != null) dao.countByReference(ref) else 0
-            // Only needed when an earlier import exists in this period (the "replace earlier imports" option).
-            val refImported = if (ref != null && earlier > 0) dao.countImportedByReference(ref) else 0
             // With a time, match within 15 minutes. Date-only rows match anything the same local day, never the
             // neighbouring days (a plain +/-24h window wrongly swallowed same-amount payments on adjacent days).
             val (from, to) = if (row.timeKnown) {
                 (row.timestamp - 15 * 60_000L) to (row.timestamp + 15 * 60_000L)
             } else {
-                val startCalendar = java.util.Calendar.getInstance()
-                startCalendar.timeInMillis = row.timestamp
-                startCalendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-                startCalendar.set(java.util.Calendar.MINUTE, 0)
-                startCalendar.set(java.util.Calendar.SECOND, 0)
-                startCalendar.set(java.util.Calendar.MILLISECOND, 0)
-                val dayStart = startCalendar.timeInMillis
-                val endCalendar = java.util.Calendar.getInstance().apply {
-                    timeInMillis = dayStart
-                    add(java.util.Calendar.DAY_OF_MONTH, 1)
-                }
-                val dayEnd = endCalendar.timeInMillis - 1
+                val dayStart = localDayStart(row.timestamp)
+                val dayEnd = localDayEnd(row.timestamp)
                 dayStart to dayEnd
             }
-            val key = "${row.amountPaise}|$type|${if (row.timeKnown) row.timestamp / (15 * 60_000L) else from}"
-            val sameAll = dao.countSameAmountBetween(row.amountPaise, type, from, to)
-            val sameImported = if (earlier > 0) dao.countImportedSameAmountBetween(row.amountPaise, type, from, to) else 0
+            val byReference = if (ref != null) dao.findStatementCandidatesByReference(ref) else emptyList()
+            val byAmountAndTime = dao.findStatementCandidatesByAmount(row.amountPaise, type, from, to)
+            val candidates = (byReference + byAmountAndTime)
+                .distinctBy { it.id }
+                .sortedWith(
+                    compareByDescending<com.expensetracker.offline.data.local.dao.StatementDuplicateCandidate> {
+                        ref != null && it.referenceId == ref
+                    }.thenBy { abs(it.timestamp - row.timestamp) }.thenBy { it.id }
+                )
 
-            // A statement row with the same reference as an app transaction is that transaction: skip it outright.
-            val existing = if (refAll > 0) Int.MAX_VALUE else sameAll
-            val used = consumed[key] ?: 0
-            if (existing > used) { consumed[key] = used + 1; tracked++ } else fresh += row
+            // A statement row with the same reference as an app transaction is that transaction. Each
+            // matching row is consumed once, including repeated same-amount payments in one file.
+            val existing = candidates.firstOrNull { it.id !in consumedExistingIds }
+            if (existing != null) {
+                consumedExistingIds += existing.id
+                tracked++
+            } else {
+                fresh += row
+            }
 
-            // Same check as if earlier statement imports did not exist (used when the user replaces them).
-            val existingOther = if (refAll - refImported > 0) Int.MAX_VALUE else (sameAll - sameImported).coerceAtLeast(0)
-            val usedOther = consumedIgnoringImports[key] ?: 0
-            if (existingOther > usedOther) consumedIgnoringImports[key] = usedOther + 1 else freshIgnoringImports += row
+            // When replacing earlier imports, only a separately matched non-import transaction keeps
+            // the statement row out of the replacement set. Imported transactions linked to debts
+            // or carrying split debts, and imports outside the replacement date range, are preserved.
+            val existingWithoutImports = candidates.firstOrNull {
+                it.id !in consumedNonImportedIds &&
+                    (!ImportedSource.isImported(it.rawContent) ||
+                        it.linkedDebtId != null ||
+                        it.hasSplitDebts ||
+                        it.timestamp !in rangeStart..rangeEnd)
+            }
+            if (existingWithoutImports != null) {
+                consumedNonImportedIds += existingWithoutImports.id
+            } else {
+                freshIgnoringImports += row
+            }
         }
         Outcome.Ready(
             Analysis(parsed.format, name, fresh, tracked, parsed.skipped, freshIgnoringImports, earlier, rangeStart, rangeEnd)
@@ -170,6 +184,19 @@ class StatementImporter(private val context: Context, private val database: AppD
     }
 
     // ───────────────────────────── file reading ─────────────────────────────
+
+    private fun localDayStart(timestamp: Long): Long = Calendar.getInstance().apply {
+        timeInMillis = timestamp
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+    private fun localDayEnd(timestamp: Long): Long = Calendar.getInstance().apply {
+        timeInMillis = localDayStart(timestamp)
+        add(Calendar.DAY_OF_MONTH, 1)
+    }.timeInMillis - 1L
 
     private fun displayName(uri: Uri): String =
         runCatching {

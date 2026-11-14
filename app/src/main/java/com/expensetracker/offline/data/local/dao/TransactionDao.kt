@@ -9,6 +9,14 @@ data class PayeeInsight(val payee: String, val totalSpent: Long, val transaction
 data class CategoryInsight(val category: String, val totalSpent: Long, val transactionCount: Int)
 data class AccountInfo(val bankName: String, val accountNumber: String?)
 data class AccountBalanceInsight(val bankName: String, val accountNumber: String?, val latestBalance: Long?, val lastUpdated: Long)
+data class StatementDuplicateCandidate(
+    val id: Long,
+    val referenceId: String?,
+    val rawContent: String,
+    val timestamp: Long,
+    val linkedDebtId: Long?,
+    val hasSplitDebts: Boolean
+)
 
 @Dao
 interface TransactionDao {
@@ -185,6 +193,8 @@ interface TransactionDao {
     WHERE accountType = 'CREDIT_CARD' 
       AND type = 'DEBIT' 
       AND excludeFromSpend = 0
+      AND LOWER(TRIM(category)) != 'transfer'
+      AND LOWER(TRIM(category)) != 'split settlement'
       AND bankName = :bankName 
       AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL))
       AND timestamp >= :statementStartMs
@@ -226,6 +236,14 @@ interface TransactionDao {
     /** How many transactions already carry this bank/UPI reference (statement import duplicate check). */
     @Query("SELECT COUNT(*) FROM transactions WHERE referenceId = :referenceId")
     suspend fun countByReference(referenceId: String): Int
+
+    @Query("""
+        SELECT t.id, t.referenceId, t.rawContent, t.timestamp, t.linkedDebtId,
+               EXISTS(SELECT 1 FROM split_debts sd WHERE sd.transactionId = t.id) AS hasSplitDebts
+        FROM transactions t
+        WHERE t.referenceId = :referenceId
+    """)
+    suspend fun findStatementCandidatesByReference(referenceId: String): List<StatementDuplicateCandidate>
 
     /** Tags transactions to a custom budget; [exclude] = 1 also keeps them out of the monthly spend total. */
     @Query("""
@@ -281,12 +299,31 @@ interface TransactionDao {
     suspend fun countImportedBetween(startTime: Long, endTime: Long): Int
 
     /** Removes earlier statement imports in a period so a fresh import can replace them (split bills are never touched). */
-    @Query("DELETE FROM transactions WHERE timestamp BETWEEN :startTime AND :endTime AND rawContent LIKE 'Imported from %' AND id NOT IN (SELECT transactionId FROM split_debts)")
+    @Query("""
+        DELETE FROM transactions
+        WHERE timestamp BETWEEN :startTime AND :endTime
+          AND rawContent LIKE 'Imported from %'
+          AND linkedDebtId IS NULL
+          AND NOT EXISTS (SELECT 1 FROM split_debts sd WHERE sd.transactionId = transactions.id)
+    """)
     suspend fun deleteImportedBetween(startTime: Long, endTime: Long): Int
 
     /** How many transactions with this amount and direction already exist inside a time window. */
     @Query("SELECT COUNT(*) FROM transactions WHERE amount = :amount AND type = :type AND timestamp BETWEEN :startTime AND :endTime")
     suspend fun countSameAmountBetween(amount: Long, type: TransactionType, startTime: Long, endTime: Long): Int
+
+    @Query("""
+        SELECT t.id, t.referenceId, t.rawContent, t.timestamp, t.linkedDebtId,
+               EXISTS(SELECT 1 FROM split_debts sd WHERE sd.transactionId = t.id) AS hasSplitDebts
+        FROM transactions t
+        WHERE t.amount = :amount AND t.type = :type AND t.timestamp BETWEEN :startTime AND :endTime
+    """)
+    suspend fun findStatementCandidatesByAmount(
+        amount: Long,
+        type: TransactionType,
+        startTime: Long,
+        endTime: Long
+    ): List<StatementDuplicateCandidate>
 
     @Query("UPDATE transactions SET accountType = :accountType WHERE bankName = :bankName AND (accountNumber = :accountNumber OR (:accountNumber IS NULL AND accountNumber IS NULL))")
     suspend fun setAccountType(bankName: String, accountNumber: String?, accountType: String)
@@ -332,7 +369,7 @@ interface TransactionDao {
     """)
     fun getTotalMoneyYouOweFlow(): Flow<Long?>
 
-    @Query("SELECT COUNT(*) FROM transactions WHERE type = 'DEBIT' AND category != 'Split Settlement' AND timestamp >= :startOfDay AND timestamp < :endOfDay")
+    @Query("SELECT COUNT(*) FROM transactions WHERE type = 'DEBIT' AND excludeFromSpend = 0 AND LOWER(TRIM(category)) NOT IN ('transfer', 'split settlement') AND timestamp >= :startOfDay AND timestamp < :endOfDay")
     suspend fun getDailyDebitCount(startOfDay: Long, endOfDay: Long): Int
 
     @Query("UPDATE transactions SET category = :newCategory WHERE category = :oldCategory")
@@ -357,8 +394,7 @@ interface TransactionDao {
         FROM transactions t
         WHERE t.type = 'DEBIT'
           AND t.excludeFromSpend = 0
-          AND LOWER(TRIM(t.category)) != 'transfer'
-          AND t.category != 'Split Settlement'
+          AND LOWER(TRIM(t.category)) NOT IN ('transfer', 'split settlement')
           AND t.timestamp >= :since
     """)
     fun getDebitsSinceFlow(since: Long): Flow<List<DebitPoint>>
@@ -396,8 +432,7 @@ interface TransactionDao {
         ), 0)
         FROM transactions t
         WHERE type = 'DEBIT' 
-          AND category != 'Split Settlement' 
-          AND category != 'Transfer'
+          AND LOWER(TRIM(category)) NOT IN ('transfer', 'split settlement')
           AND excludeFromSpend = 0
           AND timestamp >= :startMillis AND timestamp <= :endMillis
     """)
@@ -407,8 +442,7 @@ interface TransactionDao {
         SELECT COUNT(*)
         FROM transactions t
         WHERE type = 'DEBIT' 
-          AND category != 'Split Settlement'
-          AND category != 'Transfer'
+          AND LOWER(TRIM(category)) NOT IN ('transfer', 'split settlement')
           AND excludeFromSpend = 0
           AND timestamp >= :startMillis AND timestamp <= :endMillis
     """)

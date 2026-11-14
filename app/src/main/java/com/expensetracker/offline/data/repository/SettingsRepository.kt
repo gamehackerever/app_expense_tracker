@@ -296,8 +296,7 @@ class SettingsRepository(context: Context) {
 
     fun getRolloverEnabled(cycleMonthYear: String): Boolean {
         val jsonStr = prefs.getString("key_rollover_decision_map", "{}") ?: "{}"
-        if (jsonStr.isBlank() || jsonStr == "{}") return false
-        return try {
+        return !(jsonStr.isBlank() || jsonStr == "{}") && try {
             val obj = org.json.JSONObject(jsonStr)
             obj.optBoolean(cycleMonthYear, false)
         } catch (e: Exception) {

@@ -245,8 +245,7 @@ object NecessityManager {
             }
             .groupBy { it.payee.trim() }
             .filter { (payee, list) ->
-                if (q.isNotEmpty()) true
-                else list.size >= 2 || list.first().category.lowercase() in RECURRING_BILL_CATEGORIES ||
+                q.isNotEmpty() || list.size >= 2 || list.first().category.lowercase() in RECURRING_BILL_CATEGORIES ||
                         Regex("(?i)\\b(recharge|vi|jio|airtel|bsnl|spotify|netflix|youtube|google|gym|rent|wifi|broadband|electricity)\\b").containsMatchIn(payee)
             }
             .map { (payee, list) ->
@@ -429,10 +428,7 @@ object NecessityManager {
 
             val paidInCycle = txns.asSequence()
                 .filter {
-                    it.type == TransactionType.DEBIT &&
-                            !it.excludeFromSpend &&
-                            !it.category.equals("Transfer", ignoreCase = true) &&
-                            it.category != "Split Settlement" &&
+                    it.countsAsSpend() &&
                             it.timestamp >= cycleStart &&
                             matches(item, it.payee, it.category)
                 }
