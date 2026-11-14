@@ -45,6 +45,7 @@ import com.expensetracker.offline.ExpenseTrackerApp
 import com.expensetracker.offline.MainActivity
 import com.expensetracker.offline.data.local.entity.TransactionType
 import com.expensetracker.offline.data.repository.SettingsRepository
+import com.expensetracker.offline.ui.components.CurrencyFormat
 import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.NecessityManager
 import kotlinx.coroutines.CoroutineScope
@@ -130,7 +131,9 @@ class ExpenseWidget : GlanceAppWidget() {
 
                 spentTodayPaise = dao.getMySpendBetween(todayStart, todayEnd)
                 spentMonthPaise = dao.getMySpendBetween(cycleStart, cycleEnd)
-                val cycleKey = java.text.SimpleDateFormat("MMM_yyyy", java.util.Locale.US).format(java.util.Date(cycleStart))
+                val cycleKey = SimpleDateFormat("MMM_yyyy", Locale.US).format(
+                    Date(cycleStart)
+                )
                 val rolloverPaise = settingsRepo.rolloverBudgetMap[cycleKey] ?: 0L
                 monthlyBudgetPaise = if (settingsRepo.isBudgetExplicitlySet) (settingsRepo.effectiveMonthlyBudget * 100L - rolloverPaise).coerceAtLeast(0L) else 0L
                 pendingReviewCount = reviewDao.getPendingReviewCountSync()
@@ -160,13 +163,8 @@ class ExpenseWidget : GlanceAppWidget() {
             val size = LocalSize.current
             val isTall = size.height >= 210.dp
 
-            val formatter = NumberFormat.getNumberInstance(Locale.forLanguageTag("en-IN")).apply {
-                maximumFractionDigits = 0
-                minimumFractionDigits = 0
-            }
-
             val activeSpendPaise = if (isMonthlyView) spentMonthPaise else spentTodayPaise
-            val displayAmount = if (hideAmounts) "•••••" else formatter.format(activeSpendPaise / 100.0)
+            val displayAmount = if (hideAmounts) "•••••" else CurrencyFormat.amount(activeSpendPaise, 0)
 
             val budgetPct = if (monthlyBudgetPaise > 0L) {
                 ((spentMonthPaise.toDouble() / monthlyBudgetPaise.toDouble()) * 100.0).roundToInt()
@@ -271,12 +269,12 @@ class ExpenseWidget : GlanceAppWidget() {
                         dueBillsCount > 0 -> "$dueBillsCount fixed ${if (dueBillsCount == 1) "bill" else "bills"} due soon"
                         isMonthlyView && budgetPct != null -> {
                             if (remainingBudgetPaise >= 0L) {
-                                "₹${formatter.format(remainingBudgetPaise / 100.0)} left · $budgetPct% of budget used"
+                                "${CurrencyFormat.withSymbol(remainingBudgetPaise, 0)} left · $budgetPct% of budget used"
                             } else {
-                                "₹${formatter.format((-remainingBudgetPaise) / 100.0)} over monthly budget ($budgetPct%)"
+                                "${CurrencyFormat.withSymbol(-remainingBudgetPaise, 0)} over monthly budget ($budgetPct%)"
                             }
                         }
-                        !isMonthlyView && spentMonthPaise > 0L -> "₹${formatter.format(spentMonthPaise / 100.0)} spent this cycle"
+                        !isMonthlyView && spentMonthPaise > 0L -> "${CurrencyFormat.withSymbol(spentMonthPaise, 0)} spent this cycle"
                         else -> "100% offline · Auto-capture active"
                     }
                     val statusColor = when {
@@ -331,7 +329,7 @@ class ExpenseWidget : GlanceAppWidget() {
                                                 )
                                             }
                                             Text(
-                                                text = "${if (txn.isDebit) "" else "+"}₹${formatter.format(txn.amount / 100.0)}",
+                                                text = "${if (txn.isDebit) "" else "+"}${CurrencyFormat.smart(txn.amount)}",
                                                 style = TextStyle(
                                                     color = ColorProvider(if (txn.isDebit) textZinc50 else emeraldGreen),
                                                     fontSize = 13.sp,

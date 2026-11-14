@@ -37,7 +37,7 @@ sealed class BackupResult {
 }
 
 sealed class RestoreResult {
-    object SuccessRestart : RestoreResult()
+    data class SuccessRestart(val isLegacyV1: Boolean = false) : RestoreResult()
     object WrongPassphrase : RestoreResult()
     data class Error(val message: String) : RestoreResult()
 }
@@ -399,7 +399,7 @@ object BackupManager {
             backupShmFile.delete()
             databaseSwapped = false
 
-            RestoreResult.SuccessRestart
+            RestoreResult.SuccessRestart(isLegacyV1 = (detectedVersion == 0))
         } catch (e: Exception) {
             tmpDbFile.delete()
             if (databaseSwapped) {

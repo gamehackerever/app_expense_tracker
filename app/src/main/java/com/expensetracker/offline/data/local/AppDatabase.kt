@@ -325,7 +325,9 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile private var INSTANCE: AppDatabase? = null
 
         fun getInstance(context: Context): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
+            val existing = INSTANCE
+            if (existing != null) return existing
+            return synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
@@ -335,8 +337,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
                     MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18
-                ).fallbackToDestructiveMigrationFrom(1, 2, 3)
-                    .build().also { INSTANCE = it }
+                ).fallbackToDestructiveMigrationFrom(false, 1, 2, 3)
+                .build().also { INSTANCE = it }
             }
         }
 

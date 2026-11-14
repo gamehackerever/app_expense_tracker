@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.expensetracker.offline.MainActivity
+import com.expensetracker.offline.ui.components.CurrencyFormat
 import com.expensetracker.offline.data.repository.SettingsRepository
 import java.util.Locale
 
@@ -66,8 +67,8 @@ object LowBalanceNotifier {
             notificationManager.createNotificationChannel(channel)
         }
 
-        val formattedBal = String.format(Locale.getDefault(), "%,.2f", balance / 100.0)
-        val formattedThreshold = String.format(Locale.getDefault(), "%,.0f", thresholdRupees)
+        val formattedBal = CurrencyFormat.amount(balance)
+        val formattedThreshold = CurrencyFormat.rupees(thresholdRupees, 0)
 
         // Intent to launch the app when the user taps the notification
         val openIntent = Intent(context, MainActivity::class.java).apply {

@@ -28,7 +28,7 @@ class ExpenseTrackerApp : Application() {
         get() {
             val currentDb = database
             val existing = cachedRepo
-            if (existing != null && cachedDbRef === currentDb) return existing
+            if ((existing != null) && (cachedDbRef === currentDb)) return existing
             return synchronized(this) {
                 val dbNow = database
                 if (cachedRepo == null || cachedDbRef !== dbNow) {

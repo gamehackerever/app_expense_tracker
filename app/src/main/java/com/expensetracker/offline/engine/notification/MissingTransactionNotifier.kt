@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.expensetracker.offline.MainActivity
+import com.expensetracker.offline.ui.components.CurrencyFormat
 import java.util.Locale
 import kotlin.math.abs
 
@@ -44,8 +45,8 @@ object MissingTransactionNotifier {
 
         // Prevent ugly negative formatting (e.g. "₹-45.00")
         val absoluteGap = abs(discrepancyAmount)
-        val formattedDiff = String.format(Locale.getDefault(), "%,.2f", (absoluteGap / 100.0))
-        val formattedBal = String.format(Locale.getDefault(), "%,.2f", (newBalance / 100.0))
+        val formattedDiff = CurrencyFormat.amount(absoluteGap)
+        val formattedBal = CurrencyFormat.amount(newBalance)
 
         // Dynamically guess if they missed logging an expense or an income
         val gapType = if (discrepancyAmount > 0) "expense" else "income"

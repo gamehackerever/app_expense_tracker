@@ -13,6 +13,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.expensetracker.offline.MainActivity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.repository.SettingsRepository
+import com.expensetracker.offline.ui.components.CurrencyFormat
 import com.expensetracker.offline.util.NecessityManager
 import java.util.Locale
 
@@ -76,7 +77,7 @@ class DailySummaryReceiver : BroadcastReceiver() {
             val isCaptureHealthy = NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 
             val spendLine = if (count > 0) {
-                "You spent ₹${String.format(Locale.getDefault(), "%,.2f", spentRupees)} across $count transactions today."
+                "You spent ${CurrencyFormat.withSymbol(Math.round(spentRupees * 100))} across $count transaction${if (count == 1) "" else "s"} today."
             } else if (!isCaptureHealthy) {
                 "Zero expenses recorded today, but Auto-Capture is OFF. Tap to enable it."
             } else {
@@ -151,7 +152,7 @@ class DailySummaryReceiver : BroadcastReceiver() {
                 val dedupeKey = "key_bill_reminded_${alert.item.id}_${cycleKey}_$stage"
                 if (prefs.getBoolean(dedupeKey, false)) return@forEachIndexed
 
-                val rupees = String.format(Locale.getDefault(), "%,.0f", alert.remainingAmountPaise / 100.0)
+                val rupees = CurrencyFormat.amount(alert.remainingAmountPaise, 0)
                 val timingLabel = when {
                     alert.daysUntilDue < 0 -> "was due yesterday"
                     alert.daysUntilDue == 0 -> "is due today"

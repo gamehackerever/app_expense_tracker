@@ -105,7 +105,7 @@ class MainActivity : FragmentActivity() {
     private var isRequestingPermissions = false
     private var lastUnlockTime = 0L
 
-    private var intentTrigger by androidx.compose.runtime.mutableIntStateOf(0)
+    private var intentTrigger by mutableIntStateOf(0)
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
@@ -116,7 +116,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val prefs = getSharedPreferences("expense_tracker_prefs", MODE_PRIVATE)
+        val prefs = getSharedPreferences(com.expensetracker.offline.data.repository.SettingsRepository.PREFS_NAME, MODE_PRIVATE)
 
         setContent {
             var appThemeMode by remember {
@@ -162,14 +162,16 @@ class MainActivity : FragmentActivity() {
 
                         when (event) {
                             Lifecycle.Event.ON_PAUSE -> {
-                                if (SystemClock.elapsedRealtime() - lastUnlockTime > 1500) {
+                                if (!isChangingConfigurations && (SystemClock.elapsedRealtime() - lastUnlockTime > 1500)) {
                                     AppLockState.isLocked = true
                                     isAppLocked = true
                                 }
                             }
                             Lifecycle.Event.ON_STOP -> {
-                                AppLockState.isLocked = true
-                                isAppLocked = true
+                                if (!isChangingConfigurations) {
+                                    AppLockState.isLocked = true
+                                    isAppLocked = true
+                                }
                             }
                             else -> {}
                         }
@@ -181,13 +183,13 @@ class MainActivity : FragmentActivity() {
                 if (!isDisclosureAccepted) {
                     ProminentDisclosureScreen(
                         onCompleteOnboarding = { chosenBudgetRupees, enableAutoCapture, importCurrentCycleSms, importDirectly, openBackupRestore ->
-                            prefs.edit()
-                                .putBoolean("key_disclosure_accepted", true)
-                                .putBoolean("key_setup_dismissed", true)
-                                .putBoolean("key_restore_prompt_dismissed", true)
-                                .putBoolean("key_manual_mode_preferred", !enableAutoCapture)
-                                .putBoolean("key_permissions_prompted_once", true)
-                                .apply()
+                            prefs.edit {
+                                putBoolean("key_disclosure_accepted", true)
+                                putBoolean("key_setup_dismissed", true)
+                                putBoolean("key_restore_prompt_dismissed", true)
+                                putBoolean("key_manual_mode_preferred", !enableAutoCapture)
+                                putBoolean("key_permissions_prompted_once", true)
+                            }
                             viewModel.setManualModePreferred(!enableAutoCapture)
                             if (chosenBudgetRupees != null && chosenBudgetRupees > 0L) {
                                 viewModel.updateMonthlyBudget(chosenBudgetRupees)
@@ -211,7 +213,7 @@ class MainActivity : FragmentActivity() {
                             !prefs.getBoolean("key_manual_mode_preferred", false) &&
                             !prefs.getBoolean("key_permissions_prompted_once", false)
                         ) {
-                            prefs.edit().putBoolean("key_permissions_prompted_once", true).apply()
+                            prefs.edit { putBoolean("key_permissions_prompted_once", true) }
                             checkAndRequestPermissions()
                         }
                     }
@@ -320,7 +322,7 @@ fun AppLockScreen(onUnlock: () -> Unit) {
             BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> {
                 val credentialOnly = bm.canAuthenticate(BiometricManager.Authenticators.DEVICE_CREDENTIAL)
                 if (credentialOnly != BiometricManager.BIOMETRIC_SUCCESS) {
-                    context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+                    context.getSharedPreferences(com.expensetracker.offline.data.repository.SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE)
                         .edit { putBoolean("key_app_lock_enabled", false) }
                     Toast.makeText(context, "App Lock turned off: No device screen lock is set up.", Toast.LENGTH_LONG).show()
                     currentOnUnlock()
@@ -1255,7 +1257,7 @@ fun AppNavigation(
         composable("necessities") {
             val context = LocalContext.current
             val sharedPrefs = remember {
-                context.getSharedPreferences("expense_tracker_prefs", Context.MODE_PRIVATE)
+                context.getSharedPreferences(com.expensetracker.offline.data.repository.SettingsRepository.PREFS_NAME, Context.MODE_PRIVATE)
             }
             val initialItems = remember { NecessityManager.loadNecessities(sharedPrefs) }
             val txns by viewModel.allTransactionsWithDebts.collectAsStateWithLifecycle()
@@ -1306,7 +1308,7 @@ fun AppNavigation(
     }
 }
 
-fun android.content.Context.findFragmentActivity(): FragmentActivity? {
+fun Context.findFragmentActivity(): FragmentActivity? {
     var ctx = this
     while (ctx is android.content.ContextWrapper) {
         if (ctx is FragmentActivity) return ctx
