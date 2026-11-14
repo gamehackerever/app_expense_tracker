@@ -732,6 +732,7 @@ class SettingsRepository(context: Context) {
         const val KEY_BILL_REMINDERS_ENABLED = "key_bill_reminders_enabled"
         const val KEY_DISCLOSURE_ACCEPTED = "key_disclosure_accepted"
         const val KEY_MANUAL_MODE_PREFERRED = "key_manual_mode_preferred"
+        const val KEY_AUTOPAY_REMINDER_CLEANUP_COMPLETE = "key_autopay_reminder_cleanup_complete_v1"
         const val KEY_AUTO_CAPTURE_BANNER_DISMISSED = "key_auto_capture_banner_dismissed"
         const val KEY_PERMISSIONS_PROMPTED_ONCE = "key_permissions_prompted_once"
         const val KEY_APP_THEME_MODE = "key_app_theme_mode"

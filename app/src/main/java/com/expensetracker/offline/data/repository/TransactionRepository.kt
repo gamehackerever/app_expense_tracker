@@ -14,6 +14,7 @@ import com.expensetracker.offline.engine.categorizer.CategoryClassifier
 import com.expensetracker.offline.engine.categorizer.NaiveBayesCategorizer
 import com.expensetracker.offline.engine.ml.SmartExpenseEngine
 import com.expensetracker.offline.engine.ml.SmsPatternLearner
+import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.engine.recurring.RecurringPayment
 import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
 import com.expensetracker.offline.ui.components.deleteReceiptFile
@@ -702,6 +703,16 @@ class TransactionRepository(
             receiptUris.forEach { uri -> runCatching { deleteReceiptFile(ctx, uri) } }
         }
         refreshWidget()
+    }
+
+    /** Removes only legacy notification rows that the parser identifies as future mandate reminders. */
+    suspend fun removeCapturedUpcomingAutopayReminders(): Int {
+        val ids = transactionDao.getPotentialAutopayReminderTransactions()
+            .filter { FinancialParser.isUpcomingPaymentReminder(it.rawContent, it.payee) }
+            .map { it.id }
+        if (ids.isEmpty()) return 0
+        deleteTransactionsByIds(ids)
+        return ids.size
     }
 
     /**

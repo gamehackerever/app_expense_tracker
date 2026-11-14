@@ -59,6 +59,15 @@ class ExpenseTrackerApp : Application() {
         // Commit any soft-deleted transaction IDs that were still inside their 5-second undo window
         // when the app process was previously killed by the OS or swiped away from Recents.
         appScope.launch {
+            if (!settings.prefs.getBoolean(SettingsRepository.KEY_AUTOPAY_REMINDER_CLEANUP_COMPLETE, false)) {
+                val cleanup = runCatching { repository.removeCapturedUpcomingAutopayReminders() }
+                if (cleanup.isSuccess) {
+                    settings.prefs.edit()
+                        .putBoolean(SettingsRepository.KEY_AUTOPAY_REMINDER_CLEANUP_COMPLETE, true)
+                        .commit()
+                }
+            }
+
             runCatching {
                 val leftoverDeletes = settings.consumeAllPendingDeleteIds()
                 if (leftoverDeletes.isNotEmpty()) {

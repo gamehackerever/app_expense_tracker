@@ -451,6 +451,26 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE category != 'Split Settlement' ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentTransactions(limit: Int): List<TransactionEntity>
 
+    /** Candidate rows for the one-time cleanup of notification-captured scheduled AutoPay reminders. */
+    @Query("""
+        SELECT * FROM transactions
+        WHERE source IN ('NOTIFICATION', 'MERGED')
+          AND type = 'DEBIT'
+          AND linkedDebtId IS NULL
+          AND receiptImageUri IS NULL
+          AND (
+              LOWER(rawContent) LIKE '%autopay%'
+              OR LOWER(rawContent) LIKE '%auto pay%'
+              OR LOWER(rawContent) LIKE '%auto-pay%'
+              OR LOWER(rawContent) LIKE '%mandate%'
+              OR LOWER(payee) LIKE '%upcoming%'
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM split_debts WHERE split_debts.transactionId = transactions.id
+          )
+    """)
+    suspend fun getPotentialAutopayReminderTransactions(): List<TransactionEntity>
+
     @Query("""
         UPDATE transactions
         SET bankName = TRIM(SUBSTR(bankName, 1, LENGTH(bankName) - 3)),
