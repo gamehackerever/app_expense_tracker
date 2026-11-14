@@ -35,6 +35,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -2360,20 +2361,29 @@ fun DashboardScreen(
 
                     if (selectedTimeRange == TimeRange.THIS_MONTH || selectedTimeRange == TimeRange.LAST_MONTH) {
                         val viewingLast = selectedTimeRange == TimeRange.LAST_MONTH
-                        Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End) {
-                            Text(
-                                if (viewingLast) "Back to this cycle ›" else "‹ Previous cycle",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(AppRadius.pill))
-                                    .quietClickable {
-                                        haptic.tap()
-                                        selectedTimeRange = if (viewingLast) TimeRange.THIS_MONTH else TimeRange.LAST_MONTH
-                                    }
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                            )
+                        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+                            OutlinedButton(
+                                onClick = {
+                                    haptic.tap()
+                                    selectedTimeRange = if (viewingLast) TimeRange.THIS_MONTH else TimeRange.LAST_MONTH
+                                },
+                                shape = RoundedCornerShape(AppRadius.pill),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
+                            ) {
+                                Icon(
+                                    imageVector = if (viewingLast) Icons.AutoMirrored.Filled.ArrowForward else Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    if (viewingLast) "Return to current cycle" else "View previous cycle",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                     Spacer(modifier = Modifier.height(4.dp))
