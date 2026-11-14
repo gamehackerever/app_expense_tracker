@@ -32,6 +32,7 @@ import com.expensetracker.offline.data.local.dao.AccountInfo
 import com.expensetracker.offline.data.local.dao.TransactionWithDebts
 import com.expensetracker.offline.ui.components.PremiumFilterChip
 import com.expensetracker.offline.ui.theme.AppRadius
+import com.expensetracker.offline.ui.theme.AppSpacing
 
 @Composable
 fun DashboardSearchAndFilter(
@@ -117,21 +118,22 @@ fun DashboardSearchAndFilter(
 
         if (showCategoryChips) {
             Row(
-                modifier = Modifier.fillMaxWidth().fadingHorizontalScroll(),
+                modifier = Modifier.fillMaxWidth().fadingHorizontalScroll().padding(end = AppSpacing.screenPadding),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 PremiumFilterChip(
                     text = "Top spends",
                     isSelected = selectedSort == "HIGHEST",
-                    onClick = { haptic.tap(); onSortSelected(if (selectedSort == "HIGHEST") "NEWEST" else "HIGHEST") }
+                    compact = true,
+                    onClick = { onSortSelected(if (selectedSort == "HIGHEST") "NEWEST" else "HIGHEST") }
                 )
-                PremiumFilterChip(text = "All", isSelected = selectedFilterCategory == "All", onClick = { haptic.tap(); onCategorySelected("All") })
-                PremiumFilterChip(text = "Split only", isSelected = selectedFilterCategory == "Split Only", onClick = { haptic.tap(); onCategorySelected("Split Only") })
+                PremiumFilterChip(text = "All", isSelected = selectedFilterCategory == "All", compact = true, onClick = { onCategorySelected("All") })
+                PremiumFilterChip(text = "Split only", isSelected = selectedFilterCategory == "Split Only", compact = true, onClick = { onCategorySelected("Split Only") })
                 allAvailableCategories.forEach { category ->
-                    PremiumFilterChip(text = category, isSelected = selectedFilterCategory == category, onClick = { haptic.tap(); onCategorySelected(category) })
+                    PremiumFilterChip(text = category, isSelected = selectedFilterCategory == category, compact = true, onClick = { onCategorySelected(category) })
                 }
-                PremiumFilterChip(text = "+ Manage", isSelected = false, onClick = { haptic.tap(); onManageCategories() })
+                PremiumFilterChip(text = "+ Manage", isSelected = false, compact = true, onClick = onManageCategories)
             }
         }
 
@@ -143,14 +145,16 @@ fun DashboardSearchAndFilter(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fadingHorizontalScroll(),
+                    .fadingHorizontalScroll()
+                    .padding(end = AppSpacing.screenPadding),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 PremiumFilterChip(
                     text = "All Accounts",
                     isSelected = selectedAccount == null,
-                    onClick = { haptic.tap(); onAccountSelected(null) }
+                    compact = true,
+                    onClick = { onAccountSelected(null) }
                 )
 
                 if (hasUnspecifiedAccount) {
@@ -158,8 +162,9 @@ fun DashboardSearchAndFilter(
                     PremiumFilterChip(
                         text = "Unspecified",
                         isSelected = isUnspecifiedSelected,
+                        compact = true,
                         onClick = {
-                            haptic.tap(); onAccountSelected(AccountInfo("Unspecified", null))
+                            onAccountSelected(AccountInfo("Unspecified", null))
                         }
                     )
                 }
@@ -169,7 +174,8 @@ fun DashboardSearchAndFilter(
                     PremiumFilterChip(
                         text = label,
                         isSelected = selectedAccount == account && account.bankName != "Unspecified",
-                        onClick = { haptic.tap(); onAccountSelected(account) }
+                        compact = true,
+                        onClick = { onAccountSelected(account) }
                     )
                 }
             }

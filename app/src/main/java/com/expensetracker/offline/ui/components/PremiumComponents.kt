@@ -119,7 +119,12 @@ fun PremiumDropdownField(selectedOption: String, options: List<String>, onOption
 }
 
 @Composable
-fun PremiumFilterChip(text: String, isSelected: Boolean, onClick: () -> Unit) {
+fun PremiumFilterChip(
+    text: String,
+    isSelected: Boolean,
+    compact: Boolean = false,
+    onClick: () -> Unit
+) {
     val haptic = LocalHapticFeedback.current
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(AppRadius.pill)
@@ -160,7 +165,10 @@ fun PremiumFilterChip(text: String, isSelected: Boolean, onClick: () -> Unit) {
                 fontSize = 14.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, // Bumped weight for active chips
                 color = textColor,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp)
+                modifier = Modifier.padding(
+                    horizontal = if (compact) 12.dp else 16.dp,
+                    vertical = if (compact) 8.dp else 9.dp
+                )
             )
         }
     }

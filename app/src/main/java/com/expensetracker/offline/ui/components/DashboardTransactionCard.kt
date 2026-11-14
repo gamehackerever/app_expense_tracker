@@ -168,7 +168,7 @@ private object RowType {
 }
 
 private const val DetailMaxLines = 1
-private val DividerInset = 76.dp
+private val DividerInset = 72.dp
 
 @Composable
 fun TransactionGroup(
@@ -359,7 +359,8 @@ fun DashboardTransactionCard(
     val hasStatusRow = showActions && statusText != null
 
     val shape = if (grouped) RectangleShape else RoundedCornerShape(CardShapeDp)
-    val verticalPadding = if (grouped) 14.dp else 16.dp
+    val verticalPadding = if (grouped) 10.dp else 16.dp
+    val avatarSize = if (grouped) 40.dp else 44.dp
 
     Surface(
         modifier = modifier
@@ -414,24 +415,24 @@ fun DashboardTransactionCard(
                     isRepayment || (isCredit && transaction.category.equals("Uncategorized", ignoreCase = true)) ->
                         CategoryAvatar(
                             category = transaction.category,
-                            size = 44.dp,
+                            size = avatarSize,
                             tint = AppColors.positive,
                             iconOverride = Icons.Default.SouthWest
                         )
                     // A UPI payment to an individual: a person glyph reads better than the generic "unknown" shape.
                     isPersonPayee -> CategoryAvatar(
                         category = transaction.category,
-                        size = 44.dp,
+                        size = avatarSize,
                         iconOverride = Icons.Default.Person
                     )
                     else -> CategoryAvatar(
                         category = transaction.category,
-                        size = 44.dp,
+                        size = avatarSize,
                         tint = if (colorfulCategories) glyphColor else null
                     )
                 }
 
-                Spacer(Modifier.width(16.dp))
+                Spacer(Modifier.width(if (grouped) 12.dp else 16.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -499,7 +500,7 @@ fun DashboardTransactionCard(
                     }
 
                     visibleBillLabel?.let {
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(4.dp))
                         InlineMeta(
                             icon = Icons.Default.PushPin,
                             text = "Counted toward $it",
@@ -519,7 +520,7 @@ fun DashboardTransactionCard(
                         summary ?: if (isRawDump) null else flattenLines(noteTxt)
                     }
                     if (detail != null) {
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(4.dp))
                         InlineMeta(
                             icon = if (!transaction.itemsSummary.isNullOrBlank()) Icons.Default.ShoppingBasket else null,
                             text = detail,
@@ -539,7 +540,7 @@ fun DashboardTransactionCard(
                     }
                 }
 
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(if (grouped) 8.dp else 12.dp))
 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(

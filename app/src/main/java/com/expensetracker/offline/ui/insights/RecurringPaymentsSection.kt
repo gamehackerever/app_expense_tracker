@@ -14,8 +14,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -473,7 +477,7 @@ private fun RecurringPaymentsSheet(
     var tab by remember { mutableStateOf(if (active.isEmpty() && lapsed.isNotEmpty()) RecurringTab.LAPSED else RecurringTab.ACTIVE) }
     val tabs = buildList {
         add(RecurringTab.ACTIVE to "Active (${active.size})")
-        if (lapsed.isNotEmpty()) add(RecurringTab.LAPSED to "Cancelled? (${lapsed.size})")
+        if (lapsed.isNotEmpty()) add(RecurringTab.LAPSED to "Inactive (${lapsed.size})")
         if (hidden.isNotEmpty()) add(RecurringTab.HIDDEN to "Hidden (${hidden.size})")
     }
     // A tab that just emptied (last hidden item restored) must not leave the user on a blank page.
@@ -493,25 +497,35 @@ private fun RecurringPaymentsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp, top = 8.dp)
+                .padding(horizontal = AppSpacing.screenPadding)
+                .padding(bottom = AppSpacing.spacious, top = 4.dp)
         ) {
-            Text(
-                "Recurring payments",
-                fontWeight = FontWeight.Bold,
-                fontSize = 22.sp, letterSpacing = (-0.3).sp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                "${rupees(monthlyTotal)} / month · ${active.size} active",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Recurring payments",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        letterSpacing = (-0.3).sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        "${rupees(monthlyTotal)} / month · ${active.size} active",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close recurring payments")
+                }
+            }
 
             // Segmented control (same look as the Dashboard's time-range selector)
             if (tabs.size > 1) {
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 Surface(
                     shape = RoundedCornerShape(AppRadius.pill),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
@@ -563,11 +577,11 @@ private fun RecurringPaymentsSheet(
                 RecurringTab.ACTIVE -> null
             }
             if (helper != null) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(helper, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             if (list.isEmpty()) {
                 Text(
@@ -623,6 +637,7 @@ private fun RecurringPaymentCard(
 ) {
     val scheme = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
+    var overflowExpanded by remember { mutableStateOf(false) }
     val iconKey = payment.payee + " " + payment.category
     val categoryIcon = getCategoryIcon(iconKey)
     val categoryColor = getCategoryColor(iconKey)
@@ -636,19 +651,19 @@ private fun RecurringPaymentCard(
         color = scheme.surface,
         border = BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.5f))
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(AppSpacing.itemGap)) {
 
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = RoundedCornerShape(AppRadius.small),
                     color = categoryColor.copy(alpha = 0.12f),
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier.size(40.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(categoryIcon, contentDescription = null, tint = categoryColor, modifier = Modifier.size(22.dp))
+                        Icon(categoryIcon, contentDescription = null, tint = categoryColor, modifier = Modifier.size(20.dp))
                     }
                 }
-                Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(AppSpacing.itemGap))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         payment.payee,
@@ -662,10 +677,12 @@ private fun RecurringPaymentCard(
                     Text(
                         payment.cadence.label + if (tentative) " · tentative" else "",
                         fontSize = 13.sp,
-                        color = scheme.onSurfaceVariant
+                        color = scheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(AppSpacing.compact))
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
                         (if (payment.isFixedAmount) "" else "~") + rupees(payment.amount),
@@ -682,9 +699,37 @@ private fun RecurringPaymentCard(
                         )
                     }
                 }
+                if (!hiddenMode) {
+                    Box {
+                        IconButton(
+                            onClick = { overflowExpanded = true },
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = "More options for ${payment.payee}",
+                                tint = scheme.onSurfaceVariant
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = overflowExpanded,
+                            onDismissRequest = { overflowExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Mark as not recurring") },
+                                leadingIcon = { Icon(Icons.Default.VisibilityOff, contentDescription = null) },
+                                onClick = {
+                                    overflowExpanded = false
+                                    haptic.tap()
+                                    onHide()
+                                }
+                            )
+                        }
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(AppSpacing.compact))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -695,75 +740,38 @@ private fun RecurringPaymentCard(
                     Text(
                         "Last paid ${dateFormat.format(Date(payment.lastSeen))}",
                         fontSize = 12.sp,
-                        color = scheme.onSurfaceVariant
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
                     )
-                    Surface(
-                        shape = RoundedCornerShape(AppRadius.pill),
-                        color = scheme.onSurface.copy(alpha = 0.06f),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(AppRadius.pill))
-                            .quietClickable { haptic.tap(); onRestore() }
-                    ) {
-                        Text(
-                            "Restore",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = scheme.onSurface,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                        )
+                    TextButton(onClick = { haptic.tap(); onRestore() }) {
+                        Text("Restore", fontWeight = FontWeight.SemiBold)
                     }
                 } else {
                     RecurringBadge(
                         text = dueLabel(payment, now, lapsed, dateFormat),
                         color = dueColor(payment, now, lapsed)
                     )
-                    // Low-emphasis escape hatch for a wrongly detected payment.
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            "Hide",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(AppRadius.pill))
-                                .quietClickable { haptic.tap(); onHide() }
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
-                        )
-                        Text(
-                            "Not recurring",
-                            fontSize = 10.sp,
-                            color = scheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
-                    }
-                }
-            }
-
-            if (!hiddenMode && !lapsed) {
-                Spacer(modifier = Modifier.height(10.dp))
-                if (tracked) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Check, contentDescription = null, tint = AppColors.positive, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Counted in your fixed costs", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = scheme.onSurfaceVariant)
-                    }
-                } else {
-                    Surface(
-                        shape = RoundedCornerShape(AppRadius.pill),
-                        color = scheme.onSurface.copy(alpha = 0.06f),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(AppRadius.pill))
-                            .quietClickable {
-                                haptic.tap()
-                                onAddToFixedCosts(buildFixedCostDraft(payment))
+                    if (!lapsed) {
+                        if (tracked) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Check, contentDescription = null, tint = AppColors.positive, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("In fixed costs", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = scheme.onSurfaceVariant)
                             }
-                    ) {
-                        Text(
-                            "+ Add to fixed costs",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = scheme.onSurface,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
-                        )
+                        } else {
+                            TextButton(
+                                onClick = {
+                                    haptic.tap()
+                                    onAddToFixedCosts(buildFixedCostDraft(payment))
+                                },
+                                contentPadding = PaddingValues(horizontal = 6.dp),
+                                modifier = Modifier.heightIn(min = 40.dp)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Add fixed cost", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
                     }
                 }
             }
