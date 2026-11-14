@@ -17,6 +17,7 @@ import com.expensetracker.offline.engine.ml.SmsPatternLearner
 import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.engine.recurring.RecurringPayment
 import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
+import com.expensetracker.offline.engine.validation.TransactionIntegrityMonitor
 import com.expensetracker.offline.ui.components.deleteReceiptFile
 import com.expensetracker.offline.util.BalanceCache
 import com.expensetracker.offline.util.BillingCycleHelper
@@ -897,7 +898,7 @@ class TransactionRepository(
 
     private suspend fun queueForReview(
         parsed: com.expensetracker.offline.engine.parser.ParsedTransaction,
-        sender: String, timestamp: Long, source: TransactionSource
+        sender: String, timestamp: Long, source: TransactionSource, reviewReason: String? = null
     ): IngestResult {
         val amount = parsed.amount
         if (amount != null && amount > 0L) {
@@ -914,7 +915,7 @@ class TransactionRepository(
                 rawContent = parsed.rawText, sender = sender, timestamp = timestamp, source = source,
                 extractedPartialAmount = amount, extractedPartialPayee = parsed.payee,
                 type = parsed.type, bankName = parsed.bankName, accountNumber = parsed.accountNumber,
-                balance = parsed.balance, referenceId = parsed.referenceId
+                balance = parsed.balance, referenceId = parsed.referenceId, reviewReason = reviewReason
             )
         )
         return IngestResult.QueuedForReview(id)
@@ -971,7 +972,10 @@ class TransactionRepository(
                 return@withTransaction queueForReview(parsed, sender, timestamp, source)
             }
             if (type == null) {
-                return@withTransaction queueForReview(parsed, sender, timestamp, source)
+                return@withTransaction queueForReview(
+                    parsed, sender, timestamp, source,
+                    reviewReason = "Could not determine whether this was money in or money out."
+                )
             }
 
             val rawMatch = transactionDao.findMatchingTransaction(
@@ -1036,6 +1040,27 @@ class TransactionRepository(
                 )
             } else null
 
+            val monitorPayee = parsed.payee?.takeIf { it.isNotBlank() } ?: learnedEval.inferredPayee
+            if (source != TransactionSource.MANUAL && !parsed.isTransfer && oppositeLeg == null && !monitorPayee.isNullOrBlank()) {
+                val recentComparableTransactions = transactionDao.getRecentComparableTransactions(
+                    payee = monitorPayee,
+                    type = type,
+                    sinceTimestamp = timestamp - 400L * 24 * 60 * 60 * 1000,
+                    beforeTimestamp = timestamp
+                )
+                val reviewReason = TransactionIntegrityMonitor.assess(
+                    amount = amount,
+                    payee = monitorPayee,
+                    type = type,
+                    source = source,
+                    timestamp = timestamp,
+                    recentTransactions = recentComparableTransactions
+                )
+                if (reviewReason != null) {
+                    return@withTransaction queueForReview(parsed, sender, timestamp, source, reviewReason)
+                }
+            }
+
             if (oppositeLeg != null && !oppositeLeg.excludeFromSpend) {
                 transactionDao.updateTransaction(
                     oppositeLeg.copy(
@@ -1070,7 +1095,11 @@ class TransactionRepository(
             val isHighValue = type == TransactionType.DEBIT && amount > reviewThreshold && !isAutoTransfer && !learnedEval.isConfirmedTransaction
 
             if (!skipReview && (isHighValue || isMissingPayee)) {
-                return@withTransaction queueForReview(parsed, sender, timestamp, source)
+                val reason = when {
+                    isMissingPayee -> "Merchant could not be identified confidently."
+                    else -> "This is a high-value debit. Verify the amount and merchant."
+                }
+                return@withTransaction queueForReview(parsed, sender, timestamp, source, reason)
             }
 
             val resolvedPayee = when {

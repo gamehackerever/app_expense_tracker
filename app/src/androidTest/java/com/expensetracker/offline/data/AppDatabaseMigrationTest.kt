@@ -43,7 +43,8 @@ class AppDatabaseMigrationTest {
             true,
             AppDatabase.MIGRATION_15_16,
             AppDatabase.MIGRATION_16_17,
-            AppDatabase.MIGRATION_17_18
+            AppDatabase.MIGRATION_17_18,
+            AppDatabase.MIGRATION_18_19
         )
         migrated.query(
             "SELECT amount, payee, referenceId, accountType, budgetId, budgetOriginalExclusion FROM transactions WHERE id = 41"

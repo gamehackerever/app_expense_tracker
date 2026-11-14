@@ -451,6 +451,24 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE category != 'Split Settlement' ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentTransactions(limit: Int): List<TransactionEntity>
 
+    @Query("""
+        SELECT * FROM transactions
+        WHERE LOWER(TRIM(payee)) = LOWER(TRIM(:payee))
+          AND type = :type
+          AND timestamp >= :sinceTimestamp
+          AND timestamp < :beforeTimestamp
+          AND source != 'MANUAL'
+          AND excludeFromSpend = 0
+        ORDER BY timestamp DESC
+        LIMIT 20
+    """)
+    suspend fun getRecentComparableTransactions(
+        payee: String,
+        type: TransactionType,
+        sinceTimestamp: Long,
+        beforeTimestamp: Long
+    ): List<TransactionEntity>
+
     /** Candidate rows for the one-time cleanup of notification-captured scheduled AutoPay reminders. */
     @Query("""
         SELECT * FROM transactions

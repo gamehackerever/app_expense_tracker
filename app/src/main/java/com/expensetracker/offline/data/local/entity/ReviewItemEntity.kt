@@ -22,6 +22,7 @@ data class ReviewItemEntity(
     val accountNumber: String? = null,
     val balance: Long? = null,
     val referenceId: String? = null,
+    val reviewReason: String? = null,
 
     val status: ReviewStatus = ReviewStatus.PENDING
 )

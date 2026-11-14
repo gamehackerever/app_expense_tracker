@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.TouchApp
@@ -803,7 +804,13 @@ fun ReviewCard(
                                             Text(payeeText.ifBlank { "Unknown merchant" }, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             // Hiding redundant preview snippet when card is expanded
                                             if (!expanded) {
-                                                Text(item.rawContent.take(60), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(
+                                                    item.reviewReason ?: item.rawContent.take(60),
+                                                    fontSize = 12.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    color = if (item.reviewReason != null) AppColors.warning else MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
                                             }
                                         }
                                         Spacer(Modifier.width(12.dp))
@@ -830,6 +837,33 @@ fun ReviewCard(
                                             modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                                             verticalArrangement = Arrangement.spacedBy(16.dp)
                                         ) {
+                                            item.reviewReason?.let { reason ->
+                                                Surface(
+                                                    shape = RoundedCornerShape(AppRadius.medium),
+                                                    color = AppColors.warning.copy(alpha = 0.10f),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(12.dp),
+                                                        verticalAlignment = Alignment.Top
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Default.WarningAmber,
+                                                            contentDescription = null,
+                                                            tint = AppColors.warning,
+                                                            modifier = Modifier.padding(top = 1.dp).size(18.dp)
+                                                        )
+                                                        Spacer(Modifier.width(8.dp))
+                                                        Text(
+                                                            "Check this transaction: $reason",
+                                                            fontSize = 13.sp,
+                                                            lineHeight = 18.sp,
+                                                            color = MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                    }
+                                                }
+                                            }
+
                                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                                     Icon(Icons.Default.RateReview, contentDescription = null, tint = AppColors.warning, modifier = Modifier.size(14.dp))
