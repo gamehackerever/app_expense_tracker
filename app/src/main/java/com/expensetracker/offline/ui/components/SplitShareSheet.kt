@@ -1475,7 +1475,7 @@ private fun ParticipantRow(
 
             when {
                 nameError != null -> SubLabel(nameError, AppColors.negative)
-                showNameNudge && participant.name.isBlank() -> SubLabel("Enter a name before adding someone else", AppColors.negative)
+                showNameNudge && participant.name.isBlank() -> SubLabel("Name this person first", AppColors.negative)
                 (mode == SplitMode.PERCENTAGE || mode == SplitMode.SHARES) && sharePaise > 0L -> SubLabel(if (isPayer) "${money(sharePaise)} · Paid the bill" else money(sharePaise), variant)
                 isPayer -> SubLabel("Paid the bill", AppColors.positive, bold = true)
             }
