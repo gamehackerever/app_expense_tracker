@@ -323,7 +323,10 @@ fun AddExpenseSheet(
                     calculatedAmount = calculatedAmount?.let { it / 100.0 },
                     isDebit = transactionType == TransactionType.DEBIT,
                     trailing = {
-                        SheetDatePill(millis = transactionDateMillis, onDateSelected = { transactionDateMillis = it })
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SheetDatePill(millis = transactionDateMillis, onDateSelected = { transactionDateMillis = it })
+                            SheetTimePill(millis = transactionDateMillis, onTimeSelected = { transactionDateMillis = it })
+                        }
                     }
                 )
 

@@ -1,13 +1,16 @@
 package com.expensetracker.offline.ui.components
 
+import android.text.format.DateFormat
 import com.expensetracker.offline.util.tap
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,18 +67,7 @@ fun SheetDatePill(millis: Long, onDateSelected: (Long) -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     pickerState.selectedDateMillis?.let { pickedUtc ->
-                        val cal = Calendar.getInstance()
-                        val currentHour = cal.get(Calendar.HOUR_OF_DAY)
-                        val currentMin = cal.get(Calendar.MINUTE)
-                        val currentSec = cal.get(Calendar.SECOND)
-
-                        cal.timeZone = java.util.TimeZone.getTimeZone("UTC")
-                        cal.timeInMillis = pickedUtc
-
-                        val localCal = Calendar.getInstance()
-                        localCal.set(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DATE), currentHour, currentMin, currentSec)
-
-                        onDateSelected(localCal.timeInMillis)
+                        onDateSelected(sheetDateWithExistingTime(pickedUtc, millis))
                     }
                     showPicker = false
                 }) { Text("OK") }
@@ -83,6 +75,85 @@ fun SheetDatePill(millis: Long, onDateSelected: (Long) -> Unit) {
             dismissButton = { TextButton(onClick = { showPicker = false }) { Text("Cancel") } }
         ) { DatePicker(state = pickerState) }
     }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+fun SheetTimePill(millis: Long, onTimeSelected: (Long) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val pill = RoundedCornerShape(AppRadius.pill)
+    val label = remember(millis) { DateFormat.getTimeFormat(context).format(Date(millis)) }
+    var showPicker by rememberSaveable { mutableStateOf(false) }
+
+    Surface(
+        shape = pill,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier
+            .minimumInteractiveComponentSize()
+            .clip(pill)
+            .clickable {
+                haptic.tap()
+                showPicker = true
+            }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Schedule, contentDescription = "Change time", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+        }
+    }
+
+    if (showPicker) {
+        val current = Calendar.getInstance().apply { timeInMillis = millis }
+        val pickerState = rememberTimePickerState(
+            initialHour = current.get(Calendar.HOUR_OF_DAY),
+            initialMinute = current.get(Calendar.MINUTE),
+            is24Hour = DateFormat.is24HourFormat(context)
+        )
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            title = { Text("Select time") },
+            text = { TimePicker(state = pickerState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val updated = Calendar.getInstance().apply {
+                        timeInMillis = millis
+                        set(Calendar.HOUR_OF_DAY, pickerState.hour)
+                        set(Calendar.MINUTE, pickerState.minute)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                    onTimeSelected(updated.timeInMillis)
+                    showPicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+internal fun sheetDateWithExistingTime(pickedUtcMillis: Long, existingLocalMillis: Long): Long {
+    val pickedDate = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+        timeInMillis = pickedUtcMillis
+    }
+    val existingTime = Calendar.getInstance().apply { timeInMillis = existingLocalMillis }
+    return Calendar.getInstance().apply {
+        set(
+            pickedDate.get(Calendar.YEAR),
+            pickedDate.get(Calendar.MONTH),
+            pickedDate.get(Calendar.DAY_OF_MONTH),
+            existingTime.get(Calendar.HOUR_OF_DAY),
+            existingTime.get(Calendar.MINUTE),
+            0
+        )
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
 }
 
 internal fun sheetIsSameDay(millis: Long, other: Calendar): Boolean {
