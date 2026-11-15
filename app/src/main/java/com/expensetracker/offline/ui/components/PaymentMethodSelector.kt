@@ -46,11 +46,8 @@ fun PaymentMethodSelector(
     val selectedAccount = linkedAccounts.firstOrNull {
         it.bankName == selectedBankName && it.accountNumber == selectedAccountNumber
     }
-    val selectedLabel = when {
-        selectedBankName == null -> nullLabel
-        selectedAccount != null -> paymentAccountLabel(selectedAccount.bankName, selectedAccount.accountNumber)
-        else -> paymentAccountLabel(selectedBankName, selectedAccountNumber)
-    }
+    val selectedBankLabel = selectedAccount?.bankName ?: selectedBankName ?: nullLabel
+    val selectedAccountSuffix = paymentAccountSuffix(selectedAccount?.accountNumber ?: selectedAccountNumber)
     val selectedIcon = if (selectedBankName == null) Icons.Default.Payments else Icons.Default.AccountBalance
 
     SheetCard(
@@ -78,20 +75,34 @@ fun PaymentMethodSelector(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(2.dp))
-                Text(
-                    selectedLabel,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        selectedBankLabel,
+                        modifier = Modifier.weight(1f),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (selectedBankName != null && selectedAccountSuffix != null) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "•••• $selectedAccountSuffix",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "Choose payment method",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
-            Icon(
-                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = "Choose payment method",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 
@@ -131,8 +142,9 @@ fun PaymentMethodSelector(
                 linkedAccounts.forEach { account ->
                     val isSelected = selectedBankName == account.bankName && selectedAccountNumber == account.accountNumber
                     PaymentMethodOption(
-                        label = paymentAccountLabel(account.bankName, account.accountNumber),
-                        supportingText = "Bank account",
+                        label = account.bankName,
+                        supportingText = paymentAccountSuffix(account.accountNumber)
+                            ?.let { "Account ending in $it" } ?: "Bank account",
                         icon = Icons.Default.AccountBalance,
                         selected = isSelected,
                         onClick = {
@@ -205,7 +217,5 @@ private fun PaymentMethodOption(
     }
 }
 
-private fun paymentAccountLabel(bankName: String, accountNumber: String?): String {
-    val lastFour = accountNumber?.filter(Char::isLetterOrDigit)?.takeLast(4)
-    return if (lastFour.isNullOrEmpty()) bankName else "$bankName •••• $lastFour"
-}
+private fun paymentAccountSuffix(accountNumber: String?): String? =
+    accountNumber?.filter { it.isLetterOrDigit() }?.takeLast(4)?.takeIf { it.isNotEmpty() }

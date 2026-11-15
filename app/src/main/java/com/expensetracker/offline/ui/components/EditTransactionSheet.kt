@@ -723,20 +723,23 @@ fun EditTransactionSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 4.dp)
                         )
-                        FilledTonalButton(
+                        OutlinedButton(
                             onClick = {
                                 haptic.tap()
                                 if (canSplit) onSplit.invoke() else onLinkToBill?.invoke()
                             },
                             enabled = !hasUnsavedChanges,
                             shape = RoundedCornerShape(AppRadius.small),
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                            colors = ButtonDefaults.outlinedButtonColors(
                                 contentColor = MaterialTheme.colorScheme.onSurface,
-                                disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
                                 disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                             ),
-                            border = null,
+                            border = BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.outlineVariant.copy(
+                                    alpha = if (hasUnsavedChanges) 0.3f else 0.7f
+                                )
+                            ),
                             modifier = Modifier.fillMaxWidth().height(48.dp)
                         ) {
                             Icon(
