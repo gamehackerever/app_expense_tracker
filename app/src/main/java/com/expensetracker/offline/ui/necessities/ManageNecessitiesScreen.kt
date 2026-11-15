@@ -5,16 +5,6 @@ package com.expensetracker.offline.ui.necessities
 import com.expensetracker.offline.util.tap
 import com.expensetracker.offline.util.confirm
 import android.content.Context
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -78,18 +68,6 @@ fun ManageNecessitiesScreen(
     var itemToLink by remember { mutableStateOf<NecessityItem?>(null) }
 
     val listState = rememberLazyListState()
-    val isFabExpanded by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
-    var isFabScrolledAway by remember { mutableStateOf(false) }
-    val fabScrollConnection = remember {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (available.y < -8f) isFabScrolledAway = true
-                else if (available.y > 8f) isFabScrolledAway = false
-                return Offset.Zero
-            }
-        }
-    }
-    val isFabVisible by remember { derivedStateOf { !isFabScrolledAway || isFabExpanded || !listState.canScrollForward } }
     var itemPendingDelete by remember { mutableStateOf<NecessityItem?>(null) }
 
     val total = remember(localItems, pendingDeleteIds) {
@@ -199,32 +177,36 @@ fun ManageNecessitiesScreen(
                 onBack = { haptic.tap(); onNavigateBack() }
             )
         },
-        floatingActionButton = {
+        bottomBar = {
             if (localItems.isNotEmpty()) {
-                AnimatedVisibility(
-                    visible = isFabVisible,
-                    enter = fadeIn() + scaleIn(initialScale = 0.85f),
-                    exit = fadeOut() + scaleOut(targetScale = 0.85f)
-                ) {
-                    ExtendedFloatingActionButton(
-                    onClick = {
-                        haptic.tap()
-                        itemToEdit = null
-                        prefillItem = null
-                        showFormSheet = true
-                    },
-                    expanded = isFabExpanded,
-                    containerColor = MaterialTheme.colorScheme.onSurface,
-                    contentColor = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(AppRadius.pill),
-                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 2.dp),
-                    icon = {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
-                    },
-                        text = {
-                            Text("Add Fixed Cost", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                        }
-                    )
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = AppSpacing.screenPadding, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                haptic.tap()
+                                itemToEdit = null
+                                prefillItem = null
+                                showFormSheet = true
+                            },
+                            expanded = true,
+                            containerColor = MaterialTheme.colorScheme.onSurface,
+                            contentColor = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(AppRadius.pill),
+                            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 2.dp),
+                            icon = {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
+                            },
+                            text = {
+                                Text("Add Fixed Cost", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            }
+                        )
+                    }
                 }
             }
         },
@@ -234,10 +216,9 @@ fun ManageNecessitiesScreen(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .nestedScroll(fabScrollConnection)
                 .padding(paddingValues)
                 .padding(horizontal = AppSpacing.screenPadding),
-            contentPadding = PaddingValues(top = 12.dp, bottom = 96.dp),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
