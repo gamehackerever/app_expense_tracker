@@ -106,47 +106,47 @@ fun EditTransactionSheet(
         listOf(transaction.category) + all
     }
 
-    var payee by rememberSaveable { mutableStateOf(transaction.payee) }
+    var payee by rememberSaveable(transaction.id) { mutableStateOf(transaction.payee) }
     val originalNote = transaction.note.orEmpty().takeUnless { ImportedSource.isSystemNote(it) }.orEmpty()
-    var note by rememberSaveable { mutableStateOf(originalNote) }
+    var note by rememberSaveable(transaction.id) { mutableStateOf(originalNote) }
 
-    var amountStr by rememberSaveable { mutableStateOf(String.format(Locale.US, "%.2f", transaction.amount / 100.0)) }
+    var amountStr by rememberSaveable(transaction.id) { mutableStateOf(String.format(Locale.US, "%.2f", transaction.amount / 100.0)) }
 
-    var selectedCategory by rememberSaveable { mutableStateOf(transaction.category) }
-    var transactionType by rememberSaveable { mutableStateOf(transaction.type) }
-    var excludeFromSpend by rememberSaveable { mutableStateOf(transaction.excludeFromSpend) }
+    var selectedCategory by rememberSaveable(transaction.id) { mutableStateOf(transaction.category) }
+    var transactionType by rememberSaveable(transaction.id) { mutableStateOf(transaction.type) }
+    var excludeFromSpend by rememberSaveable(transaction.id) { mutableStateOf(transaction.excludeFromSpend) }
 
     // Remember the last non-Transfer category and excludeFromSpend state so toggling Transfer -> Expense/Income restores them!
-    var lastNonTransferCategory by rememberSaveable {
+    var lastNonTransferCategory by rememberSaveable(transaction.id) {
         val initialNonTransfer = transaction.category.takeUnless { it.equals("Transfer", ignoreCase = true) }
             ?: CategoryClassifier.classifySync(transaction.payee, transaction.rawContent)
                 .takeUnless { it.equals("Transfer", ignoreCase = true) }
             ?: "Uncategorized"
         mutableStateOf(initialNonTransfer)
     }
-    var lastNonTransferExclude by rememberSaveable {
+    var lastNonTransferExclude by rememberSaveable(transaction.id) {
         mutableStateOf(!transaction.category.equals("Transfer", ignoreCase = true) && transaction.excludeFromSpend)
     }
 
     val initialNoteText = remember(transaction.itemsSummary, transaction.note) {
         transaction.itemsSummary?.takeIf { it.isNotBlank() } ?: originalNote
     }
-    var itemsSummary by rememberSaveable { mutableStateOf(initialNoteText) }
+    var itemsSummary by rememberSaveable(transaction.id) { mutableStateOf(initialNoteText) }
 
-    var receiptImageUri by rememberSaveable { mutableStateOf(transaction.receiptImageUri) }
-    var applyToAllPast by rememberSaveable { mutableStateOf(false) }
+    var receiptImageUri by rememberSaveable(transaction.id) { mutableStateOf(transaction.receiptImageUri) }
+    var applyToAllPast by rememberSaveable(transaction.id) { mutableStateOf(false) }
 
-    var editedBankName by rememberSaveable { mutableStateOf(transaction.bankName) }
-    var editedAccountNumber by rememberSaveable { mutableStateOf(transaction.accountNumber) }
+    var editedBankName by rememberSaveable(transaction.id) { mutableStateOf(transaction.bankName) }
+    var editedAccountNumber by rememberSaveable(transaction.id) { mutableStateOf(transaction.accountNumber) }
 
-    var transactionDateMillis by rememberSaveable { mutableLongStateOf(transaction.timestamp) }
+    var transactionDateMillis by rememberSaveable(transaction.id) { mutableLongStateOf(transaction.timestamp) }
 
     var showNewCategoryDialog by remember { mutableStateOf(false) }
     var itemizedSplitShares by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
 
     val calculatedAmount = remember(amountStr) { evaluateBasicMath(amountStr) }
 
-    var userManuallyPickedCategoryInEdit by rememberSaveable { mutableStateOf(false) }
+    var userManuallyPickedCategoryInEdit by rememberSaveable(transaction.id) { mutableStateOf(false) }
     LaunchedEffect(payee) {
         if (userManuallyPickedCategoryInEdit) return@LaunchedEffect
         val clean = payee.trim()
@@ -756,6 +756,22 @@ fun EditTransactionSheet(
                         isSaving = true
                         val finalAmount = calculatedAmount ?: transaction.amount
                         val trimmedPayee = payee.trim().ifBlank { if (transactionType == TransactionType.DEBIT) "Cash Expense" else "Income" }
+                        val detailWasEdited = itemsSummary.trim() != initialNoteText.trim()
+                        val editedDetail = itemsSummary.trim().ifBlank { null }
+                        val editingLegacyNoteField = transaction.itemsSummary.isNullOrBlank() && originalNote.isNotBlank()
+                        val savedNote = when {
+                            // The editor presents note and item summary as one field. When the user
+                            // clears it, clear both columns so the old value cannot reappear via the
+                            // transaction card's note fallback.
+                            detailWasEdited && editedDetail == null -> null
+                            editingLegacyNoteField && detailWasEdited -> editedDetail
+                            else -> note.trim().ifBlank { null }
+                        }
+                        val savedItemsSummary = when {
+                            detailWasEdited && editedDetail == null -> null
+                            editingLegacyNoteField -> null
+                            else -> editedDetail
+                        }
 
                         if (shouldApplyToAllPast) {
                             onUpdateAllPast(transaction.payee, trimmedPayee, selectedCategory)
@@ -769,9 +785,8 @@ fun EditTransactionSheet(
                             excludeFromSpend = excludeFromSpend,
                             budgetId = selectedBudgetId,
                             timestamp = transactionDateMillis,
-                            // Editing a transaction must not silently erase its user note/details.
-                            note = note.trim().ifBlank { null },
-                            itemsSummary = itemsSummary.trim().ifBlank { null },
+                            note = savedNote,
+                            itemsSummary = savedItemsSummary,
                             receiptImageUri = receiptImageUri,
                             bankName = editedBankName,
                             accountNumber = editedAccountNumber
