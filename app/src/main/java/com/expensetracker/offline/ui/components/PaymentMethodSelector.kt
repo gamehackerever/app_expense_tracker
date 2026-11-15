@@ -1,38 +1,36 @@
 package com.expensetracker.offline.ui.components
 
 import com.expensetracker.offline.util.tap
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalance
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.expensetracker.offline.data.local.dao.AccountInfo
 import com.expensetracker.offline.ui.theme.AppRadius
 
-@OptIn(ExperimentalLayoutApi::class)
+/** A compact selected-value field with a dedicated, accessible account picker. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PaymentMethodSelector(
     linkedAccounts: List<AccountInfo>,
@@ -44,46 +42,103 @@ fun PaymentMethodSelector(
     if (linkedAccounts.isEmpty()) return
 
     val haptic = LocalHapticFeedback.current
+    var showPicker by remember(selectedBankName, selectedAccountNumber) { mutableStateOf(false) }
+    val selectedAccount = linkedAccounts.firstOrNull {
+        it.bankName == selectedBankName && it.accountNumber == selectedAccountNumber
+    }
+    val selectedLabel = when {
+        selectedBankName == null -> nullLabel
+        selectedAccount != null -> paymentAccountLabel(selectedAccount.bankName, selectedAccount.accountNumber)
+        else -> paymentAccountLabel(selectedBankName, selectedAccountNumber)
+    }
+    val selectedIcon = if (selectedBankName == null) Icons.Default.Payments else Icons.Default.AccountBalance
 
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(
-            "Payment method",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.3.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+    SheetCard(
+        onClick = {
+            haptic.tap()
+            showPicker = true
+        },
+        contentPadding = 12.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SheetIconTile(
+                icon = selectedIcon,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(40.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Payment method",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    selectedLabel,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = "Choose payment method",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val chipMaxWidth = maxWidth
-            FlowRow(
-                modifier = Modifier.fillMaxWidth().selectableGroup(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+    if (showPicker) {
+        ResistantModalBottomSheet(
+            onDismissRequest = { showPicker = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            shape = RoundedCornerShape(topStart = AppRadius.large, topEnd = AppRadius.large),
+            containerColor = MaterialTheme.colorScheme.background
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                val isNullSelected = selectedBankName == null
-                PaymentChip(
+                SheetHeader(
+                    title = "Payment method",
+                    subtitle = "Choose where this transaction was paid from"
+                )
+
+                PaymentMethodOption(
                     label = nullLabel,
+                    supportingText = "No bank account assigned",
                     icon = Icons.Default.Payments,
-                    selected = isNullSelected,
-                    maxWidth = chipMaxWidth,
+                    selected = selectedBankName == null,
                     onClick = {
                         haptic.tap()
                         onBankSelected(null, null)
+                        showPicker = false
                     }
                 )
 
                 linkedAccounts.forEach { account ->
                     val isSelected = selectedBankName == account.bankName && selectedAccountNumber == account.accountNumber
-                    val label = if (account.accountNumber != null) "${account.bankName} •••• ${account.accountNumber}" else account.bankName
-                    PaymentChip(
-                        label = label,
+                    PaymentMethodOption(
+                        label = paymentAccountLabel(account.bankName, account.accountNumber),
+                        supportingText = "Bank account",
                         icon = Icons.Default.AccountBalance,
                         selected = isSelected,
-                        maxWidth = chipMaxWidth,
                         onClick = {
                             haptic.tap()
                             onBankSelected(account.bankName, account.accountNumber)
+                            showPicker = false
                         }
                     )
                 }
@@ -93,54 +148,64 @@ fun PaymentMethodSelector(
 }
 
 @Composable
-private fun PaymentChip(
+private fun PaymentMethodOption(
     label: String,
+    supportingText: String,
     icon: ImageVector,
     selected: Boolean,
-    maxWidth: Dp,
     onClick: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(AppRadius.pill)
-
-    // FIX: Solid neutral dark for selected state
-    val bg by animateColorAsState(if (selected) colors.onSurface else colors.surface, tween(150), label = "payBg")
-    val border by animateColorAsState(
-        if (selected) Color.Transparent else colors.outlineVariant.copy(alpha = 0.3f), // Softer unselected border
-        tween(150),
-        label = "payBorder"
-    )
-    val fg by animateColorAsState(if (selected) colors.surface else colors.onSurfaceVariant, tween(150), label = "payText")
+    val shape = RoundedCornerShape(AppRadius.medium)
+    val activeBorder = colors.primary.copy(alpha = 0.5f)
 
     Surface(
-        shape = shape,
-        color = bg,
-        border = if (selected) null else BorderStroke(1.dp, border),
         modifier = Modifier
-            .widthIn(max = maxWidth)
+            .fillMaxWidth()
             .clip(shape)
             .semantics { this.selected = selected }
-            .clickable(role = Role.RadioButton, onClick = onClick)
+            .clickable(role = Role.RadioButton, onClick = onClick),
+        shape = shape,
+        color = if (selected) colors.primary.copy(alpha = 0.06f) else colors.surface,
+        border = BorderStroke(
+            1.dp,
+            if (selected) activeBorder else colors.outlineVariant.copy(alpha = 0.4f)
+        )
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = if (selected) Icons.Default.Check else icon,
-                contentDescription = null,
-                tint = fg, // Uses the high-contrast foreground
-                modifier = Modifier.size(16.dp)
+            SheetIconTile(
+                icon = icon,
+                tint = if (selected) colors.primary else colors.onSurfaceVariant,
+                modifier = Modifier.size(40.dp)
             )
-            Text(
-                text = label,
-                fontSize = 14.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium, // Bumped weight for active
-                color = fg,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    label,
+                    fontSize = 15.sp,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    color = colors.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    supportingText,
+                    fontSize = 12.sp,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+            if (selected) {
+                Icon(Icons.Default.CheckCircle, contentDescription = "Selected", tint = colors.primary)
+            }
         }
     }
+}
+
+private fun paymentAccountLabel(bankName: String, accountNumber: String?): String {
+    val lastFour = accountNumber?.filter(Char::isLetterOrDigit)?.takeLast(4)
+    return if (lastFour.isNullOrEmpty()) bankName else "$bankName •••• $lastFour"
 }
