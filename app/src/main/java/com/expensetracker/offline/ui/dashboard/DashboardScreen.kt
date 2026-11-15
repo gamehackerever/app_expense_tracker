@@ -561,6 +561,11 @@ fun DashboardScreen(
                 fmt.format(Date(endMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))
         }
     }
+    val lastCycleDateLabel = remember(startDayOfMonth) {
+        val fmt = SimpleDateFormat("d MMM", Locale.getDefault())
+        "${fmt.format(Date(startMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))} – " +
+            fmt.format(Date(endMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))
+    }
     val currentMonthName = remember(startDayOfMonth, java.time.LocalDate.now()) {
         BillingCycleHelper.getCycleMonthName(startDayOfMonth)
     }
@@ -2361,29 +2366,44 @@ fun DashboardScreen(
 
                     if (selectedTimeRange == TimeRange.THIS_MONTH || selectedTimeRange == TimeRange.LAST_MONTH) {
                         val viewingLast = selectedTimeRange == TimeRange.LAST_MONTH
-                        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                            OutlinedButton(
-                                onClick = {
-                                    haptic.tap()
-                                    selectedTimeRange = if (viewingLast) TimeRange.THIS_MONTH else TimeRange.LAST_MONTH
-                                },
-                                shape = RoundedCornerShape(AppRadius.pill),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
-                            ) {
-                                Icon(
-                                    imageVector = if (viewingLast) Icons.AutoMirrored.Filled.ArrowForward else Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(6.dp))
+                        OutlinedButton(
+                            onClick = {
+                                haptic.tap()
+                                selectedTimeRange = if (viewingLast) TimeRange.THIS_MONTH else TimeRange.LAST_MONTH
+                            },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 56.dp),
+                            shape = RoundedCornerShape(AppRadius.medium),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
+                        ) {
+                            Icon(
+                                imageVector = if (viewingLast) Icons.AutoMirrored.Filled.ArrowForward else Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                                 Text(
                                     if (viewingLast) "Return to current cycle" else "View previous cycle",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    if (viewingLast) currentMonthName else lastCycleDateLabel,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
                                 )
                             }
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                     Spacer(modifier = Modifier.height(4.dp))
