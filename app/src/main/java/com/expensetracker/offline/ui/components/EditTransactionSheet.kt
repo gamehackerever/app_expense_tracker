@@ -272,10 +272,10 @@ fun EditTransactionSheet(
         Column(modifier = Modifier.fillMaxWidth().imePadding()) {
             Column(
                 modifier = Modifier
-                    .weight(1f, fill = false)
+                    .weight(1f, fill = true)
                     .padding(horizontal = 24.dp)
                     .padding(top = 8.dp, bottom = 28.dp)
-                    .fadingVerticalScroll()
+                    .verticalScroll(rememberScrollState())
                     .animateContentSize(),
                 verticalArrangement = Arrangement.spacedBy(13.dp)
             ) {

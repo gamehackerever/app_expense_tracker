@@ -23,13 +23,11 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,7 +44,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -160,16 +157,12 @@ internal fun CategoryBreakdownCard(
                     }
                 }
 
-                // Horizontally scrollable category legend pills under the stacked bar for all active categories
+                // Wrap the complete legend so categories and shares remain visible without horizontal scrolling.
                 Spacer(modifier = Modifier.height(10.dp))
-                val legendScroll = rememberScrollState()
-                Box(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(legendScroll),
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     positiveCategories.forEach { cat ->
                         val rawPct = cat.totalSpent.toDouble() / grandTotal.toDouble() * 100.0
@@ -195,25 +188,12 @@ internal fun CategoryBreakdownCard(
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 176.dp)
                             )
                         }
                     }
-                }
-                // Right-edge fade: hints that more categories are off-screen, disappears once scrolled to the end
-                if (legendScroll.canScrollForward) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .width(36.dp)
-                            .height(24.dp)
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(Color.Transparent, MaterialTheme.colorScheme.surface)
-                                )
-                            )
-                    )
-                }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
