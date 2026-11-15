@@ -133,6 +133,7 @@ fun DashboardSearchAndFilter(
                     text = "Top spends",
                     isSelected = selectedSort == "HIGHEST",
                     compact = true,
+                    secondarySelection = true,
                     onClick = { onSortSelected(if (selectedSort == "HIGHEST") "NEWEST" else "HIGHEST") }
                 )
                 PremiumFilterChip(text = "All", isSelected = selectedFilterCategory == "All", compact = true, onClick = { onCategorySelected("All") })

@@ -123,6 +123,7 @@ fun PremiumFilterChip(
     text: String,
     isSelected: Boolean,
     compact: Boolean = false,
+    secondarySelection: Boolean = false,
     onClick: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -131,17 +132,19 @@ fun PremiumFilterChip(
 
     // MONOCHROMATIC UPGRADE: Active states use heavy onSurface grounding
     val bgColor by animateColorAsState(
-        targetValue = if (isSelected) colors.onSurface else Color.Transparent,
+        targetValue = if (isSelected) {
+            if (secondarySelection) colors.surfaceVariant else colors.onSurface
+        } else Color.Transparent,
         animationSpec = tween(150),
         label = "chipBg"
     )
     val borderColor by animateColorAsState(
-        targetValue = if (isSelected) Color.Transparent else colors.outlineVariant.copy(alpha = 0.3f), // Softened unselected border
+        targetValue = if (isSelected && !secondarySelection) Color.Transparent else colors.outlineVariant.copy(alpha = 0.3f), // Softened unselected border
         animationSpec = tween(150),
         label = "chipBorder"
     )
     val textColor by animateColorAsState(
-        targetValue = if (isSelected) colors.surface else colors.onSurfaceVariant, // High contrast text
+        targetValue = if (isSelected && !secondarySelection) colors.surface else colors.onSurfaceVariant, // High contrast text
         animationSpec = tween(150),
         label = "chipText"
     )
@@ -149,7 +152,7 @@ fun PremiumFilterChip(
     Surface(
         shape = shape,
         color = bgColor,
-        border = if (isSelected) null else BorderStroke(1.dp, borderColor),
+        border = if (isSelected && !secondarySelection) null else BorderStroke(1.dp, borderColor),
         modifier = Modifier
             .defaultMinSize(minHeight = 40.dp)
             .clip(shape)
@@ -163,7 +166,7 @@ fun PremiumFilterChip(
             Text(
                 text = text,
                 fontSize = 14.sp,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, // Bumped weight for active chips
+                fontWeight = if (isSelected && !secondarySelection) FontWeight.Bold else FontWeight.Medium, // Bumped weight for active chips
                 color = textColor,
                 modifier = Modifier.padding(
                     horizontal = if (compact) 12.dp else 16.dp,
