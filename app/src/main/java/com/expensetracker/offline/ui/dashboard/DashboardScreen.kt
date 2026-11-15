@@ -2371,7 +2371,7 @@ fun DashboardScreen(
                                 haptic.tap()
                                 selectedTimeRange = if (viewingLast) TimeRange.THIS_MONTH else TimeRange.LAST_MONTH
                             },
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 56.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 52.dp),
                             shape = RoundedCornerShape(AppRadius.medium),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
@@ -2383,26 +2383,20 @@ fun DashboardScreen(
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-                                Text(
-                                    if (viewingLast) "Return to current cycle" else "View previous cycle",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    if (viewingLast) currentMonthName else lastCycleDateLabel,
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
-                                )
-                            }
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            Text(
+                                if (viewingLast) "Return to current cycle" else "View previous cycle",
+                                modifier = Modifier.weight(1f),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                if (viewingLast) currentMonthName else lastCycleDateLabel,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
                             )
                         }
                     }
