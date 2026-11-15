@@ -8,6 +8,7 @@ import com.expensetracker.offline.ui.components.ResistantModalBottomSheet
 import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import android.app.DatePickerDialog
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
@@ -122,6 +123,16 @@ internal fun NecessityCard(
     val autoPaid = isPaid && !manuallyPaid
     val days = due?.let { daysUntil(it, now) }
     val urgent = !isPaid && days != null && days <= 3
+    val paidActionContainer by animateColorAsState(
+        targetValue = if (isPaid) AppColors.positive.copy(alpha = 0.10f) else scheme.onSurface.copy(alpha = 0.08f),
+        animationSpec = tween(220),
+        label = "necessityPaidActionContainer"
+    )
+    val paidActionContent by animateColorAsState(
+        targetValue = if (isPaid) AppColors.positive else scheme.onSurface,
+        animationSpec = tween(220),
+        label = "necessityPaidActionContent"
+    )
     val relativeColor = when {
         isPaid || days == null -> scheme.onSurfaceVariant
         days < 0 -> AppColors.negative
@@ -266,10 +277,10 @@ internal fun NecessityCard(
                         shape = RoundedCornerShape(AppRadius.small),
                         elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = AppColors.positive.copy(alpha = 0.10f),
-                            contentColor = AppColors.positive,
-                            disabledContainerColor = AppColors.positive.copy(alpha = 0.10f),
-                            disabledContentColor = AppColors.positive
+                            containerColor = paidActionContainer,
+                            contentColor = paidActionContent,
+                            disabledContainerColor = paidActionContainer,
+                            disabledContentColor = paidActionContent
                         ),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                         modifier = Modifier.weight(1f).height(40.dp)
@@ -298,8 +309,8 @@ internal fun NecessityCard(
                         },
                         shape = RoundedCornerShape(AppRadius.small),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = scheme.onSurface.copy(alpha = 0.08f),
-                            contentColor = scheme.onSurface
+                            containerColor = paidActionContainer,
+                            contentColor = paidActionContent
                         ),
                         elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),

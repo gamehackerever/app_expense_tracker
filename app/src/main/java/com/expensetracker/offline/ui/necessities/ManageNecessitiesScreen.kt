@@ -5,6 +5,13 @@ package com.expensetracker.offline.ui.necessities
 import com.expensetracker.offline.util.tap
 import com.expensetracker.offline.util.confirm
 import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -178,7 +185,15 @@ fun ManageNecessitiesScreen(
             )
         },
         bottomBar = {
-            if (localItems.isNotEmpty()) {
+            AnimatedVisibility(
+                visible = localItems.isNotEmpty(),
+                enter = fadeIn(tween(180)) +
+                        expandVertically(tween(220), expandFrom = Alignment.Bottom) +
+                        slideInVertically(tween(220)) { it / 5 },
+                exit = fadeOut(tween(120)) +
+                        shrinkVertically(tween(180), shrinkTowards = Alignment.Bottom) +
+                        slideOutVertically(tween(180)) { it / 5 }
+            ) {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     Row(
                         modifier = Modifier
