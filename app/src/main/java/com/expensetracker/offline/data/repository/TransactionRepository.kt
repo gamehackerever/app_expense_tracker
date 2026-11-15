@@ -40,6 +40,9 @@ import kotlinx.coroutines.flow.map
 import java.io.File
 import java.util.Locale
 
+private val LEGACY_SUCCESSFUL_PAYMENT_TITLE =
+    Regex("(?i)^payment\\s+to\\s+.+?\\s+(?:was\\s+)?successful(?:ly)?[.!]?$")
+
 class TransactionRepository(
     private val database: AppDatabase,
     private val context: Context? = null
@@ -714,6 +717,49 @@ class TransactionRepository(
         if (ids.isEmpty()) return 0
         deleteTransactionsByIds(ids)
         return ids.size
+    }
+
+    /** Repairs only legacy successful AutoPay notifications whose notification title was saved as payee. */
+    suspend fun repairSuccessfulAutopayPayees(): Int {
+        val repairs = transactionDao.getSuccessfulAutopayPayeeRepairCandidates().mapNotNull { candidate ->
+            val oldPayee = candidate.payee.trim()
+            if (!LEGACY_SUCCESSFUL_PAYMENT_TITLE.matches(oldPayee)) return@mapNotNull null
+
+            val parsed = FinancialParser.parse(
+                rawText = candidate.rawContent,
+                title = oldPayee,
+                source = candidate.source
+            )
+            val merchant = parsed.payee?.trim()?.takeIf {
+                it.isNotBlank() && !LEGACY_SUCCESSFUL_PAYMENT_TITLE.matches(it)
+            } ?: return@mapNotNull null
+            if (!parsed.isFinancial || parsed.type != candidate.type || parsed.amount != candidate.amount) {
+                return@mapNotNull null
+            }
+            Triple(candidate, oldPayee, merchant)
+        }
+        if (repairs.isEmpty()) return 0
+
+        var repairedCount = 0
+        database.withTransaction {
+            repairs.forEach { (candidate, oldPayee, merchant) ->
+                val current = transactionDao.getTransactionById(candidate.id) ?: return@forEach
+                if (current.source !in setOf(TransactionSource.NOTIFICATION, TransactionSource.MERGED) ||
+                    current.type != TransactionType.DEBIT || current.linkedDebtId != null ||
+                    current.payee.trim() != oldPayee ||
+                    !LEGACY_SUCCESSFUL_PAYMENT_TITLE.matches(current.payee.trim()) ||
+                    current.amount != candidate.amount || current.rawContent != candidate.rawContent ||
+                    !(current.rawContent.contains("autopay", ignoreCase = true) ||
+                        current.rawContent.contains("auto pay", ignoreCase = true) ||
+                        current.rawContent.contains("auto-pay", ignoreCase = true))
+                ) return@forEach
+
+                transactionDao.updateTransaction(current.copy(payee = merchant))
+                repairedCount++
+            }
+        }
+        if (repairedCount > 0) refreshWidget()
+        return repairedCount
     }
 
     /**

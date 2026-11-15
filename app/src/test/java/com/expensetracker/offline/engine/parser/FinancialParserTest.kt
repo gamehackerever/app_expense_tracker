@@ -121,6 +121,20 @@ class FinancialParserTest {
     }
 
     @Test
+    fun successfulGPayAutopayNotificationUsesTheMerchantInsteadOfItsTitle() {
+        val p = FinancialParser.parse(
+            rawText = "Payment to Vi was successful Payment for Autopay of ₹398.00 to Vi was successful. Tap to view.",
+            title = "Payment to Vi was successful",
+            source = TransactionSource.NOTIFICATION
+        )
+
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(39_800L, p.amount)
+        assertEquals("Vi", p.payee)
+    }
+
+    @Test
     fun promoAndBalanceEnquiryAreRejected() {
         assertFalse(sms("Recharge now Rs 299 plan 28 days validity unlimited data", "JIOINF").isFinancial)
         assertFalse(sms("Your A/c XX1234 balance is Rs 15000.00 as on 05-10-26", "HDFCBK").isFinancial)

@@ -68,6 +68,18 @@ class ExpenseTrackerApp : Application() {
                 }
             }
 
+            if (!settings.prefs.getBoolean(SettingsRepository.KEY_SUCCESSFUL_AUTOPAY_PAYEE_REPAIR_COMPLETE, false)) {
+                val repair = runCatching {
+                    SmsPatternLearner.initialize(this@ExpenseTrackerApp)
+                    repository.repairSuccessfulAutopayPayees()
+                }
+                if (repair.isSuccess) {
+                    settings.prefs.edit()
+                        .putBoolean(SettingsRepository.KEY_SUCCESSFUL_AUTOPAY_PAYEE_REPAIR_COMPLETE, true)
+                        .commit()
+                }
+            }
+
             runCatching {
                 val leftoverDeletes = settings.consumeAllPendingDeleteIds()
                 if (leftoverDeletes.isNotEmpty()) {

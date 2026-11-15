@@ -489,6 +489,25 @@ interface TransactionDao {
     """)
     suspend fun getPotentialAutopayReminderTransactions(): List<TransactionEntity>
 
+    /** Legacy GPay rows whose title was stored as the payee instead of the completed mandate merchant. */
+    @Query("""
+        SELECT * FROM transactions
+        WHERE source IN ('NOTIFICATION', 'MERGED')
+          AND type = 'DEBIT'
+          AND linkedDebtId IS NULL
+          AND receiptImageUri IS NULL
+          AND LOWER(TRIM(payee)) LIKE 'payment to %successful%'
+          AND (
+              LOWER(rawContent) LIKE '%autopay%'
+              OR LOWER(rawContent) LIKE '%auto pay%'
+              OR LOWER(rawContent) LIKE '%auto-pay%'
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM split_debts WHERE split_debts.transactionId = transactions.id
+          )
+    """)
+    suspend fun getSuccessfulAutopayPayeeRepairCandidates(): List<TransactionEntity>
+
     @Query("""
         UPDATE transactions
         SET bankName = TRIM(SUBSTR(bankName, 1, LENGTH(bankName) - 3)),

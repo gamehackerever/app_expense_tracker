@@ -189,6 +189,10 @@ object FinancialParser {
     )
 
     private val PAYEE_PATTERNS = listOf(
+        // Google Pay success notifications can put the generic title before the useful autopay body:
+        // "Payment to Vi was successful · Payment for Autopay of ₹398 to Vi was successful."
+        Pattern.compile("(?i)\\b(?:auto[\\s-]?pay)\\s+of\\s+(?:inr|rs\\.?|₹)\\s*[0-9,]+(?:\\.[0-9]{1,2})?\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)\\s+(?:was\\s+)?successful(?:ly)?\\b"),
+        Pattern.compile("(?i)\\bpayment\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)\\s+(?:was\\s+)?successful(?:ly)?\\b"),
         // ICICI debit alerts: "...debited for Rs 500.00 on 12-Oct-25; SWIGGY credited. UPI:123"
         Pattern.compile("(?i);\\s*([A-Za-z0-9@._\\-&'\\s]{2,35}?)\\s+credited\\b"),
         // "Info: UPI-529012345678-MAIN CANTEEN": skip the channel + reference, keep the merchant
