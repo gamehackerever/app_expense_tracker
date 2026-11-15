@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -631,19 +632,46 @@ fun EditTransactionSheet(
                         ) {
                             if (fixedCostLabel != null) {
                                 SheetCard(
-                                    containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-                                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                                    onClick = {
-                                        haptic.tap()
-                                        onRemoveFromFixedCosts()
-                                    }
+                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f),
+                                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                                    contentPadding = 10.dp
                                 ) {
-                                    SheetInfoRow(
-                                        icon = Icons.Default.CheckCircle,
-                                        title = "Counted toward $fixedCostLabel",
-                                        subtitle = "Tap to undo",
-                                        tint = MaterialTheme.colorScheme.onSurface
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                "Included in fixed costs",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                fixedCostLabel,
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        TextButton(
+                                            onClick = {
+                                                haptic.tap()
+                                                onRemoveFromFixedCosts()
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("Undo", fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
                                 }
                             } else if (fixedCostSuggestion != null) {
                                 SheetFixedCostSuggestion(suggestion = fixedCostSuggestion, onClick = onAddToFixedCosts)
@@ -652,30 +680,32 @@ fun EditTransactionSheet(
                     }
                 }
 
-                SheetDetailsSection(
-                    note = itemsSummary,
-                    onNoteChange = { itemsSummary = it },
-                    receiptUri = receiptImageUri,
-                    onReceiptChange = { new ->
-                        val old = receiptImageUri
-                        if (old != null && old != new && old != transaction.receiptImageUri) deleteReceiptFile(context, old)
-                        receiptImageUri = new
-                    },
-                    receiptFilePrefix = "receipt_${transaction.id}",
-                    currentBillAmountPaise = calculatedAmount ?: transaction.amount,
-                    initialPeople = initialSplitPeople,
-                    onReceiptScanned = { _, scannedTotalPaise ->
-                        if (scannedTotalPaise != null && scannedTotalPaise > 0L) {
-                            amountStr = String.format(Locale.US, "%.2f", scannedTotalPaise / 100.0)
+                SheetSection(title = "Notes & receipt") {
+                    SheetDetailsSection(
+                        note = itemsSummary,
+                        onNoteChange = { itemsSummary = it },
+                        receiptUri = receiptImageUri,
+                        onReceiptChange = { new ->
+                            val old = receiptImageUri
+                            if (old != null && old != new && old != transaction.receiptImageUri) deleteReceiptFile(context, old)
+                            receiptImageUri = new
+                        },
+                        receiptFilePrefix = "receipt_${transaction.id}",
+                        currentBillAmountPaise = calculatedAmount ?: transaction.amount,
+                        initialPeople = initialSplitPeople,
+                        onReceiptScanned = { _, scannedTotalPaise ->
+                            if (scannedTotalPaise != null && scannedTotalPaise > 0L) {
+                                amountStr = String.format(Locale.US, "%.2f", scannedTotalPaise / 100.0)
+                            }
+                        },
+                        onItemizedSplitComputed = { participants, _ ->
+                            itemizedSplitShares = participants.associate { p ->
+                                val paise = (p.exactAmountStr.toDoubleOrNull() ?: 0.0) * 100.0
+                                p.name to round(paise).toLong()
+                            }
                         }
-                    },
-                    onItemizedSplitComputed = { participants, _ ->
-                        itemizedSplitShares = participants.associate { p ->
-                            val paise = (p.exactAmountStr.toDoubleOrNull() ?: 0.0) * 100.0
-                            p.name to round(paise).toLong()
-                        }
-                    }
-                )
+                    )
+                }
 
                 val canSplit = onSplit != null && transaction.type == TransactionType.DEBIT && transaction.linkedDebtId == null
                 val canLink = onLinkToBill != null && transaction.type == TransactionType.CREDIT && transaction.linkedDebtId == null
@@ -685,7 +715,14 @@ fun EditTransactionSheet(
                     enter = fadeIn(tween(200)) + expandVertically(tween(200)),
                     exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            if (canSplit) "Split bill" else "Link repayment",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
                         FilledTonalButton(
                             onClick = {
                                 haptic.tap()
@@ -711,7 +748,7 @@ fun EditTransactionSheet(
                             Text(
                                 when {
                                     canSplit && totalOwedByOthers > 0L -> "Edit split"
-                                    canSplit -> "Open full split sheet"
+                                    canSplit -> "Split this transaction"
                                     else -> "Link to a bill"
                                 },
                                 fontWeight = FontWeight.SemiBold,
@@ -747,6 +784,20 @@ fun EditTransactionSheet(
                         lineHeight = 18.sp
                     )
                     Spacer(modifier = Modifier.height(12.dp))
+                } else if ((calculatedAmount ?: 0L) <= 0L) {
+                    Text(
+                        "Enter an amount greater than zero to save.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                } else if (!hasUnsavedChanges) {
+                    Text(
+                        "No changes to save yet.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
                 }
 
                 SheetPrimaryButton(
