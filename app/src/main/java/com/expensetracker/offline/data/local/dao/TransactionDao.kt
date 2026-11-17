@@ -74,6 +74,18 @@ interface TransactionDao {
     @Query("UPDATE transactions SET bankName = :bankName, accountNumber = :accountNumber WHERE id = :transactionId AND bankName IS NULL")
     suspend fun updateBankDetails(transactionId: Long, bankName: String, accountNumber: String?)
 
+    @Query("UPDATE transactions SET bankName = 'SBI' WHERE LOWER(bankName) IN ('state bank of india', 'state bank', 'sbi cc', 'sbiinb', 'yonosbi')")
+    suspend fun normalizeSbiBankNames()
+
+    @Query("UPDATE transactions SET bankName = 'HDFC Bank' WHERE LOWER(bankName) IN ('hdfc', 'hdfcbk', 'hdfc cc')")
+    suspend fun normalizeHdfcBankNames()
+
+    @Query("UPDATE transactions SET bankName = 'ICICI Bank' WHERE LOWER(bankName) IN ('icici', 'icicib', 'icici cc')")
+    suspend fun normalizeIciciBankNames()
+
+    @Query("UPDATE transactions SET bankName = 'Axis Bank' WHERE LOWER(bankName) IN ('axis', 'axisbk', 'axis cc')")
+    suspend fun normalizeAxisBankNames()
+
     @Query("UPDATE transactions SET paidBy = :paidBy WHERE id = :transactionId")
     suspend fun updatePaidBy(transactionId: Long, paidBy: String)
 

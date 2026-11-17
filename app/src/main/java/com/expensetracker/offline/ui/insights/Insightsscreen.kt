@@ -197,7 +197,14 @@ fun InsightsScreen(
 
         filteredTransactions
             .filter { isSpendDebit(it.transaction) }
-            .groupBy { it.transaction.category.trim() }
+            .groupBy {
+                val rawCat = it.transaction.category.trim()
+                if (rawCat.isBlank() || rawCat.equals("Uncategorized", ignoreCase = true) || rawCat.equals("Transfer", ignoreCase = true)) {
+                    "Unspecified"
+                } else {
+                    rawCat
+                }
+            }
             .mapNotNull { (category, txns) ->
                 val gross = txns.sumOf { myShareOf(it) }
                 val refund = refundsByCat[category.lowercase()] ?: 0L

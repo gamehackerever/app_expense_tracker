@@ -441,9 +441,16 @@ object SbiPdfParserUtil {
             }
             processedKeys.add(inBatchKey)
 
-            // Auto-categorize using CategoryClassifier
-            val category = CategoryClassifier.classifySync(row.payee, row.description)
-            val isTransfer = category.equals("Transfer", ignoreCase = true)
+            // Auto-categorize using CategoryClassifier; if unclassified/peer transfer, use "Unspecified"
+            val rawCategory = CategoryClassifier.classifySync(row.payee, row.description)
+            val effectiveCategory = if (row.type == TransactionType.DEBIT &&
+                (rawCategory.isBlank() || rawCategory.equals("Transfer", ignoreCase = true) || rawCategory.equals("Uncategorized", ignoreCase = true))
+            ) {
+                "Unspecified"
+            } else {
+                rawCategory
+            }
+            val isTransfer = effectiveCategory.equals("Self Transfer", ignoreCase = true)
 
             val entity = TransactionEntity(
                 id = 0,
@@ -454,12 +461,12 @@ object SbiPdfParserUtil {
                 source = TransactionSource.MANUAL,
                 referenceId = row.refNo,
                 rawContent = "Imported from SBI statement: ${row.rawLine}",
-                category = category,
+                category = effectiveCategory,
                 note = row.description.takeIf { it != row.payee },
                 balance = row.balancePaise,
                 itemsSummary = null,
-                bankName = "State Bank of India",
-                accountNumber = accountNumber?.takeLast(4),
+                bankName = AccountNormalizer.canonicalBankName("SBI") ?: "SBI",
+                accountNumber = AccountNormalizer.accountNumber(accountNumber),
                 accountType = "BANK",
                 isNecessity = false,
                 excludeFromSpend = isTransfer,

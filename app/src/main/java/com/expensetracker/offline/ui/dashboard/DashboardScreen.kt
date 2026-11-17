@@ -701,16 +701,12 @@ fun DashboardScreen(
     val periodSpent = remember(transactionsWithDebts, selectedTimeRange, pendingDeleteIds, startDayOfMonth) {
         val start = startMillisFor(selectedTimeRange, startDayOfMonth)
         val end = endMillisFor(selectedTimeRange, startDayOfMonth)
-        val isDesc = transactionsWithDebts.size < 2 ||
-                transactionsWithDebts.first().transaction.timestamp >= transactionsWithDebts.last().transaction.timestamp
         var gross = 0L
         var refunds = 0L
         for (item in transactionsWithDebts) {
             val txn = item.transaction
             if (txn.timestamp > end) continue
-            if (txn.timestamp < start) {
-                if (isDesc) break else continue
-            }
+            if (txn.timestamp < start) continue
             if (txn.id in pendingDeleteIds) continue
             if (txn.countsAsSpend()) {
                 gross += mySpendShare(item)
@@ -2078,7 +2074,7 @@ fun DashboardScreen(
                         isSetupFirstTxnDone
                     ).count { it }
 
-                    val hasMissingAutoCapture = !(hasSmsPermission || hasNotificationPermission) || !isIgnoringBatteryOptimizations
+                    val hasMissingAutoCapture = !(hasSmsPermission || hasNotificationPermission)
 
                     if (!isManualModePreferred && !isAutoCaptureBannerDismissed && hasMissingAutoCapture) {
                         Surface(
@@ -2730,30 +2726,6 @@ fun DashboardScreen(
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                            } else if (monthlyBudget <= 0 && transactions.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(AppRadius.small),
-                                    color = Color.Transparent,
-                                    // Premium dashed border look for empty states
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(12.dp),
-                                        horizontalArrangement = Arrangement.Center,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface)
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "Set a monthly budget",
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
                             }
                         }
                     }

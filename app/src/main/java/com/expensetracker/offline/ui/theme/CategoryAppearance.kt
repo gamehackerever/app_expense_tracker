@@ -143,6 +143,10 @@ private enum class CategoryKind(val color: Color?, val icon: ImageVector, val ke
         Color(0xFF14B8A6), Icons.AutoMirrored.Filled.TrendingUp, // Teal
         setOf("investment", "investments", "mutual", "fund", "funds", "sip", "stocks", "stock", "zerodha", "groww", "upstox", "indmoney", "dhan", "angel", "lic", "nps", "ppf", "gold")
     ),
+    UNSPECIFIED(
+        Color(0xFF64748B), Icons.Default.Category, // Slate Gray
+        setOf("unspecified", "uncategorized", "unclassified")
+    ),
     OTHER(null, Icons.Default.Category, emptySet())
 }
 

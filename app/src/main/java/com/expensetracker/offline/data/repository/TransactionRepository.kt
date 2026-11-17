@@ -252,26 +252,37 @@ class TransactionRepository(
         refreshWidget()
     }
 
+    suspend fun normalizeExistingBankNames() {
+        runCatching {
+            transactionDao.normalizeSbiBankNames()
+            transactionDao.normalizeHdfcBankNames()
+            transactionDao.normalizeIciciBankNames()
+            transactionDao.normalizeAxisBankNames()
+        }
+    }
+
     suspend fun insertTransaction(transaction: TransactionEntity): Long {
+        val canonicalBank = com.expensetracker.offline.util.AccountNormalizer.canonicalBankName(transaction.bankName)
+        val canonicalAcc = com.expensetracker.offline.util.AccountNormalizer.accountNumber(transaction.accountNumber)
+        val normalizedTxn = transaction.copy(bankName = canonicalBank, accountNumber = canonicalAcc)
+
         var derivedBalance: Long? = null
         val id = database.withTransaction {
-            val effectiveTxn = if (transaction.balance == null && transaction.bankName != null) {
-                val prevBalance = transactionDao.getLatestBalanceForAccountSync(transaction.bankName, transaction.accountNumber)
+            val effectiveTxn = if (normalizedTxn.balance == null && normalizedTxn.bankName != null) {
+                val prevBalance = transactionDao.getLatestBalanceForAccountSync(normalizedTxn.bankName, normalizedTxn.accountNumber)
                 val latestBalanceTimestamp = transactionDao.getLatestBalanceTimestampForAccountSync(
-                    transaction.bankName,
-                    transaction.accountNumber
+                    normalizedTxn.bankName,
+                    normalizedTxn.accountNumber
                 )
-                // A backdated transaction cannot be applied on top of today's balance. Doing so
-                // would make the derived balance look current and corrupt future account totals.
                 if (prevBalance != null &&
-                    (latestBalanceTimestamp == null || transaction.timestamp >= latestBalanceTimestamp)
+                    (latestBalanceTimestamp == null || normalizedTxn.timestamp >= latestBalanceTimestamp)
                 ) {
-                    val delta = if (transaction.type == TransactionType.DEBIT) -transaction.amount else transaction.amount
+                    val delta = if (normalizedTxn.type == TransactionType.DEBIT) -normalizedTxn.amount else normalizedTxn.amount
                     val nextBal = prevBalance + delta
                     derivedBalance = nextBal
-                    transaction.copy(balance = nextBal)
-                } else transaction
-            } else transaction
+                    normalizedTxn.copy(balance = nextBal)
+                } else normalizedTxn
+            } else normalizedTxn
 
             val newId = transactionDao.insertTransaction(effectiveTxn)
             effectiveTxn.linkedDebtId?.let { reconcileDebt(it) }
@@ -281,10 +292,10 @@ class TransactionRepository(
             context?.let { ctx ->
                 BalanceCache.updateIfNewer(
                     BalanceCache.prefs(ctx),
-                    transaction.bankName,
-                    transaction.accountNumber,
+                    canonicalBank,
+                    canonicalAcc,
                     balance,
-                    transaction.timestamp
+                    normalizedTxn.timestamp
                 )
             }
         }
@@ -899,7 +910,13 @@ class TransactionRepository(
                 }
 
                 if (freshPairs.isNotEmpty()) {
-                    val insertedIds = transactionDao.insertTransactions(freshPairs.map { it.second })
+                    val normalizedTxns = freshPairs.map { (_, t) ->
+                        t.copy(
+                            bankName = com.expensetracker.offline.util.AccountNormalizer.canonicalBankName(t.bankName),
+                            accountNumber = com.expensetracker.offline.util.AccountNormalizer.accountNumber(t.accountNumber)
+                        )
+                    }
+                    val insertedIds = transactionDao.insertTransactions(normalizedTxns)
                     val allDebts = mutableListOf<SplitDebtEntity>()
                     freshPairs.forEachIndexed { i, (origIdx, _) ->
                         val newTxnId = insertedIds.getOrNull(i) ?: 0L

@@ -22,6 +22,7 @@ import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.engine.recurring.RecurringPayment
 import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
 import com.expensetracker.offline.ui.dashboard.SplitLinkInfo
+import com.expensetracker.offline.util.AccountNormalizer
 import com.expensetracker.offline.util.BalanceCache
 import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.NecessityItem
@@ -92,6 +93,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dismissedCategoryWarnings.value = levels.keys
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { repository.syncCategoryRulesFromHistory() }
+            runCatching { repository.normalizeExistingBankNames() }
         }
         loadRolloverState()
     }
@@ -303,6 +305,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dbEpoch.value += 1
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { repository.syncCategoryRulesFromHistory() }
+            runCatching { repository.normalizeExistingBankNames() }
         }
     }
 
@@ -389,64 +392,95 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _manualSyncBalance = MutableStateFlow<Long?>(null)
     val manualSyncBalance: StateFlow<Long?> = _manualSyncBalance
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val linkedAccounts: StateFlow<List<AccountInfo>> = dbEpoch.flatMapLatest { repository.getLinkedAccountsFlow() }
-        .map { list ->
-            val normalized = list.map { acc ->
-                val cleanBank = acc.bankName.removeSuffix(" CC").removeSuffix(" cc").trim()
-                val cleanAcc = acc.accountNumber?.trim()?.takeLast(4)?.takeIf { it.isNotEmpty() }
-                AccountInfo(cleanBank, cleanAcc)
-            }
-            val byBank = normalized.groupBy { it.bankName.lowercase(Locale.ROOT) }
-            byBank.flatMap { (_, group) ->
-                val withAcc = group.filter { it.accountNumber != null }.distinctBy { it.accountNumber }
-                when {
-                    withAcc.isEmpty() -> listOf(group.first())
-                    group.first().bankName.equals("South Indian Bank", ignoreCase = true) -> listOf(withAcc.first())
-                    else -> withAcc
-                }
-            }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val accountBalances: StateFlow<List<AccountBalanceInsight>> = dbEpoch.flatMapLatest { repository.getLatestBalancesForAllAccountsFlow() }
-        .map { list ->
-            val normalized = list.map { item ->
-                val cleanBank = item.bankName.removeSuffix(" CC").removeSuffix(" cc").trim()
-                val cleanAcc = item.accountNumber?.trim()?.takeLast(4)?.takeIf { it.isNotEmpty() }
-                item.copy(bankName = cleanBank, accountNumber = cleanAcc)
-            }
-            val byBank = normalized.groupBy { it.bankName.lowercase(Locale.ROOT) }
-            byBank.flatMap { (_, bankGroup) ->
-                val primaryAcc = bankGroup.mapNotNull { it.accountNumber }.firstOrNull()
-                val unifiedGroup = if (bankGroup.first().bankName.equals("South Indian Bank", ignoreCase = true) && primaryAcc != null) {
-                    bankGroup.map { it.copy(accountNumber = primaryAcc) }
-                } else {
-                    bankGroup.map { if (it.accountNumber == null && primaryAcc != null) it.copy(accountNumber = primaryAcc) else it }
-                }
-                unifiedGroup
-                    .groupBy { "${it.bankName.lowercase(Locale.ROOT)}|${it.accountNumber ?: ""}" }
-                    .map { (_, g) ->
-                        val newestWithBal = g.filter { it.latestBalance != null }.maxByOrNull { it.lastUpdated }
-                        val newestOverall = g.maxByOrNull { it.lastUpdated } ?: g.first()
-                        newestOverall.copy(latestBalance = newestWithBal?.latestBalance ?: newestOverall.latestBalance)
-                    }
-            }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
     val selectedAccount = MutableStateFlow<AccountInfo?>(null)
 
     private val _pendingDeleteIds = MutableStateFlow<Map<Long, Long>>(emptyMap())
     val pendingDeleteIds: StateFlow<Map<Long, Long>> = _pendingDeleteIds
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val latestBalance: StateFlow<Long?> = combine(selectedAccount, dbEpoch) { account, _ -> account }.flatMapLatest { account ->
-        if (account != null) {
-            repository.getLatestBalanceForAccountFlow(account.bankName, account.accountNumber)
+    val allTransactionsWithDebts = dbEpoch.flatMapLatest { repository.allTransactionsWithDebts }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private fun computeLiveAccountBalances(
+        txnsWithDebts: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>
+    ): List<AccountBalanceInsight> {
+        if (txnsWithDebts.isEmpty()) return emptyList()
+
+        val normalized = txnsWithDebts.map { item ->
+            val t = item.transaction
+            val cBank = AccountNormalizer.canonicalBankName(t.bankName)
+            val cAcc = AccountNormalizer.accountNumber(t.accountNumber)
+            item to (cBank to cAcc)
+        }
+
+        val byBank = normalized.filter { it.second.first != null }
+            .groupBy { it.second.first!! }
+
+        val result = mutableListOf<AccountBalanceInsight>()
+
+        for ((bankName, bankItems) in byBank) {
+            val knownAccs = bankItems.mapNotNull { it.second.second }.distinct()
+            val primaryAcc = knownAccs.firstOrNull()
+
+            val itemsForAccs = bankItems.groupBy { (_, pair) ->
+                pair.second ?: primaryAcc
+            }
+
+            for ((accNumber, accItems) in itemsForAccs) {
+                val sorted = accItems.map { it.first.transaction }.sortedWith(
+                    compareBy<TransactionEntity> { it.timestamp }.thenBy { it.id }
+                )
+
+                val lastExplicitIdx = sorted.indexOfLast { it.balance != null }
+                val (baseBalance, lastExplicitTs) = if (lastExplicitIdx >= 0) {
+                    val explicitTxn = sorted[lastExplicitIdx]
+                    (explicitTxn.balance ?: 0L) to explicitTxn.timestamp
+                } else {
+                    val cached = BalanceCache.baselineOf(settingsRepo.prefs, bankName, accNumber)
+                    val cachedTs = BalanceCache.timestampOf(settingsRepo.prefs, bankName, accNumber)
+                    (cached ?: 0L) to cachedTs
+                }
+
+                val lastUpdated = sorted.lastOrNull()?.timestamp ?: System.currentTimeMillis()
+
+                if (lastExplicitIdx >= 0 || baseBalance > 0L) {
+                    val subsequent = if (lastExplicitIdx >= 0) sorted.subList(lastExplicitIdx + 1, sorted.size) else sorted
+                    var liveBalance = baseBalance
+                    for (t in subsequent) {
+                        if (t.timestamp >= lastExplicitTs) {
+                            if (t.type == TransactionType.DEBIT) {
+                                liveBalance -= t.amount
+                            } else if (t.type == TransactionType.CREDIT) {
+                                liveBalance += t.amount
+                            }
+                        }
+                    }
+                    result.add(AccountBalanceInsight(bankName, accNumber, liveBalance, lastUpdated))
+                } else {
+                    result.add(AccountBalanceInsight(bankName, accNumber, null, lastUpdated))
+                }
+            }
+        }
+        return result.sortedByDescending { it.lastUpdated }
+    }
+
+    val accountBalances: StateFlow<List<AccountBalanceInsight>> = allTransactionsWithDebts.map { txns ->
+        computeLiveAccountBalances(txns)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val linkedAccounts: StateFlow<List<AccountInfo>> = accountBalances.map { list ->
+        list.map { AccountInfo(it.bankName, it.accountNumber) }.distinct()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val latestBalance: StateFlow<Long?> = combine(accountBalances, selectedAccount) { accounts, selected ->
+        if (selected != null) {
+            accounts.find {
+                it.bankName.equals(selected.bankName, ignoreCase = true) &&
+                (it.accountNumber == selected.accountNumber || selected.accountNumber == null)
+            }?.latestBalance
         } else {
-            repository.latestBalance
+            val validBalances = accounts.mapNotNull { it.latestBalance }
+            if (validBalances.isNotEmpty()) validBalances.sum() else null
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -454,10 +488,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val totalCreditCardDebt: StateFlow<Long> = dbEpoch.flatMapLatest {
         repository.getTotalCreditCardDebtFlow()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val allTransactionsWithDebts = dbEpoch.flatMapLatest { repository.allTransactionsWithDebts }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val splitLinkInfo: StateFlow<SplitLinkInfo> = allTransactionsWithDebts.map { list: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts> ->
         val creditsWithLinks = ArrayList<TransactionEntity>()

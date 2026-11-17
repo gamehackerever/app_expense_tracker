@@ -654,7 +654,7 @@ fun SettingsScreen(
         ) {
             Spacer(modifier = Modifier.height(4.dp))
 
-            val needsHealthFix = !isManualModePreferred && (!(hasNotificationPermission || hasSmsPermission) || !isIgnoringBatteryOptimizations)
+            val needsHealthFix = !isManualModePreferred && !(hasNotificationPermission || hasSmsPermission)
 
             if (needsHealthFix && (openPage == null || openPage == "health")) {
                 Surface(
@@ -683,27 +683,13 @@ fun SettingsScreen(
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
                             ) { Text("Allow notification access", fontSize = 14.sp, fontWeight = FontWeight.Medium) }
                         }
-                        if (!isIgnoringBatteryOptimizations) {
-                            OutlinedButton(
-                                onClick = {
-                                    val appInfo = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                        data = Uri.fromParts("package", context.packageName, null)
-                                    }
-                                    context.startActivitySafely(appInfo)
-                                },
-                                modifier = Modifier.fillMaxWidth().height(40.dp),
-                                shape = RoundedCornerShape(AppRadius.small),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
-                            ) { Text("Open app battery settings", fontSize = 14.sp, fontWeight = FontWeight.Medium) }
-                        }
                     }
                 }
             }
 
             if (openPage == null) {
             val healthIssues = if (isManualModePreferred) 0
-            else listOf(hasSmsPermission, hasNotificationPermission, isIgnoringBatteryOptimizations).count { !it }
+            else listOf(hasSmsPermission, hasNotificationPermission).count { !it }
             SettingsStatusStrip(
                 items = listOf(
                     SettingsStatus(
@@ -797,28 +783,53 @@ if (openPage == "budget") {
                 showTitle = false,
                 modifier = Modifier.trackSection("Cycle", sectionPositions)
             ) {
-                SettingsItem(
+                var isBudgetEnabled by remember(vmBaseBudget) { mutableStateOf(vmBaseBudget > 0L) }
+
+                SettingsSwitchItem(
                     icon = Icons.Default.Savings,
-                    title = "Target Spending Limit",
-                    subtitle = vmCycleOverride?.let {
-                        "This month is set to ₹$it (one-off). The usual budget below returns next cycle."
-                    } ?: "Powers the monthly gauge on your dashboard"
+                    title = "Enable Monthly Budget",
+                    subtitle = if (isBudgetEnabled) "Active monthly spending cap" else "Optional spending limit (currently disabled)",
+                    checked = isBudgetEnabled,
+                    onCheckedChange = { enabled: Boolean ->
+                        haptic.tap()
+                        isBudgetEnabled = enabled
+                        if (!enabled) {
+                            viewModel.updateMonthlyBudget(0L, clearOverride = true)
+                            budgetText = "0"
+                            showSnack("Monthly budget disabled")
+                        } else {
+                            val defaultBudget = 25000L
+                            viewModel.updateMonthlyBudget(defaultBudget, clearOverride = true)
+                            budgetText = defaultBudget.toString()
+                            showSnack("Monthly budget enabled")
+                        }
+                    }
                 )
 
-                SettingsInset {
-                    SettingsTextField(
-                        value = budgetText,
-                        onValueChange = {
-                            budgetText = it.filter(Char::isDigit).take(9)
-                        },
-                        label = "Target Budget (₹)",
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Number,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-                        modifier = Modifier.onFocusLost { commitBudget() }
+                if (isBudgetEnabled) {
+                    SettingsItem(
+                        icon = Icons.Default.AccountBalanceWallet,
+                        title = "Target Spending Limit",
+                        subtitle = vmCycleOverride?.let {
+                            "This month is set to ₹$it (one-off). The usual budget below returns next cycle."
+                        } ?: "Powers the monthly gauge on your dashboard"
                     )
+
+                    SettingsInset {
+                        SettingsTextField(
+                            value = budgetText,
+                            onValueChange = {
+                                budgetText = it.filter(Char::isDigit).take(9)
+                            },
+                            label = "Target Budget (₹)",
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                            modifier = Modifier.onFocusLost { commitBudget() }
+                        )
+                    }
                 }
 
                 SettingsDivider()

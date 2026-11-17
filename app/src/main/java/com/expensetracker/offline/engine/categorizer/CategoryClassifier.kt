@@ -25,6 +25,7 @@ object CategoryClassifier {
         "Investments",
         "Gifts & Festivals",
         "Transfer",
+        "Unspecified",
         "Uncategorized"
     )
 

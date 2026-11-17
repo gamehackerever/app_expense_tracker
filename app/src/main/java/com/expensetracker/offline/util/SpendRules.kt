@@ -11,7 +11,14 @@ import com.expensetracker.offline.data.local.entity.TransactionType
  * The SQL twins (TransactionDao.getMySpendBetween / getDebitsSinceFlow / ...) apply the same rule:
  * DEBIT, not flagged excludeFromSpend, category not "Transfer" and not "Split Settlement" (case-insensitive).
  */
-fun TransactionEntity.isTransferCategory(): Boolean = category.trim().equals("Transfer", ignoreCase = true)
+fun TransactionEntity.isOwnAccountTransfer(): Boolean {
+    val cat = category.trim()
+    return cat.equals("Self Transfer", ignoreCase = true) ||
+           cat.equals("Own Account Transfer", ignoreCase = true) ||
+           (note?.startsWith("Self-transfer", ignoreCase = true) == true)
+}
+
+fun TransactionEntity.isTransferCategory(): Boolean = isOwnAccountTransfer()
 
 fun TransactionEntity.isSplitSettlementCategory(): Boolean = category.trim().equals("Split Settlement", ignoreCase = true)
 
@@ -19,5 +26,5 @@ fun TransactionEntity.isSplitSettlementCategory(): Boolean = category.trim().equ
 fun TransactionEntity.countsAsSpend(): Boolean =
     type == TransactionType.DEBIT &&
         !excludeFromSpend &&
-        !isTransferCategory() &&
+        !isOwnAccountTransfer() &&
         !isSplitSettlementCategory()

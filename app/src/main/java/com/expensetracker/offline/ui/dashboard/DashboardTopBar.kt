@@ -45,7 +45,7 @@ fun DashboardTopBar(
     onSettings: () -> Unit
 ) {
     val dividerAlpha by animateFloatAsState(if (isScrolled) 1f else 0f, tween(180), label = "headerDivider")
-    val captureHealthy = isManualModePreferred || ((hasSmsPermission || hasNotificationPermission) && isIgnoringBatteryOptimizations)
+    val captureHealthy = isManualModePreferred || hasSmsPermission || hasNotificationPermission
     val statusColor = if (captureHealthy) AppColors.positive else AppColors.warning
 
     Column(
