@@ -1077,11 +1077,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ): SbiImportResult = withContext(Dispatchers.IO) {
         val rawText = SbiPdfParserUtil.extractTextFromPdf(getApplication(), uri, password)
         val accountNum = SbiPdfParserUtil.extractAccountNumber(rawText)
+        val detectedBank = SbiPdfParserUtil.detectBankName(rawText)
         val parsedRows = SbiPdfParserUtil.parseSbiStatementText(rawText)
         SbiPdfParserUtil.importParsedTransactions(
             dao = app.database.transactionDao(),
             rows = parsedRows,
-            accountNumber = accountNum
+            accountNumber = accountNum,
+            bankNameOverride = detectedBank
         )
     }
 }

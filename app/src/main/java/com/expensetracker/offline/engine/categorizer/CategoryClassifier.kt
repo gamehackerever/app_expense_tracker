@@ -376,7 +376,7 @@ object CategoryClassifier {
     }
 
     fun classifySync(payee: String, rawContent: String): String {
-        val cleanPayee = payee.trim()
+        val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim()
         val generic = isGenericPayee(cleanPayee)
 
         // 0. Check VPA memory first
@@ -385,7 +385,8 @@ object CategoryClassifier {
                 return it
             }
         }
-        SmsPatternLearner.lookupVpa(rawContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
+        val cleanContent = rawContent.replace('_', ' ').replace('/', ' ').trim()
+        SmsPatternLearner.lookupVpa(cleanContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
             return it
         }
 
@@ -399,9 +400,11 @@ object CategoryClassifier {
             }
         }
 
-        if (rawContent.isNotBlank() && rawContent != cleanPayee) {
-            for ((category, regex) in RAW_CONTENT_CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(rawContent)) {
+        // Test the full narration against the payee keyword rules
+        if (cleanContent.isNotBlank() && cleanContent != cleanPayee) {
+            val canonicalContent = PayeeHeuristics.canonicalize(cleanContent)
+            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
+                if (regex.containsMatchIn(canonicalContent)) {
                     return category
                 }
             }
@@ -409,6 +412,7 @@ object CategoryClassifier {
 
         // Last: generic shop-type words and one-letter typos ("... Foods", "... Medicals", "Restorent").
         if (!generic) PayeeHeuristics.categoryHint(cleanPayee)?.let { return it }
+        if (cleanContent.isNotBlank()) PayeeHeuristics.categoryHint(cleanContent)?.let { return it }
 
         return "Uncategorized"
     }
@@ -425,7 +429,7 @@ object CategoryClassifier {
         rawContent: String,
         ruleDao: CategoryRuleDao
     ): String {
-        val cleanPayee = payee.trim().lowercase(Locale.ROOT)
+        val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim().lowercase(Locale.ROOT)
         val generic = isGenericPayee(cleanPayee)
 
         // 0. Check VPA memory
@@ -434,7 +438,8 @@ object CategoryClassifier {
                 return it
             }
         }
-        SmsPatternLearner.lookupVpa(rawContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
+        val cleanContent = rawContent.replace('_', ' ').replace('/', ' ').trim()
+        SmsPatternLearner.lookupVpa(cleanContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
             return it
         }
 
@@ -470,11 +475,13 @@ object CategoryClassifier {
             }
         }
 
-        // 4. Last resort: scan the raw SMS/notification text for unambiguous brand names only
-        if (rawContent.isNotBlank()) {
-            for ((category, regex) in RAW_CONTENT_CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(rawContent)) return category
+        // 4. Last resort: scan the raw SMS/notification text for unambiguous brand names and merchant keywords
+        if (cleanContent.isNotBlank()) {
+            val canonicalContent = PayeeHeuristics.canonicalize(cleanContent)
+            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
+                if (regex.containsMatchIn(canonicalContent)) return category
             }
+            PayeeHeuristics.categoryHint(cleanContent)?.let { return it }
         }
         return "Uncategorized"
     }

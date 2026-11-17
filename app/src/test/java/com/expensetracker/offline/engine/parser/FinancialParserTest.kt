@@ -205,4 +205,50 @@ class FinancialParserTest {
         assertEquals(TransactionType.DEBIT, afterLearning.type)
         assertEquals("Suresh", afterLearning.payee)
     }
+
+    @Test
+    fun googlePayNotification_paidToMerchant_extractsCleanPayeeAndAmount() {
+        val p = notif("Paid to Starbucks ₹250.00 using State Bank of India ••••1234", "Paid to Starbucks")
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(25_000L, p.amount)
+        assertEquals("Starbucks", p.payee)
+        assertEquals("SBI", p.bankName)
+        assertEquals("1234", p.accountNumber)
+    }
+
+    @Test
+    fun phonePeNotification_paymentOfAmount_extractsCleanPayee() {
+        val p = notif("Payment of ₹350 to Swiggy was successful using Canara Bank - 1234", "Payment Successful")
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(35_000L, p.amount)
+        assertEquals("Swiggy", p.payee)
+        assertEquals("Canara Bank", p.bankName)
+        assertEquals("1234", p.accountNumber)
+    }
+
+    @Test
+    fun canaraAi1Notification_towardsUpiSlash_extractsPayeeName() {
+        val p = notif(
+            "Your A/C ending 1234 has been debited for INR 250.00 on 17-11-2026 towards UPI/432109876543/TEA_STALL/CNRB. Avl Bal: INR 12,345.00",
+            "Canara ai1"
+        )
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(25_000L, p.amount)
+        assertEquals("Tea Stall", p.payee)
+        assertEquals("Canara Bank", p.bankName)
+        assertEquals("1234", p.accountNumber)
+        assertEquals(1_234_500L, p.balance)
+    }
+
+    @Test
+    fun paytmNotification_moneySent_extractsPayee() {
+        val p = notif("Paid ₹120 to Chai Point from Paytm Payments Bank", "Money Sent")
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(12_000L, p.amount)
+        assertEquals("Chai Point", p.payee)
+    }
 }

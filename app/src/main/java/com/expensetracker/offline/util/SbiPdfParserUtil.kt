@@ -76,7 +76,7 @@ object SbiPdfParserUtil {
 
     // Account Number header pattern
     private val ACCOUNT_HEADER_REGEX = Regex(
-        """(?i)(?:Account\s*(?:Number|No\.?)|A/c\s*No\.?)\s*[:\s]+(\d{9,18})"""
+        """(?i)(?:Account\s*(?:Number|No\.?)|A/c\s*(?:No\.?|Number)?)\s*[:\s]+([0-9\s]{9,22})"""
     )
 
     /**
@@ -110,7 +110,29 @@ object SbiPdfParserUtil {
      */
     fun extractAccountNumber(rawText: String): String? {
         val match = ACCOUNT_HEADER_REGEX.find(rawText)
-        return match?.groupValues?.getOrNull(1)?.trim()
+        return match?.groupValues?.getOrNull(1)?.replace(" ", "")?.trim()
+    }
+
+    /**
+     * Detects bank name from statement header or narration text.
+     */
+    fun detectBankName(rawText: String): String {
+        val upper = rawText.uppercase(Locale.ROOT)
+        return when {
+            upper.contains("CANARA BANK") || upper.contains("CANARA") || upper.contains("CNRB") -> "Canara Bank"
+            upper.contains("STATE BANK OF INDIA") || upper.contains("SBI") || upper.contains("SBIN") -> "SBI"
+            upper.contains("HDFC") -> "HDFC Bank"
+            upper.contains("ICICI") -> "ICICI Bank"
+            upper.contains("AXIS BANK") || upper.contains("UTIB") -> "Axis Bank"
+            upper.contains("KOTAK") || upper.contains("KKBK") -> "Kotak Mahindra Bank"
+            upper.contains("PUNJAB NATIONAL BANK") || upper.contains("PNB") || upper.contains("PUNB") -> "PNB"
+            upper.contains("BANK OF BARODA") || upper.contains("BOB") || upper.contains("BARB") -> "Bank of Baroda"
+            upper.contains("UNION BANK") || upper.contains("UBIN") -> "Union Bank"
+            upper.contains("INDIAN BANK") || upper.contains("IDIB") -> "Indian Bank"
+            upper.contains("FEDERAL BANK") || upper.contains("FDRL") -> "Federal Bank"
+            upper.contains("SOUTH INDIAN BANK") || upper.contains("SIBL") -> "South Indian Bank"
+            else -> "Bank"
+        }
     }
 
     /**
@@ -290,23 +312,72 @@ object SbiPdfParserUtil {
 
     /**
      * Extracts merchant/payee name and reference number (UTR/cheque) from the narration.
+     * Supports SBI, Canara Bank, and all standard NPCI UPI / IMPS / NEFT formats.
      */
     private fun extractPayeeAndRef(narration: String, type: TransactionType): Pair<String, String?> {
-        val upiMatcher = UPI_PATTERN.matcher(narration)
-        if (upiMatcher.find()) {
-            val refNo = upiMatcher.group(2)?.trim()
-            val payeeName = upiMatcher.group(3)?.trim()?.replace('_', ' ')
-            val vpa = upiMatcher.group(5)?.trim()
+        val normalized = narration.replace('_', ' ').trim()
+
+        // 1. UPI Narrations across Indian Banks (Canara, SBI, PNB, BoB, HDFC, ICICI, etc.)
+        // Supports:
+        // - UPI/413524123456/DR/SWIGGY/CNRB/swiggy@icici/... (Canara Bank / PNB / BoB)
+        // - UPI/P2M/413625234567/AMAZON PAY/CNRB/... (Canara Bank Merchant)
+        // - UPI/P2A/413726345678/RAHUL/CNRB/... (Canara Bank Person-to-Account)
+        // - TRANSFER-UPI/DR/400123456789/SWIGGY/ICIC/... (SBI)
+        // - UPI/DR/400123456789/SWIGGY/ICIC/... (SBI)
+        if (normalized.contains("UPI/", ignoreCase = true) ||
+            normalized.contains("UPI-", ignoreCase = true) ||
+            normalized.contains("TRANSFER-UPI", ignoreCase = true)
+        ) {
+            val upiPayload = normalized
+                .replace(Regex("(?i)^.*?TRANSFER-UPI[/\\-]"), "")
+                .replace(Regex("(?i)^.*?UPI[/\\-]"), "")
+                .trim()
+
+            val segments = upiPayload.split(Regex("[/\\-]"))
+                .map { it.trim(' ', '.', ',', ':', ';', '(', ')') }
+                .filter { it.isNotBlank() }
+
+            // Find 12-digit UTR / RRN (or sequence of 9..18 digits)
+            val refNo = segments.firstOrNull { it.length in 9..18 && it.all { c -> c.isDigit() } }
+                ?: Regex("""\b(\d{12}|\d{6,18})\b""").find(normalized)?.value
+
+            val ignoredTokens = setOf(
+                "DR", "CR", "P2M", "P2A", "REV", "UPI", "TRANSFER", "TO", "BY",
+                "CNRB", "SBIN", "HDFC", "ICIC", "UTIB", "KKBK", "BARB", "PUNB", "UBIN",
+                "IOBA", "CBIN", "YESB", "FDRL", "SIBL", "IDFB", "IDIB", "AIRP", "PYTM",
+                "OKAXIS", "OKSBI", "OKHDFC", "OKICICI", "PAYTM", "APL", "YBL", "IBL",
+                "SBI", "CANARA", "AXIS", "KOTAK", "FEDERAL", "BOB", "PNB", "UNION"
+            )
+
+            // Candidates for payee name
+            val candidateSegments = segments.filter { seg ->
+                !seg.all { it.isDigit() } &&
+                !ignoredTokens.contains(seg.uppercase(Locale.ROOT)) &&
+                !seg.contains("@") &&
+                seg.length >= 2
+            }
+
+            val extractedName = candidateSegments.firstOrNull { seg ->
+                !seg.equals("UPI TRANSFER", ignoreCase = true) &&
+                !seg.startsWith("UPI", ignoreCase = true)
+            } ?: candidateSegments.firstOrNull()
+
+            val vpaSegment = segments.firstOrNull { it.contains("@") }
+            val vpaClean = vpaSegment?.let { vpa ->
+                val user = vpa.substringBefore("@").replace('.', ' ').replace(Regex("""\d+$"""), "").trim()
+                if (user.length >= 2 && !user.all { it.isDigit() }) user else vpa
+            }
 
             val cleanPayee = when {
-                !payeeName.isNullOrBlank() && !payeeName.all { it.isDigit() } -> payeeName
-                !vpa.isNullOrBlank() -> vpa
+                !extractedName.isNullOrBlank() -> extractedName
+                !vpaClean.isNullOrBlank() -> vpaClean
                 else -> if (type == TransactionType.DEBIT) "UPI Payment" else "UPI Received"
             }
+
             return Pair(cleanPayee.take(45), refNo)
         }
 
-        var cleaned = narration
+        var cleaned = normalized
             .replace(Regex("(?i)^TO\\s+TRANSFER-?"), "")
             .replace(Regex("(?i)^BY\\s+TRANSFER-?"), "")
             .replace(Regex("(?i)^TO\\s+"), "")
@@ -315,15 +386,27 @@ object SbiPdfParserUtil {
             .trim()
 
         // Extract 12-digit UTR or 6-digit cheque number if present
-        val refMatch = Regex("""\b(\d{12}|\d{6})\b""").find(cleaned)
+        val refMatch = Regex("""\b(\d{12}|\d{6,18})\b""").find(cleaned)
         val refNo = refMatch?.value
 
         val payee = when {
-            cleaned.contains("ATM WDL", ignoreCase = true) -> "ATM Cash Withdrawal"
+            cleaned.contains("ATM WDL", ignoreCase = true) || cleaned.contains("ATM CASH", ignoreCase = true) -> "ATM Cash Withdrawal"
             cleaned.contains("INT.PD", ignoreCase = true) || cleaned.contains("INTEREST", ignoreCase = true) -> "Interest Credit"
             cleaned.contains("SALARY", ignoreCase = true) -> "Salary"
             cleaned.contains("POS ", ignoreCase = true) -> {
                 cleaned.replace(Regex("(?i)^POS\\s+\\d+\\s*"), "").trim().ifBlank { "POS Spend" }
+            }
+            cleaned.contains("BIL/ONL", ignoreCase = true) || cleaned.contains("BIL/", ignoreCase = true) -> {
+                val billSegments = cleaned.split(Regex("[/\\-]")).filter { it.isNotBlank() && !it.all { c -> c.isDigit() } && !it.equals("BIL", ignoreCase = true) && !it.equals("ONL", ignoreCase = true) }
+                billSegments.firstOrNull() ?: "Bill Payment"
+            }
+            cleaned.contains("NEFT/", ignoreCase = true) -> {
+                val neftSegments = cleaned.split(Regex("[/\\-]")).filter { it.isNotBlank() && !it.all { c -> c.isDigit() } && !it.equals("NEFT", ignoreCase = true) && it.length > 4 }
+                neftSegments.lastOrNull() ?: "NEFT Transfer"
+            }
+            cleaned.contains("IMPS/", ignoreCase = true) -> {
+                val impsSegments = cleaned.split(Regex("[/\\-]")).filter { it.isNotBlank() && !it.all { c -> c.isDigit() } && !it.equals("IMPS", ignoreCase = true) && !it.equals("P2A", ignoreCase = true) && !it.equals("P2M", ignoreCase = true) }
+                impsSegments.lastOrNull() ?: "IMPS Transfer"
             }
             cleaned.isNotBlank() -> cleaned.take(45)
             else -> if (type == TransactionType.DEBIT) "Bank Debit" else "Bank Credit"
@@ -386,13 +469,14 @@ object SbiPdfParserUtil {
     }
 
     /**
-     * Maps parsed SBI rows into [TransactionEntity] objects, performs deduplication against the Room database,
+     * Maps parsed statement rows into [TransactionEntity] objects, performs deduplication against the Room database,
      * and performs a batch insert for new entries.
      */
     suspend fun importParsedTransactions(
         dao: TransactionDao,
         rows: List<SbiParsedRow>,
-        accountNumber: String? = null
+        accountNumber: String? = null,
+        bankNameOverride: String? = null
     ): SbiImportResult = withContext(Dispatchers.IO) {
         val toInsert = mutableListOf<TransactionEntity>()
         var duplicatesCount = 0
@@ -470,6 +554,8 @@ object SbiPdfParserUtil {
                 rawCategory
             }
             val isTransfer = effectiveCategory.equals("Self Transfer", ignoreCase = true)
+            val detectedBank = bankNameOverride ?: detectBankName(row.rawLine)
+            val canonicalBank = AccountNormalizer.canonicalBankName(detectedBank) ?: detectedBank
 
             val entity = TransactionEntity(
                 id = 0,
@@ -479,12 +565,12 @@ object SbiPdfParserUtil {
                 type = row.type,
                 source = TransactionSource.MANUAL,
                 referenceId = row.refNo,
-                rawContent = "Imported from SBI statement: ${row.rawLine}",
+                rawContent = "Imported statement: ${row.rawLine}",
                 category = effectiveCategory,
                 note = row.description.takeIf { it != row.payee },
                 balance = row.balancePaise,
                 itemsSummary = null,
-                bankName = AccountNormalizer.canonicalBankName("SBI") ?: "SBI",
+                bankName = canonicalBank,
                 accountNumber = AccountNormalizer.accountNumber(accountNumber),
                 accountType = "BANK",
                 isNecessity = false,

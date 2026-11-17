@@ -66,6 +66,9 @@ class NotificationCaptureService : NotificationListenerService() {
             "com.fedmobile",                          // Federal Bank FedMobile
             "com.bankofbaroda.mconnect",              // BoB World
             "com.canarabank.mobility",                // Canara ai1
+            "com.canarabank.epassbook",               // Canara e-Passbook
+            "com.canarabank.canaramobile",            // Canara Mobile Banking
+            "com.paytm.business",                     // Paytm for Business
             "com.Version1",                           // PNB ONE
             "com.infrasoft.uboi",                     // Union Bank Vyom
             "com.IndianBank.IndOASIS",                // Indian Bank IndOASIS
@@ -161,7 +164,8 @@ class NotificationCaptureService : NotificationListenerService() {
         val pkgName = sbn.packageName ?: return
         val isUpiOrBankApp = UPI_PACKAGES.contains(pkgName)
         val isMessagingApp = MESSAGING_PACKAGES.contains(pkgName)
-        if (!isUpiOrBankApp && !isMessagingApp) return
+        val isWhatsApp = pkgName == "com.whatsapp"
+        if (!isUpiOrBankApp && !isMessagingApp && !isWhatsApp) return
 
         val notification = sbn.notification ?: return
         if ((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0) return
@@ -182,6 +186,14 @@ class NotificationCaptureService : NotificationListenerService() {
         val body = if (bigText.isNotBlank() && (bigText.length >= text.length)) bigText else text
         val combinedContent = "$title $body".trim()
         if (combinedContent.isBlank()) return
+
+        // For WhatsApp, only capture notifications that contain financial payment cues
+        if (isWhatsApp) {
+            val lower = combinedContent.lowercase(java.util.Locale.ROOT)
+            val isFinancial = (lower.contains("paid") || lower.contains("sent") || lower.contains("received") || lower.contains("debited") || lower.contains("credited")) &&
+                    (lower.contains("₹") || lower.contains("inr") || lower.contains("rs.") || lower.contains("rs "))
+            if (!isFinancial) return
+        }
 
         val notifTime = if (notification.`when` > 0) notification.`when` else sbn.postTime
         val senderName = title.ifBlank { getAppName(pkgName) }

@@ -91,4 +91,62 @@ class SbiPdfParserTest {
         assertEquals(25000L, rows[0].amountPaise)
         assertEquals("400123456789", rows[0].refNo)
     }
+
+    @Test
+    fun testCanaraBankStatementParsing() {
+        val header = """
+            CANARA BANK
+            Account Statement
+            A/c No: 1234 101 012345
+            Customer ID: 987654321
+        """.trimIndent()
+
+        val accNum = SbiPdfParserUtil.extractAccountNumber(header)
+        assertEquals("1234101012345", accNum)
+        assertEquals("Canara Bank", SbiPdfParserUtil.detectBankName(header))
+
+        val statementText = """
+            CANARA BANK
+            A/c No: 1234101012345
+            Date Description Ref No. Debit Credit Balance
+            10/05/2024 UPI/413524123456/DR/SWIGGY/CNRB/swiggy@icici/Order123 450.00 12,345.00
+            11/05/2024 UPI/P2M/413625234567/AMAZON_PAY/CNRB/amazon@apl 1,299.00 11,046.00
+            12/05/2024 UPI/P2A/413726345678/RAHUL_SHARMA/CNRB/rahul@ybl 500.00 10,546.00
+            13/05/2024 BIL/ONL/0023456789/BESCOM_ELECTRICITY 850.00 9,696.00
+            14/05/2024 UPI/413827456789/CR/JOHN_DOE/CNRB/john@sbi 2,000.00 11,696.00
+        """.trimIndent()
+
+        val rows = SbiPdfParserUtil.parseSbiStatementText(statementText)
+        assertEquals(5, rows.size)
+
+        // Row 1: Swiggy
+        assertEquals(TransactionType.DEBIT, rows[0].type)
+        assertEquals(45000L, rows[0].amountPaise)
+        assertEquals("SWIGGY", rows[0].payee)
+        assertEquals("413524123456", rows[0].refNo)
+        assertEquals(1234500L, rows[0].balancePaise)
+
+        // Row 2: Amazon Pay (P2M)
+        assertEquals(TransactionType.DEBIT, rows[1].type)
+        assertEquals(129900L, rows[1].amountPaise)
+        assertEquals("AMAZON PAY", rows[1].payee)
+        assertEquals("413625234567", rows[1].refNo)
+
+        // Row 3: Rahul Sharma (P2A peer transfer)
+        assertEquals(TransactionType.DEBIT, rows[2].type)
+        assertEquals(50000L, rows[2].amountPaise)
+        assertEquals("RAHUL SHARMA", rows[2].payee)
+        assertEquals("413726345678", rows[2].refNo)
+
+        // Row 4: Bescom Electricity (Bill)
+        assertEquals(TransactionType.DEBIT, rows[3].type)
+        assertEquals(85000L, rows[3].amountPaise)
+        assertTrue(rows[3].payee.contains("BESCOM", ignoreCase = true))
+
+        // Row 5: Credit
+        assertEquals(TransactionType.CREDIT, rows[4].type)
+        assertEquals(200000L, rows[4].amountPaise)
+        assertEquals("JOHN DOE", rows[4].payee)
+        assertEquals("413827456789", rows[4].refNo)
+    }
 }

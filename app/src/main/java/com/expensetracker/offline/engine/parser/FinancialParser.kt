@@ -18,7 +18,8 @@ object FinancialParser {
         "\\bdebited\\b", "\\bdebit\\b", "\\bcredited\\b", "\\bcredit\\b", "\\bspent\\b", "\\bpaid\\b",
         "\\btransferred\\b", "\\bsent\\b", "\\breceived\\b", "\\brefunded\\b", "\\bwithdrawn\\b",
         "\\bdeposited\\b", "\\bdeducted\\b", "\\bsent you\\b", "\\bpaid you\\b",
-        "\\bautopay\\b", "\\bcharged\\b", "\\bused\\s+(?:for|at)\\b", "\\bpurchase\\b", "\\bmandate\\s+executed\\b", "\\btoll\\s+plaza\\b", "\\bint\\.pd\\b"
+        "\\bautopay\\b", "\\bcharged\\b", "\\bused\\s+(?:for|at)\\b", "\\bpurchase\\b", "\\bmandate\\s+executed\\b",
+        "\\btoll\\s+plaza\\b", "\\bint\\.pd\\b", "\\bpayment\\b", "\\bpayment\\s+successful\\b"
     ).map { Pattern.compile("(?i)$it") }
 
     // Reject list for OTPs, limits, failed transactions, future mandate reminders, and telecom data/reward promos
@@ -50,7 +51,7 @@ object FinancialParser {
 
     // Removed "cr." and "dr." from generic matchers to fix the "Dr. Sharma" bug. Prefer verbs.
     private val CREDIT_PATTERN = Pattern.compile("(?i)\\b(credit|credited|received|refunded|deposited|added|sent you|paid you|transfer(?:red)? from|int\\.pd|interest\\s+credited)\\b")
-    private val DEBIT_PATTERN = Pattern.compile("(?i)\\b(debit|debited|spent|paid(?!\\s+you)|deducted|withdrawn|sent(?!\\s+you)|transfer(?:red)? to|autopay|charged|used\\s+(?:for|at)\\s+(?:a\\s+)?(?:transaction|purchase|payment)|purchase\\s+of|mandate\\s+executed|thank\\s+you\\s+for\\s+using\\s+(?:your\\s+)?[A-Za-z0-9 ]{0,30}?card)\\b")
+    private val DEBIT_PATTERN = Pattern.compile("(?i)\\b(debit|debited|spent|paid(?!\\s+you)|payment\\s+(?:of|to|for|was|is|successful)|deducted|withdrawn|sent(?!\\s+you)|transfer(?:red)? to|autopay|charged|used\\s+(?:for|at)\\s+(?:a\\s+)?(?:transaction|purchase|payment)|purchase\\s+of|mandate\\s+executed|thank\\s+you\\s+for\\s+using\\s+(?:your\\s+)?[A-Za-z0-9 ]{0,30}?card)\\b")
     private val CREDIT_CARD_PATTERN = Pattern.compile("(?i)\\bcredit\\s*(?:card|limit|line|bill)\\b")
     private val CC_ACCOUNT_DETECT_PATTERN = Pattern.compile("(?i)\\b(credit\\s*card|cc\\s+xx|cc\\s+ending|onecard|slice\\s+card|amex|american\\s+express|lazypay|simpl)\\b")
     // NOTE: upi/imps/neft/rtgs are deliberately NOT here. A RuPay credit card used over UPI says
@@ -170,9 +171,9 @@ object FinancialParser {
     private val TITLE_BANK_REGEX = Regex("(?i)^(?:[A-Z]{2}-)?(HDFC|SBI|ICICI|AXIS|KOTAK|PNB|FEDERAL|FEDBNK|CANARA|UNION|IDFC|INDUSIND|YES|SIBSMS|BOB|BOI|IOB|IDBI|RBL|KVB|CUB|TMB|DBS|HSBC|AMEX|ONECARD|SLICE|AUBANK|EQUITAS|UJJIVAN|IPPB|ESAF)")
 
     // Universal lookahead terminator for Indian bank & UPI SMS payee slots (handles periods, commas,
-    // parentheses, "Final balance", "Avl bal", "Ref", "RRN", "UTR", "on", "via", "-South Indian Bank", etc.)
+    // parentheses, "Final balance", "Avl bal", "Ref", "RRN", "UTR", "on", "via", "-South Indian Bank", currency/numbers, etc.)
     private const val PAYEE_TERMINATOR =
-        "(?=(?:\\s*\\(|\\s+(?:from|on|using|via|ref|rrn|utr|upi|avl|bal|avail|final|umrn|info|chq|thru|not\\s+you|if\\s+not)|[.,;()]|\\s+-|$))"
+        "(?=(?:\\s*\\(|\\s+(?:from|on|using|via|ref|rrn|utr|upi|avl|bal|avail|final|umrn|info|chq|thru|was|is|successful|not\\s+you|if\\s+not|inr|rs\\.?|₹|[0-9])|[.,;()]|\\s+-|$))"
 
     /** "A/c XX123 debited", "your a/c no. XXXX1234 is debited", "Acct XX1 has been credited": the first verb after the user's own account. */
     private val OWN_ACCOUNT_VERB_PATTERN = Pattern.compile(
@@ -189,10 +190,13 @@ object FinancialParser {
     )
 
     private val PAYEE_PATTERNS = listOf(
-        // Google Pay success notifications can put the generic title before the useful autopay body:
-        // "Payment to Vi was successful · Payment for Autopay of ₹398 to Vi was successful."
+        // Google Pay / PhonePe / Paytm / BHIM notification patterns
         Pattern.compile("(?i)\\b(?:auto[\\s-]?pay)\\s+of\\s+(?:inr|rs\\.?|₹)\\s*[0-9,]+(?:\\.[0-9]{1,2})?\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)\\s+(?:was\\s+)?successful(?:ly)?\\b"),
         Pattern.compile("(?i)\\bpayment\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)\\s+(?:was\\s+)?successful(?:ly)?\\b"),
+        Pattern.compile("(?i)\\bpayment\\s+of\\s+(?:inr|rs\\.?|₹)?\\s*[0-9,.]*\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)$PAYEE_TERMINATOR"),
+        Pattern.compile("(?i)(?:inr|rs\\.?|₹)\\s*[0-9,.]*\\s+(?:sent|paid|transferred)\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)$PAYEE_TERMINATOR"),
+        Pattern.compile("(?i)\\bmoney\\s+sent\\s+(?:of\\s+)?(?:inr|rs\\.?|₹)?\\s*[0-9,.]*\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)$PAYEE_TERMINATOR"),
+        Pattern.compile("(?i)(?:you\\s+)?paid\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)(?=\\s+(?:inr|rs\\.?|₹|[0-9]))"),
         // ICICI debit alerts: "...debited for Rs 500.00 on 12-Oct-25; SWIGGY credited. UPI:123"
         Pattern.compile("(?i);\\s*([A-Za-z0-9@._\\-&'\\s]{2,35}?)\\s+credited\\b"),
         // "Info: UPI-529012345678-MAIN CANTEEN": skip the channel + reference, keep the merchant
@@ -480,6 +484,36 @@ object FinancialParser {
 
     private fun extractPayee(text: String, title: String?, type: TransactionType): String? {
         if (type == TransactionType.DEBIT && ATM_PATTERN.matcher(text).find()) return "ATM Withdrawal"
+
+        // Handle UPI slash-delimited narrations (e.g. Canara ai1, BoB World, Union Vyom) before generic "towards" regex
+        if (text.contains("UPI/", ignoreCase = true) || text.contains("UPI-", ignoreCase = true)) {
+            val upiMatcher = UPI_SLASH_PATTERN.matcher(text)
+            if (upiMatcher.find()) {
+                val rawPath = upiMatcher.group(1).orEmpty()
+                val segments = rawPath.split(Regex("[/\\-]"))
+                    .map { it.trim(' ', '.', ',', '-', ':', ';', '(', ')') }
+                    .filter { segment ->
+                        segment.isNotBlank() &&
+                                !segment.all { it.isDigit() } &&
+                                segment.length > 1 &&
+                                !isIgnored(segment)
+                    }
+
+                val candidate = segments.firstOrNull { seg ->
+                    val upper = seg.uppercase(Locale.ROOT)
+                    upper != "DR" && upper != "CR" && upper != "P2M" && upper != "P2A" &&
+                    upper != "CNRB" && upper != "SBIN" && upper != "HDFC" && upper != "ICIC" &&
+                    upper != "UTIB" && upper != "KKBK" && upper != "BARB" && upper != "PUNB" &&
+                    upper != "UBIN" && upper != "YESB" && upper != "FDRL" && upper != "SIBL" &&
+                    !seg.contains("@")
+                } ?: segments.maxByOrNull { it.length }
+
+                if (candidate != null && !isIgnored(candidate)) {
+                    return candidate
+                }
+            }
+        }
+
         for (pattern in PAYEE_PATTERNS) {
             val matcher = pattern.matcher(text)
             while (matcher.find()) {
@@ -487,23 +521,6 @@ object FinancialParser {
                 if (!candidate.isNullOrBlank() && candidate.length > 1 && !isIgnored(candidate)) {
                     return candidate
                 }
-            }
-        }
-
-        val upiMatcher = UPI_SLASH_PATTERN.matcher(text)
-        if (upiMatcher.find()) {
-            val rawPath = upiMatcher.group(1).orEmpty()
-            val segments = rawPath.split("/")
-                .map { it.trim(' ', '.', ',', '-', ':', ';', '(', ')') }
-                .filter { segment ->
-                    segment.isNotBlank() &&
-                            !segment.all { it.isDigit() } &&
-                            segment.length > 1 &&
-                            !isIgnored(segment)
-                }
-
-            if (segments.isNotEmpty()) {
-                return segments.maxByOrNull { it.length }
             }
         }
 
@@ -535,7 +552,11 @@ object FinancialParser {
             "google pay", "gpay", "phonepe", "paytm", "bhim", "alert",
             "bank", "credit alert", "debit alert", "amazon pay", "super.money",
             "mobikwik", "slice", "navi", "samsung wallet", "fi money", "jupiter", "freecharge",
-            "cred", "kiwi", "tata neu", "fampay", "whatsapp"
+            "cred", "kiwi", "tata neu", "fampay", "whatsapp",
+            "payment successful", "transaction successful", "money sent", "payment received",
+            "money received", "transaction alert", "payment alert", "upi alert",
+            "successful", "transaction completed", "notification", "debit alert", "credit alert",
+            "canara ai1", "bob world", "pnb one", "vyom", "yono sbi", "imobile"
         )
         val isSmsHeader = SMS_HEADER_REGEX.matches(title) || BANK_HEADER_REGEX.matches(title) ||
                 title.uppercase(Locale.ROOT) in setOf(
@@ -548,11 +569,14 @@ object FinancialParser {
 
     private fun cleanPayee(payee: String?): String? {
         if (payee.isNullOrBlank()) return null
-        var cleaned = payee.replace(VPA_CLEANUP_REGEX, "").trimEnd('.', ',', '-', ' ', ':').take(45)
+        var cleaned = payee.replace('_', ' ').replace(VPA_CLEANUP_REGEX, "").trimEnd('.', ',', '-', ' ', ':').take(45)
+
+        // Strip leading transaction prefixes like "Paid to", "Sent to", "Payment to", "Paid", "Sent"
+        cleaned = cleaned.replace(Regex("(?i)^(?:paid\\s+to|sent\\s+to|payment\\s+to|paid|sent)\\s+"), "").trim()
 
         val parenthesized = PAYEE_PARENTHESES_REGEX.find(cleaned)?.groupValues?.get(1)?.trim()
         if (!parenthesized.isNullOrBlank() && !parenthesized.all { it.isDigit() } && !isIgnored(parenthesized)) {
-            cleaned = parenthesized
+            cleaned = parenthesized.replace('_', ' ')
         }
 
         if (cleaned.contains("@")) {
@@ -563,6 +587,8 @@ object FinancialParser {
 
         cleaned = cleaned.replace(WEB_DOMAIN_REGEX, "").trim()
         cleaned = cleaned.replace(CORPORATE_NOISE_REGEX, "").trim()
+        cleaned = cleaned.replace(Regex("(?i)\\s+(?:was\\s+|is\\s+)?successful(?:ly)?.*$"), "").trim()
+        cleaned = cleaned.replace('_', ' ')
         cleaned = cleaned.trim(' ', '.', ',', '-', ':', '_')
 
         if (cleaned.isBlank() || DIGIT_ONLY_REGEX.matches(cleaned) || isIgnored(cleaned)) {
@@ -696,6 +722,12 @@ object FinancialParser {
         val subtextMatch = SECONDARY_TEXT_ACCOUNT_PATTERN.find(text)
         if (subtextMatch != null) {
             return subtextMatch.groupValues[1]
+        }
+
+        // Match bullet masked card/bank account: e.g. "••••1234" or "XX1234" or "- 1234"
+        val bulletMatch = Regex("""(?:[•*xX]{2,}|[-–—]\s*)(\d{3,6})\b""").find(text)
+        if (bulletMatch != null) {
+            return bulletMatch.groupValues[1]
         }
 
         return null
