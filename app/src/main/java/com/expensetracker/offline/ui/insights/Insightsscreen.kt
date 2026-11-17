@@ -28,6 +28,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -715,11 +716,10 @@ fun InsightsScreen(
 
                             val monthlyBudgetPaise = effectiveMonthlyBudgetPaise
                             val hasActiveBudgetHere = monthlyBudgetPaise > 0L && selectedAccountFilter == null
-                            val showProjected = hasSpending && isCurrent && daysLeft > 0 && elapsedDays >= 3
                             val showSafeAllowance = hasSpending && isCurrent && hasActiveBudgetHere && daysLeft > 0
                             val showPrevComparison = hasSpending && !showSafeAllowance && stats.hasReliablePrevBaseline
-                            val showNoSpend = hasSpending && stats.spendFreeDays > 0
-                            if (showProjected || showSafeAllowance || showPrevComparison || showNoSpend) {
+                            val showInvestments = hasSpending || cycleInvestmentsPaise > 0L
+                            if (showSafeAllowance || showPrevComparison || showInvestments) {
                                 Spacer(modifier = Modifier.height(16.dp))
                                 HorizontalDivider(
                                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
@@ -729,23 +729,6 @@ fun InsightsScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    if (showProjected) {
-                                        val projPaise = smartProjectedPaise
-                                        val overBudget = hasActiveBudgetHere && projPaise > monthlyBudgetPaise
-                                        val projCaption = when {
-                                            overBudget -> "+${formatRupees(projPaise - monthlyBudgetPaise)} over cap"
-                                            hasActiveBudgetHere -> "${formatRupees(monthlyBudgetPaise - projPaise)} under cap"
-                                            else -> "by cycle end"
-                                        }
-                                        HeroFact(
-                                            modifier = Modifier.weight(1f),
-                                            label = "Projected",
-                                            value = formatRupees(projPaise),
-                                            amountPaise = projPaise,
-                                            caption = projCaption,
-                                            valueColor = if (overBudget) InsightsColors.negative else MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
                                     if (showSafeAllowance) {
                                         val remainingPaise = monthlyBudgetPaise - grandTotalDebit
                                         if (remainingPaise > 0L) {
@@ -783,14 +766,20 @@ fun InsightsScreen(
                                             valueColor = trendColor
                                         )
                                     }
-                                    if (showNoSpend) {
+
+                                    if (showInvestments) {
                                         HeroFact(
                                             modifier = Modifier.weight(1f),
-                                            label = "Zero-spend",
-                                            value = "${stats.spendFreeDays} ${if (stats.spendFreeDays == 1) "day" else "days"}",
-                                            caption = "of $elapsedDays elapsed",
-                                            valueColor = MaterialTheme.colorScheme.onSurface
+                                            label = "Investments",
+                                            value = formatRupees(cycleInvestmentsPaise),
+                                            amountPaise = cycleInvestmentsPaise,
+                                            caption = "SIPs & wealth",
+                                            valueColor = Color(0xFF14B8A6)
                                         )
+                                    }
+
+                                    if (!showSafeAllowance && !showPrevComparison) {
+                                        Spacer(modifier = Modifier.weight(1f))
                                     }
                                 }
                             }

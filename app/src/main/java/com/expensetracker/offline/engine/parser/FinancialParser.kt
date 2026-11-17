@@ -19,7 +19,10 @@ object FinancialParser {
         "\\btransferred\\b", "\\bsent\\b", "\\breceived\\b", "\\brefunded\\b", "\\bwithdrawn\\b",
         "\\bdeposited\\b", "\\bdeducted\\b", "\\bsent you\\b", "\\bpaid you\\b",
         "\\bautopay\\b", "\\bcharged\\b", "\\bused\\s+(?:for|at)\\b", "\\bpurchase\\b", "\\bmandate\\s+executed\\b",
-        "\\btoll\\s+plaza\\b", "\\bint\\.pd\\b", "\\bpayment\\b", "\\bpayment\\s+successful\\b"
+        "\\btoll\\s+plaza\\b", "\\bint\\.pd\\b", "\\bpayment\\b", "\\bpayment\\s+successful\\b",
+        "\\busing\\s+(?:[A-Za-z\\s]{0,25}?\\s+)?(?:bank|a/c|account|card|upi|••••|\\*{2,})\\b",
+        "\\bpaid\\s+using\\b", "\\bpaid\\s+to\\b", "\\bpayment\\s+to\\b", "\\btransferred\\s+to\\b",
+        "\\bsent\\s+to\\b", "\\bupi\\s+transaction\\b", "\\btransaction\\s+(?:id|ref|successful|completed)\\b"
     ).map { Pattern.compile("(?i)$it") }
 
     // Reject list for OTPs, limits, failed transactions, future mandate reminders, and telecom data/reward promos
@@ -51,7 +54,7 @@ object FinancialParser {
 
     // Removed "cr." and "dr." from generic matchers to fix the "Dr. Sharma" bug. Prefer verbs.
     private val CREDIT_PATTERN = Pattern.compile("(?i)\\b(credit|credited|received|refunded|deposited|added|sent you|paid you|transfer(?:red)? from|int\\.pd|interest\\s+credited)\\b")
-    private val DEBIT_PATTERN = Pattern.compile("(?i)\\b(debit|debited|spent|paid(?!\\s+you)|payment\\s+(?:of|to|for|was|is|successful)|deducted|withdrawn|sent(?!\\s+you)|transfer(?:red)? to|autopay|charged|used\\s+(?:for|at)\\s+(?:a\\s+)?(?:transaction|purchase|payment)|purchase\\s+of|mandate\\s+executed|thank\\s+you\\s+for\\s+using\\s+(?:your\\s+)?[A-Za-z0-9 ]{0,30}?card)\\b")
+    private val DEBIT_PATTERN = Pattern.compile("(?i)\\b(debit|debited|spent|paid(?!\\s+you)|payment\\s+(?:of|to|for|was|is|successful)|paid\\s+(?:using|to)|sent(?!\\s+you)|transfer(?:red)? to|deducted|withdrawn|autopay|charged|using\\s+(?:[A-Za-z\\s]{0,25}?\\s+)?(?:Bank|A/c|Account|Card|UPI|••••|\\*{2,})|used\\s+(?:for|at)\\s+(?:a\\s+)?(?:transaction|purchase|payment)|purchase\\s+of|mandate\\s+executed|thank\\s+you\\s+for\\s+using\\s+(?:your\\s+)?[A-Za-z0-9 ]{0,30}?card)\\b")
     private val CREDIT_CARD_PATTERN = Pattern.compile("(?i)\\bcredit\\s*(?:card|limit|line|bill)\\b")
     private val CC_ACCOUNT_DETECT_PATTERN = Pattern.compile("(?i)\\b(credit\\s*card|cc\\s+xx|cc\\s+ending|onecard|slice\\s+card|amex|american\\s+express|lazypay|simpl)\\b")
     // NOTE: upi/imps/neft/rtgs are deliberately NOT here. A RuPay credit card used over UPI says
@@ -164,7 +167,7 @@ object FinancialParser {
     )
 
     private val SECONDARY_TEXT_BANK_PATTERN = Regex(
-        pattern = """(?:using|via|from(?:\s+your)?)\s+([a-zA-Z\s]{2,25}?)\s+(?:Bank|A/c|Account|Card)\b""",
+        pattern = """(?:using|via|from(?:\s+your)?)\s+([a-zA-Z\s]{2,25}?)\s+(?:Bank|A/c|Account|Card|••••|\*{2,})\b""",
         option = RegexOption.IGNORE_CASE
     )
 
@@ -173,7 +176,7 @@ object FinancialParser {
     // Universal lookahead terminator for Indian bank & UPI SMS payee slots (handles periods, commas,
     // parentheses, "Final balance", "Avl bal", "Ref", "RRN", "UTR", "on", "via", "-South Indian Bank", currency/numbers, etc.)
     private const val PAYEE_TERMINATOR =
-        "(?=(?:\\s*\\(|\\s+(?:from|on|using|via|ref|rrn|utr|upi|avl|bal|avail|final|umrn|info|chq|thru|was|is|successful|not\\s+you|if\\s+not|inr|rs\\.?|₹|[0-9])|[.,;()]|\\s+-|$))"
+        "(?=(?:\\s*\\(|\\s+(?:from|on|using|via|ref|rrn|utr|upi|avl|bal|avail|final|umrn|info|chq|thru|was|is|successful|not\\s+you|if\\s+not|inr|rs\\.?|₹|[0-9])|[.,;:()]|\\s+-|$))"
 
     /** "A/c XX123 debited", "your a/c no. XXXX1234 is debited", "Acct XX1 has been credited": the first verb after the user's own account. */
     private val OWN_ACCOUNT_VERB_PATTERN = Pattern.compile(
@@ -194,6 +197,7 @@ object FinancialParser {
         Pattern.compile("(?i)\\b(?:auto[\\s-]?pay)\\s+of\\s+(?:inr|rs\\.?|₹)\\s*[0-9,]+(?:\\.[0-9]{1,2})?\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)\\s+(?:was\\s+)?successful(?:ly)?\\b"),
         Pattern.compile("(?i)\\bpayment\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)\\s+(?:was\\s+)?successful(?:ly)?\\b"),
         Pattern.compile("(?i)\\bpayment\\s+of\\s+(?:inr|rs\\.?|₹)?\\s*[0-9,.]*\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)$PAYEE_TERMINATOR"),
+        Pattern.compile("(?i)(?:inr|rs\\.?|₹)\\s*[0-9,.]+\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)$PAYEE_TERMINATOR"),
         Pattern.compile("(?i)(?:inr|rs\\.?|₹)\\s*[0-9,.]*\\s+(?:sent|paid|transferred)\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)$PAYEE_TERMINATOR"),
         Pattern.compile("(?i)\\bmoney\\s+sent\\s+(?:of\\s+)?(?:inr|rs\\.?|₹)?\\s*[0-9,.]*\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)$PAYEE_TERMINATOR"),
         Pattern.compile("(?i)(?:you\\s+)?paid\\s+to\\s+([A-Za-z0-9@._\\-&'\\s]{2,35}?)(?=\\s+(?:inr|rs\\.?|₹|[0-9]))"),

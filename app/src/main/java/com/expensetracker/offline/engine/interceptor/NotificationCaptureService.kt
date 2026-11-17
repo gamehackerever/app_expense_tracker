@@ -4,11 +4,13 @@ import android.app.Notification
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.util.SenderFilter
@@ -173,9 +175,12 @@ class NotificationCaptureService : NotificationListenerService() {
 
         val extras = notification.extras ?: return
 
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty().trim()
+        val title = (extras.getCharSequence(Notification.EXTRA_TITLE)
+            ?: extras.getCharSequence(Notification.EXTRA_TITLE_BIG))?.toString().orEmpty().trim()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty().trim()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty().trim()
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty().trim()
+        val summaryText = extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString().orEmpty().trim()
 
         // For RCS/SMS messaging apps, strictly require a verified DLT/Bank sender header in the title
         // so personal chat notifications are never captured.
@@ -183,8 +188,57 @@ class NotificationCaptureService : NotificationListenerService() {
             if (title.isBlank() || !SenderFilter.isAllowedSmsSender(title)) return
         }
 
-        val body = if (bigText.isNotBlank() && (bigText.length >= text.length)) bigText else text
-        val combinedContent = "$title $body".trim()
+        // Extract any messages from MessagingStyle (frequently used by Google Pay payment threads)
+        val messagingTexts = mutableListOf<String>()
+        try {
+            val messagingStyle = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)
+            if (messagingStyle != null) {
+                messagingStyle.messages.forEach { msg ->
+                    val msgText = msg.text?.toString()?.trim().orEmpty()
+                    if (msgText.isNotBlank()) {
+                        messagingTexts.add(msgText)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Also check EXTRA_TEXT_LINES (used by InboxStyle notifications)
+        val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            ?.mapNotNull { it?.toString()?.trim() }
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+
+        val primaryBody = if (bigText.isNotBlank() && (bigText.length >= text.length)) bigText else text
+        val bodyBuilder = StringBuilder(primaryBody)
+
+        if (messagingTexts.isNotEmpty()) {
+            val joinedMessages = messagingTexts.joinToString(" ")
+            if (!bodyBuilder.contains(joinedMessages)) {
+                if (bodyBuilder.isNotEmpty()) bodyBuilder.append(" ")
+                bodyBuilder.append(joinedMessages)
+            }
+        }
+
+        if (textLines.isNotEmpty()) {
+            val joinedLines = textLines.joinToString(" ")
+            if (!bodyBuilder.contains(joinedLines)) {
+                if (bodyBuilder.isNotEmpty()) bodyBuilder.append(" ")
+                bodyBuilder.append(joinedLines)
+            }
+        }
+
+        if (subText.isNotBlank() && !bodyBuilder.contains(subText, ignoreCase = true) && !title.contains(subText, ignoreCase = true)) {
+            if (bodyBuilder.isNotEmpty()) bodyBuilder.append(" ")
+            bodyBuilder.append(subText)
+        }
+
+        if (summaryText.isNotBlank() && !bodyBuilder.contains(summaryText, ignoreCase = true) && !title.contains(summaryText, ignoreCase = true)) {
+            if (bodyBuilder.isNotEmpty()) bodyBuilder.append(" ")
+            bodyBuilder.append(summaryText)
+        }
+
+        val body = bodyBuilder.toString().trim()
+        val combinedContent = if (body.isNotBlank()) "$title $body".trim() else title
         if (combinedContent.isBlank()) return
 
         // For WhatsApp, only capture notifications that contain financial payment cues
@@ -195,12 +249,15 @@ class NotificationCaptureService : NotificationListenerService() {
             if (!isFinancial) return
         }
 
-        val notifTime = if (notification.`when` > 0) notification.`when` else sbn.postTime
+        val notifTime = if (notification.`when` > 0) notification.`when` else if (sbn.postTime > 0) sbn.postTime else System.currentTimeMillis()
         val senderName = title.ifBlank { getAppName(pkgName) }
 
+        // Key on both notification key AND content hash so notification updates (e.g. GPay status completion,
+        // payee or bank details added after initial post) trigger capture instead of being silently dropped.
+        val contentHash = combinedContent.hashCode()
         CaptureWorker.enqueue(
             context = applicationContext,
-            uniqueKey = "${sbn.key}_$notifTime",
+            uniqueKey = "${sbn.key}_$contentHash",
             sender = senderName,
             body = combinedContent,
             title = title,

@@ -245,7 +245,7 @@ internal data class CycleTrendPoint(
 internal fun CashFlowSummaryCard(
     totalIncomePaise: Long,
     discretionarySpendPaise: Long,
-    investmentsPaise: Long,
+    investmentsPaise: Long = 0L,
     isAnimating: Boolean
 ) {
     val totalOutflow = discretionarySpendPaise + investmentsPaise
@@ -276,7 +276,7 @@ internal fun CashFlowSummaryCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    if (investmentsPaise > 0L) "Cash flow & wealth" else "Cash flow",
+                    "Cash flow",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -309,25 +309,14 @@ internal fun CashFlowSummaryCard(
                     caption = "excl. investments",
                     valueColor = MaterialTheme.colorScheme.onSurface
                 )
-                if (investmentsPaise > 0L) {
-                    HeroFact(
-                        modifier = Modifier.weight(1f),
-                        label = "Investments",
-                        value = formatRupees(investmentsPaise),
-                        amountPaise = investmentsPaise,
-                        caption = "SIPs & wealth",
-                        valueColor = Color(0xFF14B8A6)
-                    )
-                } else {
-                    HeroFact(
-                        modifier = Modifier.weight(1f),
-                        label = "Net cash flow",
-                        value = (if (netSavingsPaise >= 0L) "+" else "−") + formatRupees( kotlin.math.abs(netSavingsPaise) ),
-                        amountPaise = netSavingsPaise,
-                        caption = if (netSavingsPaise >= 0L) "surplus" else "net outflow",
-                        valueColor = if (netSavingsPaise >= 0L) InsightsColors.positive else InsightsColors.negative
-                    )
-                }
+                HeroFact(
+                    modifier = Modifier.weight(1f),
+                    label = "Net flow",
+                    value = (if (netSavingsPaise >= 0L) "+" else "−") + formatRupees(kotlin.math.abs(netSavingsPaise)),
+                    amountPaise = netSavingsPaise,
+                    caption = if (netSavingsPaise >= 0L) "surplus" else "net deficit",
+                    valueColor = if (netSavingsPaise >= 0L) InsightsColors.positive else InsightsColors.negative
+                )
             }
 
             InsightsProgressBar(

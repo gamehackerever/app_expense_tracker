@@ -1066,8 +1066,6 @@ class TransactionRepository(
 
                 when {
                     bothRefs && !sameRef -> Unit
-                    sameRef || existingMatch.rawContent.contains(parsed.rawText) ->
-                        return@withTransaction IngestResult.Duplicate
                     (existingMatch.source == TransactionSource.SMS && source == TransactionSource.NOTIFICATION) ||
                     (existingMatch.source == TransactionSource.NOTIFICATION && source == TransactionSource.SMS) -> {
                         val bestPayee = if (source == TransactionSource.NOTIFICATION && !parsed.payee.isNullOrBlank()) {
@@ -1077,8 +1075,14 @@ class TransactionRepository(
                         } else {
                             parsed.payee ?: existingMatch.payee
                         }
+                        val bestCategory = if (bestPayee != existingMatch.payee) {
+                            CategoryClassifier.classifySync(bestPayee, "${existingMatch.rawContent} ${parsed.rawText}")
+                        } else {
+                            existingMatch.category
+                        }
                         val mergedTxn = existingMatch.copy(
                             payee = bestPayee,
+                            category = bestCategory,
                             source = TransactionSource.MERGED,
                             referenceId = parsed.referenceId ?: existingMatch.referenceId,
                             balance = parsed.balance ?: existingMatch.balance,
@@ -1089,6 +1093,34 @@ class TransactionRepository(
                         transactionDao.updateTransaction(mergedTxn)
                         return@withTransaction IngestResult.Merged(mergedTxn.id)
                     }
+                    (existingMatch.source == TransactionSource.NOTIFICATION && source == TransactionSource.NOTIFICATION) -> {
+                        // An updated notification for the same transaction (e.g. GPay status completion, bank details added)
+                        val bestPayee = if (!parsed.payee.isNullOrBlank() && (existingMatch.payee.isBlank() || CategoryClassifier.isGenericPayee(existingMatch.payee))) {
+                            parsed.payee
+                        } else if (!parsed.payee.isNullOrBlank() && parsed.payee != existingMatch.payee && existingMatch.payee.length < parsed.payee.length) {
+                            parsed.payee
+                        } else {
+                            existingMatch.payee
+                        }
+                        val bestCategory = if (bestPayee != existingMatch.payee) {
+                            CategoryClassifier.classifySync(bestPayee, "${existingMatch.rawContent} ${parsed.rawText}")
+                        } else {
+                            existingMatch.category
+                        }
+                        val updatedTxn = existingMatch.copy(
+                            payee = bestPayee,
+                            category = bestCategory,
+                            referenceId = parsed.referenceId ?: existingMatch.referenceId,
+                            balance = parsed.balance ?: existingMatch.balance,
+                            bankName = parsed.bankName ?: existingMatch.bankName,
+                            accountNumber = parsed.accountNumber ?: existingMatch.accountNumber,
+                            rawContent = if (existingMatch.rawContent.contains(parsed.rawText)) existingMatch.rawContent else "${existingMatch.rawContent} | [UPDATED]: ${parsed.rawText}".take(600)
+                        )
+                        transactionDao.updateTransaction(updatedTxn)
+                        return@withTransaction IngestResult.Merged(updatedTxn.id)
+                    }
+                    sameRef || existingMatch.rawContent.contains(parsed.rawText) ->
+                        return@withTransaction IngestResult.Duplicate
                     else -> Unit
                 }
             }
