@@ -53,6 +53,11 @@ object SbiPdfParserUtil {
         "dd/MM/yy", "d/M/yy", "dd-MM-yy", "d-M-yy"
     )
 
+    private val NO_YEAR_DATE_FORMATS = listOf(
+        "dd MMM", "d MMM", "dd-MMM", "d-MMM",
+        "dd/MM", "d/M", "dd-MM", "d-M"
+    )
+
     // Identifies line starting with Txn Date (and optional Value Date)
     private val DATE_START_REGEX = Regex(
         """^(?<date>\d{1,2}(?:[\s/-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*|[/.-]\d{1,2})(?:[\s/-]\d{2,4})?)(?:\s+(?<vdate>\d{1,2}(?:[\s/-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*|[/.-]\d{1,2})(?:[\s/-]\d{2,4})?))?\s+(?<rest>.*)$""",
@@ -354,13 +359,27 @@ object SbiPdfParserUtil {
     }
 
     private fun parseDateToMillis(dateStr: String): Long? {
-        val clean = dateStr.trim().replace('-', ' ').replace('/', ' ')
+        val clean = dateStr.trim().replace('-', ' ').replace('/', ' ').replace('.', ' ')
         for (format in DATE_FORMATS) {
             try {
-                val cleanFmt = format.replace('-', ' ').replace('/', ' ')
+                val cleanFmt = format.replace('-', ' ').replace('/', ' ').replace('.', ' ')
                 val sdf = SimpleDateFormat(cleanFmt, Locale.US).apply { isLenient = false }
                 val parsed = sdf.parse(clean)
                 if (parsed != null) return parsed.time
+            } catch (_: Exception) {}
+        }
+        for (format in NO_YEAR_DATE_FORMATS) {
+            try {
+                val cleanFmt = format.replace('-', ' ').replace('/', ' ').replace('.', ' ')
+                val sdf = SimpleDateFormat(cleanFmt, Locale.US).apply { isLenient = false }
+                val parsed = sdf.parse(clean)
+                if (parsed != null) {
+                    val cal = Calendar.getInstance()
+                    val currentYear = cal.get(Calendar.YEAR)
+                    val parsedCal = Calendar.getInstance().apply { time = parsed }
+                    parsedCal.set(Calendar.YEAR, currentYear)
+                    return parsedCal.timeInMillis
+                }
             } catch (_: Exception) {}
         }
         return null
@@ -426,7 +445,7 @@ object SbiPdfParserUtil {
             )
             val isDuplicateCandidate = candidates.any { candidate ->
                 (!row.refNo.isNullOrBlank() && candidate.referenceId == row.refNo) ||
-                        candidate.rawContent.contains(row.payee, ignoreCase = true)
+                        (row.payee.isNotBlank() && !row.payee.equals("UPI Payment", ignoreCase = true) && candidate.rawContent.contains(row.payee, ignoreCase = true))
             }
             if (isDuplicateCandidate) {
                 duplicatesCount++

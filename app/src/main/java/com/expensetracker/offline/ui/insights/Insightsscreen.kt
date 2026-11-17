@@ -127,12 +127,40 @@ fun InsightsScreen(
     var selectedAccountFilter by remember { mutableStateOf<AccountInfo?>(null) }
     val accountFilter = selectedAccountFilter
 
-    // Current billing cycle bounds
+    var selectedScope by rememberSaveable { mutableStateOf(InsightsTimeScope.MONTH) }
     var cycleOffset by rememberSaveable { mutableIntStateOf(0) }
     val isCurrent = cycleOffset == 0
 
-    val (cycleStartMillis, cycleEndMillis) = remember(startDayOfMonth, cycleOffset) {
-        BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset)
+    val firstDayOfWeek = remember { Calendar.getInstance().firstDayOfWeek }
+
+    val (cycleStartMillis, cycleEndMillis) = remember(selectedScope, startDayOfMonth, cycleOffset) {
+        when (selectedScope) {
+            InsightsTimeScope.DAY -> {
+                val cal = Calendar.getInstance().apply {
+                    add(Calendar.DAY_OF_YEAR, cycleOffset)
+                    set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                }
+                val start = cal.timeInMillis
+                cal.set(Calendar.HOUR_OF_DAY, 23); cal.set(Calendar.MINUTE, 59); cal.set(Calendar.SECOND, 59); cal.set(Calendar.MILLISECOND, 999)
+                val end = cal.timeInMillis
+                Pair(start, end)
+            }
+            InsightsTimeScope.WEEK -> {
+                val cal = Calendar.getInstance().apply {
+                    set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+                    add(Calendar.WEEK_OF_YEAR, cycleOffset)
+                    set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                }
+                val start = cal.timeInMillis
+                cal.add(Calendar.DAY_OF_YEAR, 6)
+                cal.set(Calendar.HOUR_OF_DAY, 23); cal.set(Calendar.MINUTE, 59); cal.set(Calendar.SECOND, 59); cal.set(Calendar.MILLISECOND, 999)
+                val end = cal.timeInMillis
+                Pair(start, end)
+            }
+            InsightsTimeScope.MONTH -> {
+                BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset)
+            }
+        }
     }
 
     val earliestTxnMillis = remember(allTransactions) {
@@ -155,18 +183,48 @@ fun InsightsScreen(
     val elapsedDays = ceil((effectiveNow - cycleStartMillis).toDouble() / DAY_MS).toInt().coerceIn(1, cycleLengthDays)
     val daysLeft = if (isCurrent) ceil((cycleEndMillis - now).toDouble() / DAY_MS).toInt().coerceAtLeast(0) else 0
 
+    val scopeDisplayLabel = remember(selectedScope, cycleStartMillis, cycleEndMillis, cycleOffset) {
+        when (selectedScope) {
+            InsightsTimeScope.DAY -> {
+                when (cycleOffset) {
+                    0 -> "Today"
+                    -1 -> "Yesterday"
+                    else -> SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(java.util.Date(cycleStartMillis))
+                }
+            }
+            InsightsTimeScope.WEEK -> {
+                if (cycleOffset == 0) "This Week"
+                else formatCycleRange(cycleStartMillis, cycleEndMillis)
+            }
+            InsightsTimeScope.MONTH -> {
+                formatCycleRange(cycleStartMillis, cycleEndMillis)
+            }
+        }
+    }
+
+    val scopeSubtitle = remember(selectedScope, isCurrent, daysLeft, cycleStartMillis, cycleEndMillis) {
+        when (selectedScope) {
+            InsightsTimeScope.DAY -> if (isCurrent) "Today's Insights" else SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(java.util.Date(cycleStartMillis))
+            InsightsTimeScope.WEEK -> if (isCurrent) "This Week · ${formatCycleRange(cycleStartMillis, cycleEndMillis)}" else "Past week · ${formatCycleRange(cycleStartMillis, cycleEndMillis)}"
+            InsightsTimeScope.MONTH -> {
+                when {
+                    !isCurrent -> "Past cycle · Tap to return to current"
+                    daysLeft == 0 -> "Current cycle · Resets today"
+                    daysLeft == 1 -> "Current cycle · 1 day left"
+                    else -> "Current cycle · $daysLeft days left"
+                }
+            }
+        }
+    }
+
     // Single-pass synchronous snapshot so Frame 1 of Dashboard -> Insights has 100% of data ready
     // without 8 async coroutines popping cards into the LazyColumn mid-transition.
     val filteredTransactions = remember(allTransactions, accountFilter, cycleStartMillis, cycleEndMillis, pendingDeleteIds) {
-        val isDesc = allTransactions.size < 2 ||
-                allTransactions.first().transaction.timestamp >= allTransactions.last().transaction.timestamp
         val result = ArrayList<TransactionWithDebts>()
         for (item in allTransactions) {
             val t = item.transaction.timestamp
             if (t > cycleEndMillis) continue
-            if (t < cycleStartMillis) {
-                if (isDesc) break else continue
-            }
+            if (t < cycleStartMillis) continue
             if (item.transaction.id !in pendingDeleteIds && matchesAccount(item.transaction, accountFilter)) {
                 result.add(item)
             }
@@ -232,9 +290,7 @@ fun InsightsScreen(
         for (item in allTransactions) {
             val t = item.transaction.timestamp
             if (t >= prevEnd) continue
-            if (t < prevStart) {
-                if (isDesc) break else continue
-            }
+            if (t < prevStart) continue
             if (item.transaction.id !in pendingDeleteIds &&
                 isSpendDebit(item.transaction) &&
                 matchesAccount(item.transaction, accountFilter)
@@ -315,9 +371,7 @@ fun InsightsScreen(
         for (item in allTransactions) {
             val t = item.transaction.timestamp
             if (t > latestEnd) continue
-            if (t < earliestStart) {
-                if (isDesc) break else continue
-            }
+            if (t < earliestStart) continue
             if (item.transaction.id in pendingDeleteIds || !matchesAccount(item.transaction, accountFilter)) continue
             for (i in 0 until 6) {
                 val b = bounds[i]
@@ -446,10 +500,17 @@ fun InsightsScreen(
             item(key = "cycle") {
                 EntranceItem("cycle", 0, seenSections, Modifier.animateItem(fadeInSpec = null)) {
                     CycleSelector(
+                        selectedScope = selectedScope,
+                        onScopeSelected = {
+                            haptic.tap()
+                            selectedScope = it
+                            cycleOffset = 0
+                        },
                         startMillis = cycleStartMillis,
                         endMillis = cycleEndMillis,
+                        displayLabel = scopeDisplayLabel,
+                        subtitle = scopeSubtitle,
                         isCurrent = isCurrent,
-                        daysLeft = daysLeft,
                         canGoBack = canGoBack,
                         onPrevious = { haptic.tap(); cycleOffset-- },
                         onNext = { haptic.tap(); cycleOffset++ },
@@ -501,7 +562,7 @@ fun InsightsScreen(
 
             // --- CATEGORY BUDGET WARNINGS (Active current cycle only, two-stage dismissal) ---
 
-            if (activeWarnings.isNotEmpty()) {
+            if (activeWarnings.isNotEmpty() && effectiveMonthlyBudgetPaise > 0L) {
                 item(key = "budget_warnings") {
                     EntranceItem("budget_warnings", 1, seenSections, Modifier.animateItem()) {
                         com.expensetracker.offline.ui.dashboard.CategoryBudgetWarningBanner(
@@ -545,40 +606,42 @@ fun InsightsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    if (isCurrent) "Net spending this cycle" else "Net spending",
+                                    if (isCurrent) "Net spending (${selectedScope.label})" else "Net spending",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
 
-                                // Clickable pill opens the Billing Cycle dialog directly in-place
-                                Surface(
-                                    shape = RoundedCornerShape(AppRadius.pill),
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(AppRadius.pill))
-                                        .quietClickable {
-                                            haptic.tap()
-                                            showStartDayDialog = true
-                                        }
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                if (selectedScope == InsightsTimeScope.MONTH) {
+                                    // Clickable pill opens the Billing Cycle dialog directly in-place
+                                    Surface(
+                                        shape = RoundedCornerShape(AppRadius.pill),
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(AppRadius.pill))
+                                            .quietClickable {
+                                                haptic.tap()
+                                                showStartDayDialog = true
+                                            }
                                     ) {
-                                        Icon(
-                                            Icons.Default.Edit,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurface,
-                                            modifier = Modifier.size(12.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            "Resets Day $startDayOfMonth",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Edit,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                "Resets Day $startDayOfMonth",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -736,49 +799,7 @@ fun InsightsScreen(
                 }
             }
 
-            // ── Quick stats ──
-            if (hasSpending) {
-                item(key = "stats") {
-                    EntranceItem(
-                        "stats",
-                        3,
-                        seenSections,
-                        Modifier.animateItem(fadeInSpec = null)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            InsightsStatTile(
-                                modifier = Modifier.weight(1f),
-                                icon = Icons.Default.CalendarToday,
-                                label = "Daily average",
-                                value = formatRupees(dailyAverage),
-                                amountPaise = dailyAverage.toLong(),
-                                caption = "over $elapsedDays ${if (elapsedDays == 1) "day" else "days"}",
-                                accent = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            InsightsStatTile(
-                                modifier = Modifier.weight(1f),
-                                icon = Icons.AutoMirrored.Filled.ReceiptLong,
-                                label = "Largest",
-                                value = formatRupees(stats.largestAmount),
-                                amountPaise = stats.largestAmount,
-                                caption = stats.largestPayee ?: "—",
-                                accent = MaterialTheme.colorScheme.onSurfaceVariant,
-                                onClick = stats.largestTxnId?.let { id ->
-                                    {
-                                        haptic.tap()
-                                        activeTransactionForEditId = id
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // ── Cash Flow & Wealth (Income vs Discretionary vs Investments) ──
+            // ── Cash Flow (Income vs Spending vs Investments) ──
             if (hasSpending || cycleIncomePaise > 0L) {
                 item(key = "cash_flow") {
                     EntranceItem("cash_flow", 3, seenSections, Modifier.animateItem(fadeInSpec = null)) {
@@ -792,10 +813,52 @@ fun InsightsScreen(
                 }
             }
 
+            // ── Category Breakdown (Pie chart + category wise spent) placed directly below Cash Flow ──
+            if (isLoaded && hasSpending) {
+                item(key = "categories") {
+                    EntranceItem(
+                        "categories",
+                        3,
+                        seenSections,
+                        Modifier.animateItem(fadeInSpec = null)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            SectionHeader(
+                                title = "By category",
+                                trailing = if (categories.size == 1) "1 category" else "${categories.size} categories",
+                                actionIcon = if (effectiveMonthlyBudgetPaise > 0L) (if (categoryBudgets.isEmpty()) Icons.Default.Add else Icons.Default.Edit) else null,
+                                actionLabel = if (effectiveMonthlyBudgetPaise > 0L) (if (categoryBudgets.isEmpty()) "Set limits" else "${categoryBudgets.size} ${if (categoryBudgets.size == 1) "limit" else "limits"}") else null,
+                                onActionClick = {
+                                    if (effectiveMonthlyBudgetPaise > 0L) {
+                                        haptic.tap()
+                                        initialCategoryForBudgetSheet = null
+                                        showManageCategoryBudgetsSheet = true
+                                    }
+                                }
+                            )
+                            CategoryBreakdownCard(
+                                categories = categories,
+                                categoryBudgets = if (effectiveMonthlyBudgetPaise > 0L) categoryBudgets else emptyMap(),
+                                grandTotal = grandTotalDebit,
+                                isAnimating = startBarAnimations,
+                                onCategoryClick = { selectedCategoryForBreakdown = it },
+                                onManageBudgetsClick = {
+                                    if (effectiveMonthlyBudgetPaise > 0L) {
+                                        initialCategoryForBudgetSheet = null
+                                        showManageCategoryBudgetsSheet = true
+                                    }
+                                },
+                                haptic = haptic
+                            )
+                        }
+                    }
+                }
+            }
+
             // ── On-Device ML Learned Patterns (Habits, Time-of-Day Rhythm, MAD Anomalies) ──
             if (smartInsights.isNotEmpty()) {
                 item(key = "smart_patterns") {
-                    EntranceItem("smart_patterns", 3, seenSections, Modifier.animateItem(fadeInSpec = null)) {
+                    EntranceItem("smart_patterns", 4, seenSections, Modifier.animateItem(fadeInSpec = null)) {
                         SmartInsightsCard(
                             insights = smartInsights,
                             onTransactionClick = { txnId ->
@@ -812,7 +875,7 @@ fun InsightsScreen(
                     EntranceItem("multi_cycle_trend", 4, seenSections, Modifier.animateItem(fadeInSpec = null)) {
                         MultiCycleTrendCard(
                             allPoints = trendPoints,
-                            monthlyBudgetPaise = if (selectedAccountFilter == null) effectiveMonthlyBudgetPaise else 0L,
+                            monthlyBudgetPaise = if (selectedAccountFilter == null && effectiveMonthlyBudgetPaise > 0L) effectiveMonthlyBudgetPaise else 0L,
                             isAnimating = startBarAnimations
                         )
                     }
@@ -842,42 +905,6 @@ fun InsightsScreen(
             }
 
             if (isLoaded && hasSpending) {
-                item(key = "categories") {
-                    EntranceItem(
-                        "categories",
-                        4,
-                        seenSections,
-                        Modifier.animateItem(fadeInSpec = null)
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            SectionHeader(
-                                title = "By category",
-                                trailing = if (categories.size == 1) "1 category" else "${categories.size} categories",
-                                actionIcon = if (categoryBudgets.isEmpty()) Icons.Default.Add else Icons.Default.Edit,
-                                actionLabel = if (categoryBudgets.isEmpty()) "Set limits"
-                                else "${categoryBudgets.size} ${if (categoryBudgets.size == 1) "limit" else "limits"}",
-                                onActionClick = {
-                                    haptic.tap()
-                                    initialCategoryForBudgetSheet = null
-                                    showManageCategoryBudgetsSheet = true
-                                }
-                            )
-                            CategoryBreakdownCard(
-                                categories = categories,
-                                categoryBudgets = categoryBudgets,
-                                grandTotal = grandTotalDebit,
-                                isAnimating = startBarAnimations,
-                                onCategoryClick = { selectedCategoryForBreakdown = it },
-                                onManageBudgetsClick = {
-                                    initialCategoryForBudgetSheet = null
-                                    showManageCategoryBudgetsSheet = true
-                                },
-                                haptic = haptic
-                            )
-                        }
-                    }
-                }
-
                 item(key = "merchants") {
                     EntranceItem(
                         "merchants",
@@ -937,6 +964,48 @@ fun InsightsScreen(
                                 onNavigateToNecessities()
                             }
                         )
+                    }
+                }
+            }
+
+            // ── Quick stats (Daily average & Largest moved to bottom) ──
+            if (hasSpending) {
+                item(key = "stats") {
+                    EntranceItem(
+                        "stats",
+                        7,
+                        seenSections,
+                        Modifier.animateItem(fadeInSpec = null)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            InsightsStatTile(
+                                modifier = Modifier.weight(1f),
+                                icon = Icons.Default.CalendarToday,
+                                label = "Daily average",
+                                value = formatRupees(dailyAverage),
+                                amountPaise = dailyAverage.toLong(),
+                                caption = "over $elapsedDays ${if (elapsedDays == 1) "day" else "days"}",
+                                accent = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            InsightsStatTile(
+                                modifier = Modifier.weight(1f),
+                                icon = Icons.AutoMirrored.Filled.ReceiptLong,
+                                label = "Largest",
+                                value = formatRupees(stats.largestAmount),
+                                amountPaise = stats.largestAmount,
+                                caption = stats.largestPayee ?: "—",
+                                accent = MaterialTheme.colorScheme.onSurfaceVariant,
+                                onClick = stats.largestTxnId?.let { id ->
+                                    {
+                                        haptic.tap()
+                                        activeTransactionForEditId = id
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             }

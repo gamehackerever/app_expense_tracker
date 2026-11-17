@@ -90,6 +90,12 @@ import kotlin.math.roundToInt
 internal const val DAY_MS = 86_400_000L
 internal const val TOP_N_BY_DEFAULT = 5
 
+enum class InsightsTimeScope(val label: String) {
+    DAY("Day"),
+    WEEK("Week"),
+    MONTH("Cycle")
+}
+
 // Thin alias kept so existing Insights call sites read the same palette as the Dashboard (AppColors).
 internal object InsightsColors {
     val positive @Composable get() = AppColors.positive

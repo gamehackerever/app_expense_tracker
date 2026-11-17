@@ -39,6 +39,10 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import java.io.File
 import java.util.Locale
+import android.util.Log
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.firstOrNull
+import com.expensetracker.offline.util.AccountNormalizer
 
 private val LEGACY_SUCCESSFUL_PAYMENT_TITLE =
     Regex("(?i)^payment\\s+to\\s+.+?\\s+(?:was\\s+)?successful(?:ly)?[.!]?$")
@@ -1103,27 +1107,6 @@ class TransactionRepository(
                 )
             } else null
 
-            val monitorPayee = parsed.payee?.takeIf { it.isNotBlank() } ?: learnedEval.inferredPayee
-            if (source != TransactionSource.MANUAL && !parsed.isTransfer && oppositeLeg == null && !monitorPayee.isNullOrBlank()) {
-                val recentComparableTransactions = transactionDao.getRecentComparableTransactions(
-                    payee = monitorPayee,
-                    type = type,
-                    sinceTimestamp = timestamp - 400L * 24 * 60 * 60 * 1000,
-                    beforeTimestamp = timestamp
-                )
-                val reviewReason = TransactionIntegrityMonitor.assess(
-                    amount = amount,
-                    payee = monitorPayee,
-                    type = type,
-                    source = source,
-                    timestamp = timestamp,
-                    recentTransactions = recentComparableTransactions
-                )
-                if (reviewReason != null) {
-                    return@withTransaction queueForReview(parsed, sender, timestamp, source, reviewReason)
-                }
-            }
-
             if (oppositeLeg != null && !oppositeLeg.excludeFromSpend) {
                 transactionDao.updateTransaction(
                     oppositeLeg.copy(
@@ -1153,17 +1136,6 @@ class TransactionRepository(
                 ?: learnedEval.inferredPayee
 
             val isAutoTransfer = parsed.isTransfer || oppositeLeg != null || cardBillBankLeg
-            val isMissingPayee = (effectivePayee.isNullOrBlank() || effectivePayee.equals("Unknown", ignoreCase = true) || effectivePayee.matches(NUMERIC_PAYEE_REGEX)) && !isAutoTransfer
-            // If user already approved this template structure, don't force high-value items back into Review Queue
-            val isHighValue = type == TransactionType.DEBIT && amount > reviewThreshold && !isAutoTransfer && !learnedEval.isConfirmedTransaction
-
-            if (!skipReview && (isHighValue || isMissingPayee)) {
-                val reason = when {
-                    isMissingPayee -> "Merchant could not be identified confidently."
-                    else -> "This is a high-value debit. Verify the amount and merchant."
-                }
-                return@withTransaction queueForReview(parsed, sender, timestamp, source, reason)
-            }
 
             val resolvedPayee = when {
                 cardBillBankLeg -> "Credit Card Bill"
@@ -1177,25 +1149,97 @@ class TransactionRepository(
                 isAutoTransfer -> "Transfer"
                 type == TransactionType.CREDIT -> "Uncategorized"
                 else -> {
-                    learnedEval.inferredCategory?.takeIf { it.isNotBlank() && !it.equals("Uncategorized", ignoreCase = true) }
+                    val rawCat = learnedEval.inferredCategory?.takeIf { it.isNotBlank() && !it.equals("Uncategorized", ignoreCase = true) }
                         ?: classifyCategory(aliasedPayee, parsed.rawText, amount, timestamp, type)
+                    if (rawCat.isBlank() || rawCat.equals("Transfer", ignoreCase = true) || rawCat.equals("Uncategorized", ignoreCase = true)) {
+                        "Unspecified"
+                    } else {
+                        rawCat
+                    }
                 }
             }
+
+            val finalBankName = AccountNormalizer.canonicalBankName(parsed.bankName ?: learnedEval.inferredBankName)
+            val finalAccountNumber = AccountNormalizer.accountNumber(parsed.accountNumber)
 
             val id = transactionDao.insertTransaction(
                 TransactionEntity(
                     amount = amount, payee = aliasedPayee, timestamp = timestamp, type = type,
                     source = source, referenceId = parsed.referenceId, rawContent = parsed.rawText,
                     category = category, note = parsed.note ?: if (oppositeLeg != null) "Self-transfer (${oppositeLeg.bankName})" else null,
-                    balance = parsed.balance, bankName = parsed.bankName ?: learnedEval.inferredBankName,
-                    accountNumber = parsed.accountNumber, excludeFromSpend = parsed.excludeFromSpend || isAutoTransfer,
-                    accountType = resolveAccountType(parsed.bankName ?: learnedEval.inferredBankName, parsed.accountNumber, parsed.accountType)
+                    balance = parsed.balance, bankName = finalBankName,
+                    accountNumber = finalAccountNumber, excludeFromSpend = parsed.excludeFromSpend || isAutoTransfer,
+                    accountType = resolveAccountType(finalBankName, finalAccountNumber, parsed.accountType)
                 )
             )
             IngestResult.Inserted(id)
         }
         if (result is IngestResult.Inserted || result is IngestResult.Merged) refreshWidget()
         return result
+    }
+
+    /**
+     * Drains any pending transactions from the review queue and inserts them directly into transactions table.
+     */
+    suspend fun autoDrainPendingReviews() = withContext(Dispatchers.IO) {
+        try {
+            val pending = reviewItemDao.getPendingReviewItemsFlow().firstOrNull() ?: emptyList()
+            if (pending.isEmpty()) return@withContext
+            val toInsert = mutableListOf<TransactionEntity>()
+            val resolvedIds = mutableListOf<Long>()
+            for (item in pending) {
+                val amount = item.extractedPartialAmount ?: continue
+                if (amount <= 0L) continue
+                val type = item.type ?: TransactionType.DEBIT
+
+                val existing = transactionDao.findMatchingTransaction(
+                    amount = amount,
+                    type = type,
+                    startTime = item.timestamp - DEDUPE_WINDOW_MS,
+                    endTime = item.timestamp + DEDUPE_WINDOW_MS,
+                    targetTime = item.timestamp,
+                    bankName = item.bankName,
+                    accountNumber = item.accountNumber
+                )
+                if (existing == null) {
+                    val payee = item.extractedPartialPayee?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
+                        ?: if (type == TransactionType.DEBIT) "UPI Payment" else "UPI Received"
+                    val rawCategory = CategoryClassifier.classifySync(payee, item.rawContent)
+                    val category = if (type == TransactionType.DEBIT && (rawCategory.isBlank() || rawCategory.equals("Transfer", ignoreCase = true) || rawCategory.equals("Uncategorized", ignoreCase = true))) {
+                        "Unspecified"
+                    } else rawCategory
+
+                    val cBank = AccountNormalizer.canonicalBankName(item.bankName)
+                    val cAcc = AccountNormalizer.accountNumber(item.accountNumber)
+
+                    toInsert.add(
+                        TransactionEntity(
+                            amount = amount,
+                            payee = payee,
+                            timestamp = item.timestamp,
+                            type = type,
+                            source = item.source,
+                            referenceId = item.referenceId,
+                            rawContent = item.rawContent,
+                            category = category,
+                            balance = item.balance,
+                            bankName = cBank,
+                            accountNumber = cAcc
+                        )
+                    )
+                }
+                resolvedIds.add(item.id)
+            }
+            if (toInsert.isNotEmpty()) {
+                transactionDao.insertTransactions(toInsert)
+                refreshWidget()
+            }
+            for (id in resolvedIds) {
+                reviewItemDao.updateStatus(id, ReviewStatus.RESOLVED)
+            }
+        } catch (e: Exception) {
+            Log.e("TransactionRepo", "Error auto-draining reviews", e)
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

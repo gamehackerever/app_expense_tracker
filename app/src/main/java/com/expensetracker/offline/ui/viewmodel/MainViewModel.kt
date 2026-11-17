@@ -56,6 +56,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsRepo = SettingsRepository(application.applicationContext)
 
     /** Budget the dashboard measures against: this cycle's one-off budget if set, else the usual one. */
+    val isBudgetEnabled = MutableStateFlow(settingsRepo.isBudgetEnabled)
     val monthlyBudget = MutableStateFlow(settingsRepo.effectiveMonthlyBudget)
     /** The usual (every-month) budget, shown and edited in Settings. */
     val baseMonthlyBudget = MutableStateFlow(settingsRepo.monthlyBudget)
@@ -94,6 +95,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { repository.syncCategoryRulesFromHistory() }
             runCatching { repository.normalizeExistingBankNames() }
+            runCatching { repository.autoDrainPendingReviews() }
         }
         loadRolloverState()
     }
@@ -136,23 +138,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** @param clearOverride true when the user says "every month": a leftover one-off must not hide the new number. */
     fun updateMonthlyBudget(newBudget: Long, clearOverride: Boolean = false) {
+        val enabled = newBudget > 0L
         viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.isBudgetEnabled = enabled
             settingsRepo.monthlyBudget = newBudget
-            if (clearOverride) settingsRepo.setCurrentCycleBudgetOverride(null)
+            if (clearOverride || !enabled) settingsRepo.setCurrentCycleBudgetOverride(null)
         }
+        isBudgetEnabled.value = enabled
         baseMonthlyBudget.value = newBudget
-        if (clearOverride) cycleBudgetOverride.value = null
-        monthlyBudget.value = cycleBudgetOverride.value ?: newBudget
+        if (clearOverride || !enabled) cycleBudgetOverride.value = null
+        monthlyBudget.value = if (enabled) (cycleBudgetOverride.value ?: newBudget) else 0L
         isBudgetExplicitlySet.value = true
     }
 
     /** Unforeseen month: change this cycle's budget only. The usual budget returns automatically next cycle. */
     fun setBudgetForThisCycle(rupees: Long) {
+        val enabled = rupees > 0L
         viewModelScope.launch(Dispatchers.IO) {
-            settingsRepo.setCurrentCycleBudgetOverride(rupees)
+            if (enabled) {
+                settingsRepo.isBudgetEnabled = true
+                settingsRepo.setCurrentCycleBudgetOverride(rupees)
+            } else {
+                settingsRepo.setCurrentCycleBudgetOverride(null)
+            }
         }
-        cycleBudgetOverride.value = rupees
-        monthlyBudget.value = rupees
+        if (enabled) isBudgetEnabled.value = true
+        cycleBudgetOverride.value = if (enabled) rupees else null
+        monthlyBudget.value = if (isBudgetEnabled.value) (cycleBudgetOverride.value ?: baseMonthlyBudget.value) else 0L
         isBudgetExplicitlySet.value = true
     }
 
@@ -161,12 +173,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             settingsRepo.setCurrentCycleBudgetOverride(null)
         }
         cycleBudgetOverride.value = null
-        monthlyBudget.value = baseMonthlyBudget.value
+        monthlyBudget.value = if (isBudgetEnabled.value) baseMonthlyBudget.value else 0L
     }
 
     fun refreshSettings() {
+        isBudgetEnabled.value = settingsRepo.isBudgetEnabled
         baseMonthlyBudget.value = settingsRepo.monthlyBudget
-        cycleBudgetOverride.value = settingsRepo.currentCycleBudgetOverride()
+        cycleBudgetOverride.value = if (settingsRepo.isBudgetEnabled) settingsRepo.currentCycleBudgetOverride() else null
         monthlyBudget.value = settingsRepo.effectiveMonthlyBudget
         startDayOfMonth.value = settingsRepo.startDayOfMonth
         necessityChunkLimit.value = settingsRepo.necessityChunkLimit
@@ -306,6 +319,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { repository.syncCategoryRulesFromHistory() }
             runCatching { repository.normalizeExistingBankNames() }
+            runCatching { repository.autoDrainPendingReviews() }
         }
     }
 

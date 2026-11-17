@@ -97,89 +97,127 @@ import kotlin.math.roundToInt
 
 @Composable
 internal fun CycleSelector(
+    selectedScope: InsightsTimeScope,
+    onScopeSelected: (InsightsTimeScope) -> Unit,
     startMillis: Long,
     endMillis: Long,
+    displayLabel: String,
+    subtitle: String,
     isCurrent: Boolean,
-    daysLeft: Int,
     canGoBack: Boolean,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onJumpToCurrent: () -> Unit
 ) {
-    val label = remember(startMillis, endMillis) { formatCycleRange(startMillis, endMillis) }
-    val subtitle = when {
-        !isCurrent -> "Past cycle · Tap to return to current"
-        daysLeft == 0 -> "Current cycle · Resets today"
-        daysLeft == 1 -> "Current cycle · 1 day left"
-        else -> "Current cycle · $daysLeft days left"
-    }
-
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(AppRadius.large),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            IconButton(onClick = onPrevious, enabled = canGoBack) {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous cycle")
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(AppRadius.small))
-                    .quietClickable(enabled = !isCurrent, onClick = onJumpToCurrent)
-                    .padding(vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            // Segmented Scope Toggle [ Day | Week | Cycle ]
+            Surface(
+                shape = RoundedCornerShape(AppRadius.pill),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.padding(bottom = 6.dp)
             ) {
-                AnimatedContent(
-                    targetState = startMillis to label,
-                    transitionSpec = {
-                        val movingForward = targetState.first >= initialState.first
-                        val slideDir = if (movingForward) 1 else -1
-                        (slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { fullWidth -> slideDir * (fullWidth / 4) } +
-                                fadeIn(tween(220)))
-                            .togetherWith(
-                                slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { fullWidth -> -slideDir * (fullWidth / 4) } +
-                                        fadeOut(tween(150))
+                Row(
+                    modifier = Modifier.padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    InsightsTimeScope.values().forEach { scope ->
+                        val isSelected = scope == selectedScope
+                        val animBg by animateColorAsState(
+                            targetValue = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            animationSpec = tween(180),
+                            label = "scopeBg"
+                        )
+                        val textColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        Surface(
+                            shape = RoundedCornerShape(AppRadius.pill),
+                            color = animBg,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(AppRadius.pill))
+                                .quietClickable { onScopeSelected(scope) }
+                        ) {
+                            Text(
+                                text = scope.label,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = textColor,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp)
                             )
-                            .using(SizeTransform(clip = false))
-                    },
-                    label = "cycleLabelSlide"
-                ) { (_, text) ->
-                    Text(
-                        text,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                AnimatedContent(
-                    targetState = subtitle to isCurrent,
-                    transitionSpec = {
-                        fadeIn(tween(200)) togetherWith fadeOut(tween(140))
-                    },
-                    label = "cycleSubtitleFade"
-                ) { (subText, current) ->
-                    Text(
-                        subText,
-                        fontSize = 12.sp,
-                        fontWeight = if (current) FontWeight.Normal else FontWeight.SemiBold,
-                        color = if (current) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                        }
+                    }
                 }
             }
 
-            IconButton(onClick = onNext, enabled = !isCurrent) {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next cycle")
+            // Navigation row with Left Arrow, Dynamic Label/Subtitle, and Right Arrow
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onPrevious, enabled = canGoBack) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous")
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(AppRadius.small))
+                        .quietClickable(enabled = !isCurrent, onClick = onJumpToCurrent)
+                        .padding(vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    AnimatedContent(
+                        targetState = startMillis to displayLabel,
+                        transitionSpec = {
+                            val movingForward = targetState.first >= initialState.first
+                            val slideDir = if (movingForward) 1 else -1
+                            (slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { fullWidth -> slideDir * (fullWidth / 4) } +
+                                    fadeIn(tween(220)))
+                                .togetherWith(
+                                    slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { fullWidth -> -slideDir * (fullWidth / 4) } +
+                                            fadeOut(tween(150))
+                                )
+                                .using(SizeTransform(clip = false))
+                        },
+                        label = "cycleLabelSlide"
+                    ) { (_, text) ->
+                        Text(
+                            text,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    AnimatedContent(
+                        targetState = subtitle to isCurrent,
+                        transitionSpec = {
+                            fadeIn(tween(200)) togetherWith fadeOut(tween(140))
+                        },
+                        label = "cycleSubtitleFade"
+                    ) { (subText, current) ->
+                        Text(
+                            subText,
+                            fontSize = 12.sp,
+                            fontWeight = if (current) FontWeight.Normal else FontWeight.SemiBold,
+                            color = if (current) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                IconButton(onClick = onNext, enabled = !isCurrent) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next")
+                }
             }
         }
     }
@@ -238,7 +276,7 @@ internal fun CashFlowSummaryCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Cash flow & wealth",
+                    if (investmentsPaise > 0L) "Cash flow & wealth" else "Cash flow",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -265,10 +303,10 @@ internal fun CashFlowSummaryCard(
                 )
                 HeroFact(
                     modifier = Modifier.weight(1f),
-                    label = "Discretionary",
+                    label = "Spending",
                     value = formatRupees(discretionarySpendPaise),
                     amountPaise = discretionarySpendPaise,
-                    caption = "living expenses",
+                    caption = "excl. investments",
                     valueColor = MaterialTheme.colorScheme.onSurface
                 )
                 if (investmentsPaise > 0L) {

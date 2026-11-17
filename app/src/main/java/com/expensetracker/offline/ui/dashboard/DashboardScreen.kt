@@ -655,15 +655,11 @@ fun DashboardScreen(
             TimeRange.LAST_MONTH -> timeBoundaries[4]
         }
         val maxTimestamp = if (range == TimeRange.LAST_MONTH) timeBoundaries[2] - 1L else Long.MAX_VALUE
-        val isDesc = transactionsWithDebts.size < 2 ||
-                transactionsWithDebts.first().transaction.timestamp >= transactionsWithDebts.last().transaction.timestamp
         val out = ArrayList<TransactionWithDebts>()
         for (txnWithDebts in transactionsWithDebts) {
             val txn = txnWithDebts.transaction
             if (txn.timestamp > maxTimestamp) continue
-            if (txn.timestamp < minTimestamp) {
-                if (isDesc) break else continue
-            }
+            if (txn.timestamp < minTimestamp) continue
             if (!matchesAccountFilter(txn, currentAccount)) continue
 
             val matchesCategory = when (categoryFilter) {
@@ -698,7 +694,7 @@ fun DashboardScreen(
 
     val splitLinkInfo by viewModel.splitLinkInfo.collectAsStateWithLifecycle()
 
-    val periodSpent = remember(transactionsWithDebts, selectedTimeRange, pendingDeleteIds, startDayOfMonth) {
+    val periodSpent = remember(transactionsWithDebts, selectedTimeRange, selectedAccount, pendingDeleteIds, startDayOfMonth) {
         val start = startMillisFor(selectedTimeRange, startDayOfMonth)
         val end = endMillisFor(selectedTimeRange, startDayOfMonth)
         var gross = 0L
@@ -708,6 +704,7 @@ fun DashboardScreen(
             if (txn.timestamp > end) continue
             if (txn.timestamp < start) continue
             if (txn.id in pendingDeleteIds) continue
+            if (!matchesAccountFilter(txn, selectedAccount)) continue
             if (txn.countsAsSpend()) {
                 gross += mySpendShare(item)
             } else if (isRefundCredit(txn)) {
@@ -3092,9 +3089,9 @@ fun DashboardScreen(
                         }
                     }
 
-                    val showCategoryFilterChips = visibleCount >= 4 || searchOpen || searchQuery.isNotBlank() || selectedFilterCategory != "All" || selectedSort != "NEWEST"
-                    val showAccountFilterChips = linkedAccounts.size > 1 || selectedAccount != null
-                    if (showCategoryFilterChips || showAccountFilterChips) {
+                    val showCategoryFilterChips = false
+                    val showAccountFilterChips = linkedAccounts.size > 1
+                    if (searchOpen || searchQuery.isNotBlank() || showAccountFilterChips) {
                         val hasUnspecified = remember(transactions) {
                             transactions.asSequence().take(1000).any { it.bankName == null }
                         }

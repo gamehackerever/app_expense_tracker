@@ -292,7 +292,8 @@ fun SettingsScreen(
     val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsStateWithLifecycle()
     val vmBaseBudget by viewModel.baseMonthlyBudget.collectAsStateWithLifecycle()
     val vmCycleOverride by viewModel.cycleBudgetOverride.collectAsStateWithLifecycle()
-    var budgetText by remember(vmBaseBudget) { mutableStateOf(vmBaseBudget.toString()) }
+    val isBudgetEnabled by viewModel.isBudgetEnabled.collectAsStateWithLifecycle()
+    var budgetText by remember(vmBaseBudget) { mutableStateOf(if (vmBaseBudget > 0L) vmBaseBudget.toString() else "25000") }
 
     var startDayOfMonth by remember { mutableIntStateOf(settingsRepo.startDayOfMonth) }
     val isManualModePreferred by viewModel.isManualModePreferred.collectAsStateWithLifecycle()
@@ -340,9 +341,11 @@ fun SettingsScreen(
                 if (pending != settingsRepo.myUpiVpa && isValidUpiVpa(pending)) {
                     settingsRepo.myUpiVpa = pending
                 }
-                val pendingBudget = budgetText.toLongOrNull()?.takeIf { it > 0L }
-                if (pendingBudget != null && pendingBudget != settingsRepo.monthlyBudget) {
-                    viewModel.updateMonthlyBudget(pendingBudget)
+                if (isBudgetEnabled) {
+                    val pendingBudget = budgetText.toLongOrNull()?.takeIf { it > 0L }
+                    if (pendingBudget != null && pendingBudget != settingsRepo.monthlyBudget) {
+                        viewModel.updateMonthlyBudget(pendingBudget)
+                    }
                 }
             }
         }
@@ -379,13 +382,14 @@ fun SettingsScreen(
     }
 
     fun commitBudget() {
+        if (!isBudgetEnabled) return
         val parsed = budgetText.toLongOrNull()?.takeIf { it > 0L }
         if (parsed != null && parsed != settingsRepo.monthlyBudget) {
             viewModel.updateMonthlyBudget(parsed)
             budgetText = parsed.toString()
             showSnack("Budget saved")
         } else {
-            budgetText = settingsRepo.monthlyBudget.toString()
+            budgetText = if (settingsRepo.monthlyBudget > 0L) settingsRepo.monthlyBudget.toString() else "25000"
         }
     }
 
@@ -783,8 +787,6 @@ if (openPage == "budget") {
                 showTitle = false,
                 modifier = Modifier.trackSection("Cycle", sectionPositions)
             ) {
-                var isBudgetEnabled by remember(vmBaseBudget) { mutableStateOf(vmBaseBudget > 0L) }
-
                 SettingsSwitchItem(
                     icon = Icons.Default.Savings,
                     title = "Enable Monthly Budget",
@@ -792,10 +794,9 @@ if (openPage == "budget") {
                     checked = isBudgetEnabled,
                     onCheckedChange = { enabled: Boolean ->
                         haptic.tap()
-                        isBudgetEnabled = enabled
                         if (!enabled) {
                             viewModel.updateMonthlyBudget(0L, clearOverride = true)
-                            budgetText = "0"
+                            budgetText = "25000"
                             showSnack("Monthly budget disabled")
                         } else {
                             val defaultBudget = 25000L

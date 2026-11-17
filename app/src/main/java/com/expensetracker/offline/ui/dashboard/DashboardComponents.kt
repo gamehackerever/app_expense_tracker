@@ -2271,9 +2271,18 @@ internal fun startMillisFor(range: TimeRange, startDayOfMonth: Int): Long {
     }
 }
 
-/** End of the window for [range]: today for everything except the previous cycle, which ends where this one began. */
+/** End of the window for [range]: full cycle end for month ranges, end-of-year for year, or end-of-today. */
 internal fun endMillisFor(range: TimeRange, startDayOfMonth: Int): Long =
-    if (range == TimeRange.LAST_MONTH) BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -1).second else endOfTodayMillis()
+    when (range) {
+        TimeRange.THIS_MONTH -> BillingCycleHelper.getCycleRange(startDayOfMonth).second
+        TimeRange.LAST_MONTH -> BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -1).second
+        TimeRange.THIS_YEAR -> Calendar.getInstance().apply {
+            set(Calendar.MONTH, Calendar.DECEMBER); set(Calendar.DAY_OF_MONTH, 31)
+            set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59); set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
+        }.timeInMillis
+        TimeRange.ALL_TIME -> Long.MAX_VALUE
+        else -> endOfTodayMillis()
+    }
 
 internal fun startOfCurrentMonthMillis(startDayOfMonth: Int): Long =
     BillingCycleHelper.getCycleRange(startDayOfMonth).first
