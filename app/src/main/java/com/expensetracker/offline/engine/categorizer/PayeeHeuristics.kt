@@ -30,7 +30,9 @@ object PayeeHeuristics {
         Regex("(?i)\\b(medicals?|medicle|medicals)\\b") to "medical",
         Regex("(?i)\\b(chikken|chicken)\\b") to "chicken",
         Regex("(?i)\\b(hotal|hottel)\\b") to "hotel",
-        Regex("(?i)\\b(mobail|mobiles?)\\b") to "mobile"
+        Regex("(?i)\\b(mobail|mobiles?)\\b") to "mobile",
+        Regex("(?i)\\b(puf|pufff|pufs)\\b") to "puff",
+        Regex("(?i)\\b(samosas|somosa|samosaa)\\b") to "samosa"
     )
 
     /** Lower-cases and folds spelling variants. Safe to call on any payee. */
@@ -47,19 +49,23 @@ object PayeeHeuristics {
         "coffee" to "Food & Dining", "shawarma" to "Food & Dining", "canteen" to "Food & Dining",
         "kitchen" to "Food & Dining", "chicken" to "Food & Dining", "juice" to "Food & Dining",
         "tiffin" to "Food & Dining", "dosa" to "Food & Dining", "sweets" to "Food & Dining",
+        "puff" to "Food & Dining", "samosa" to "Food & Dining", "burger" to "Food & Dining",
+        "pizza" to "Food & Dining", "sandwich" to "Food & Dining", "tea" to "Food & Dining",
         "supermarket" to "Groceries", "vegetables" to "Groceries", "provision" to "Groceries",
-        "pharmacy" to "Health", "hospital" to "Health", "clinic" to "Health",
-        "petrol" to "Fuel & Fastag", "electricity" to "Bills & Utilities"
+        "grocery" to "Groceries",
+        "pharmacy" to "Health", "hospital" to "Health", "clinic" to "Health", "medicine" to "Health",
+        "petrol" to "Fuel & Fastag", "diesel" to "Fuel & Fastag", "electricity" to "Bills & Utilities",
+        "haircut" to "Personal Care", "salon" to "Personal Care"
     )
 
     /** One-letter typo in a long word ("Biriyani" is handled by [canonicalize]; "Restorent" lands here). */
     fun fuzzyHint(payee: String): String? {
-        val tokens = canonicalize(payee).split(Regex("[^a-z]+")).filter { it.length >= 5 }
+        val tokens = canonicalize(payee).split(Regex("[^a-z]+")).filter { it.length >= 4 }
         for (token in tokens) {
             for ((word, category) in FUZZY_WORDS) {
                 if (kotlin.math.abs(token.length - word.length) > 1) continue
                 if (token == word) return category
-                if (word.length >= 6 && withinOneEdit(token, word)) return category
+                if (word.length >= 5 && withinOneEdit(token, word)) return category
             }
         }
         return null
@@ -89,16 +95,16 @@ object PayeeHeuristics {
     // ───────────────────────── generic shop-type words ─────────────────────────
 
     private val WORD_HINTS: List<Pair<Regex, String>> = listOf(
-        Regex("(?i)\\b(foods?|fast\\s?food|meals?|oota|kebabs?|tandoori|grill|fry|chicken|mutton|beef|fish\\s?fry|ice\\s?cream|icecream|kulfi|falooda|milkshake|cool\\s?bar|bhavan|bhavanam|snack\\s?bar|tea\\s?stall|tea\\s?shop|coffee\\s?shop|juice\\s?(shop|centre|center)|cakes?|bakes?|chips|hot\\s?chips|sweet\\s?stall|dhaba|nadan|thattu)\\b") to "Food & Dining",
-        Regex("(?i)\\b(stores?|provision|traders|agencies|vegetable|veg|fruit|fruits|poultry|dairy|milk|ration|kirana|bazaar|bazar|supermarket)\\b") to "Groceries",
-        Regex("(?i)\\b(medical|pharma|pharmacy|labs?|scans?|opticals?|eye\\s?care|hospital|clinic|dental|ayurved\\w*)\\b") to "Health",
-        Regex("(?i)\\b(mobile|communications?|electricals?|electronics?|hardware|fancy|readymades?|garments?|gents|ladies\\s?wear|collections|fashions?|footwear|watch(es)?|gold|jewel\\w*|furniture|toys|gift\\s?(shop|centre|center))\\b") to "Shopping",
-        Regex("(?i)\\b(uidai|aadhaar|aadhar|passport|parivahan|mparivahan|rto|akshaya|csc|common\\s?service|registration|challan|stamp\\s?paper|court\\s?fee|e-?seva)\\b") to "Bills & Utilities",
-        Regex("(?i)\\b(travels|tours|transport|cabs?|taxi|autos?\\s?stand|bus\\s?stand|ksrtc)\\b") to "Travel",
-        Regex("(?i)\\b(petro|bunk|filling|fuels?)\\b") to "Fuel & Fastag",
-        Regex("(?i)\\b(beauty|unisex|saloon|salon|parlour|hair|barbers?|spa)\\b") to "Personal Care",
-        Regex("(?i)\\b(game\\s?zone|arcade|snooker|turf|cinemas?|theatre)\\b") to "Entertainment",
-        Regex("(?i)\\b(tuition|academy|school|college|institute|stationery|books?|xerox|photostat)\\b") to "Education"
+        Regex("(?i)\\b(foods?|fast\\s?food|meals?|oota|kebabs?|tandoori|grill|fry|chicken|mutton|beef|fish\\s?fry|ice\\s?cream|icecream|kulfi|falooda|milkshake|cool\\s?bar|bhavan|bhavanam|snack\\s?bar|tea\\s?stall|tea\\s?shop|coffee\\s?shop|juice\\s?(shop|centre|center)|cakes?|bakes?|chips|hot\\s?chips|sweet\\s?stall|dhaba|nadan|thattu|puffs?|samosas?|biryani|shawarma|burger|pizza|sandwich|momos?|rolls?|dosa|idli|parotta|porotta|tiffin|canteen|mess|bakers?|bakery|chai|coffee|breakfast|lunch|dinner)\\b") to "Food & Dining",
+        Regex("(?i)\\b(stores?|provision|traders|agencies|vegetable|veg|fruit|fruits|poultry|dairy|milk|ration|kirana|bazaar|bazar|supermarket|grocery|groceries|sabzi|mandi)\\b") to "Groceries",
+        Regex("(?i)\\b(medical|pharma|pharmacy|labs?|scans?|opticals?|eye\\s?care|hospital|clinic|dental|ayurved\\w*|medicine|medicines|tablet|tablets|doctor)\\b") to "Health",
+        Regex("(?i)\\b(mobile|communications?|electricals?|electronics?|hardware|fancy|readymades?|garments?|gents|ladies\\s?wear|collections|fashions?|footwear|watch(es)?|gold|jewel\\w*|furniture|toys|gift\\s?(shop|centre|center)|clothes|shopping)\\b") to "Shopping",
+        Regex("(?i)\\b(uidai|aadhaar|aadhar|passport|parivahan|mparivahan|rto|akshaya|csc|common\\s?service|registration|challan|stamp\\s?paper|court\\s?fee|e-?seva|electricity|bijli|power\\s?bill|water\\s?bill|cylinder|lpg|gas\\s?bill)\\b") to "Bills & Utilities",
+        Regex("(?i)\\b(travels|tours|transport|cabs?|taxi|autos?\\s?stand|bus\\s?stand|ksrtc|auto\\s?fare|metro|train|flight|fare|ride)\\b") to "Travel",
+        Regex("(?i)\\b(petro|bunk|filling|fuels?|petrol|diesel|cng|fastag|toll|parking)\\b") to "Fuel & Fastag",
+        Regex("(?i)\\b(beauty|unisex|saloon|salon|parlour|hair|barbers?|spa|haircut|grooming|facial)\\b") to "Personal Care",
+        Regex("(?i)\\b(game\\s?zone|arcade|snooker|turf|cinemas?|theatre|movies?|show)\\b") to "Entertainment",
+        Regex("(?i)\\b(tuition|academy|school|college|institute|stationery|books?|xerox|photostat|fees?|coaching)\\b") to "Education"
     )
 
     /** Category implied by generic shop-type words, or null when the name says nothing. */

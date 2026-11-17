@@ -155,7 +155,10 @@ class StatementImporter(private val context: Context, private val database: AppD
         val entities = rows.map { row ->
             val payee = settings.getMerchantAlias(row.payee) ?: row.payee
             val type = if (row.isDebit) TransactionType.DEBIT else TransactionType.CREDIT
-            val category = if (!row.isDebit) "Uncategorized" else CategoryClassifier.classify(payee, payee, ruleDao)
+            val category = if (!row.isDebit) "Uncategorized" else {
+                val c = CategoryClassifier.classify(payee = payee, rawContent = payee, ruleDao = ruleDao, note = null)
+                if (c == "Uncategorized" || c.isBlank()) "Unspecified" else c
+            }
             TransactionEntity(
                 amount = row.amountPaise,
                 payee = payee,

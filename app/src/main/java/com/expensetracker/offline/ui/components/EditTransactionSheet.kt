@@ -148,12 +148,15 @@ fun EditTransactionSheet(
     val calculatedAmount = remember(amountStr) { evaluateBasicMath(amountStr) }
 
     var userManuallyPickedCategoryInEdit by rememberSaveable(transaction.id) { mutableStateOf(false) }
-    LaunchedEffect(payee) {
+    LaunchedEffect(payee, itemsSummary) {
         if (userManuallyPickedCategoryInEdit) return@LaunchedEffect
-        val clean = payee.trim()
-        if (clean.length < 2 || clean.equals(transaction.payee.trim(), ignoreCase = true)) return@LaunchedEffect
-        val inferred = CategoryClassifier.classifySync(clean, transaction.rawContent)
-            .takeUnless { it.equals("Uncategorized", ignoreCase = true) || it.equals("Transfer", ignoreCase = true) }
+        val cleanPayee = payee.trim()
+        val cleanNote = itemsSummary.trim()
+        val inferred = CategoryClassifier.classifySync(
+            payee = cleanPayee,
+            rawContent = transaction.rawContent,
+            note = cleanNote
+        ).takeUnless { it.equals("Uncategorized", ignoreCase = true) || it.equals("Unspecified", ignoreCase = true) || it.equals("Transfer", ignoreCase = true) }
         if (inferred != null) {
             selectedCategory = inferred
             lastNonTransferCategory = inferred
@@ -831,10 +834,21 @@ fun EditTransactionSheet(
                             onUpdateAllPast(transaction.payee, trimmedPayee, selectedCategory)
                         }
 
+                        val finalCategory = if ((selectedCategory.equals("Unspecified", ignoreCase = true) || selectedCategory.equals("Uncategorized", ignoreCase = true)) && !userManuallyPickedCategoryInEdit) {
+                            val autoInferred = CategoryClassifier.classifySync(
+                                payee = trimmedPayee,
+                                rawContent = transaction.rawContent,
+                                note = savedNote ?: savedItemsSummary
+                            )
+                            if (autoInferred != "Uncategorized" && autoInferred != "Unspecified") autoInferred else selectedCategory
+                        } else {
+                            selectedCategory
+                        }
+
                         val updatedTxn = transaction.copy(
                             payee = trimmedPayee,
                             amount = finalAmount,
-                            category = selectedCategory,
+                            category = finalCategory,
                             type = transactionType,
                             excludeFromSpend = excludeFromSpend,
                             budgetId = selectedBudgetId,

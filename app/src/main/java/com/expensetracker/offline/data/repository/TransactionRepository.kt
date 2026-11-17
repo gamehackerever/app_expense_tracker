@@ -488,9 +488,8 @@ class TransactionRepository(
                 for (txn in recentAll) {
                     val currentPayee = txn.payee.trim()
                     val isCurrentGeneric = CategoryClassifier.isGenericPayee(currentPayee)
-                    if (!fullPass && !isCurrentGeneric && txn.timestamp < healCutoff &&
-                        !txn.category.equals("Uncategorized", ignoreCase = true)
-                    ) continue
+                    val isCurrentUnspecified = txn.category.equals("Unspecified", ignoreCase = true) || txn.category.equals("Uncategorized", ignoreCase = true)
+                    if (!fullPass && !isCurrentGeneric && !isCurrentUnspecified && txn.timestamp < healCutoff) continue
 
                     // Check if a generic SMS row ("UPI Payment" / "Bank Transfer") is a duplicate of a named transaction
                     if (isCurrentGeneric && txn.source == TransactionSource.SMS) {
@@ -526,10 +525,14 @@ class TransactionRepository(
                     }
 
                     if (txn.source == TransactionSource.MANUAL || txn.rawContent.isBlank() || txn.rawContent == "Manual Entry") {
-                        // Still upgrade "Uncategorized" on named manual/restored entries if a known merchant keyword matches
-                        if (!isCurrentGeneric && txn.type == TransactionType.DEBIT && txn.category.equals("Uncategorized", ignoreCase = true)) {
-                            val trueCat = CategoryClassifier.classifySync(currentPayee, currentPayee)
-                            if (trueCat != "Uncategorized") {
+                        // Upgrade "Unspecified" / "Uncategorized" on manual/restored entries if merchant keyword or note matches
+                        if (txn.type == TransactionType.DEBIT && isCurrentUnspecified) {
+                            val trueCat = CategoryClassifier.classifySync(
+                                payee = currentPayee,
+                                rawContent = txn.rawContent,
+                                note = txn.note ?: txn.itemsSummary
+                            )
+                            if (trueCat != "Uncategorized" && trueCat != "Unspecified") {
                                 transactionDao.updateTransaction(txn.copy(category = trueCat))
                                 anyHealed = true
                             }
@@ -553,13 +556,18 @@ class TransactionRepository(
                     }
 
                     val currentCat = txn.category.trim()
-                    val trueCat = CategoryClassifier.classifySync(healedPayee, txn.rawContent)
+                    val trueCat = CategoryClassifier.classifySync(
+                        payee = healedPayee,
+                        rawContent = txn.rawContent,
+                        note = txn.note ?: txn.itemsSummary
+                    )
 
                     val healedCat = when {
                         currentCat.equals("Transfer", ignoreCase = true) || currentCat == "Split Settlement" -> currentCat
                         parsed.isTransfer -> "Transfer"
                         txn.type == TransactionType.CREDIT -> "Uncategorized"
-                        currentCat.equals("Uncategorized", ignoreCase = true) && trueCat != "Uncategorized" -> {
+                        (currentCat.equals("Uncategorized", ignoreCase = true) || currentCat.equals("Unspecified", ignoreCase = true)) &&
+                            trueCat != "Uncategorized" && trueCat != "Unspecified" -> {
                             trueCat
                         }
                         else -> currentCat // Always preserve existing user/restored categories
@@ -667,7 +675,9 @@ class TransactionRepository(
         rawContent: String,
         amountPaise: Long? = null,
         timestampMillis: Long = System.currentTimeMillis(),
-        type: TransactionType = TransactionType.DEBIT
+        type: TransactionType = TransactionType.DEBIT,
+        note: String? = null,
+        itemsSummary: String? = null
     ): String {
         if (type == TransactionType.CREDIT) {
             return "Uncategorized"
@@ -675,13 +685,15 @@ class TransactionRepository(
         val primary = CategoryClassifier.classify(
             payee = payee,
             rawContent = rawContent,
-            ruleDao = categoryRuleDao
+            ruleDao = categoryRuleDao,
+            note = note,
+            itemsSummary = itemsSummary
         )
-        if (primary != "Uncategorized") return primary
-        if (CategoryClassifier.isGenericPayee(payee)) return "Uncategorized"
+        if (primary != "Uncategorized" && primary != "Unspecified") return primary
+        if (CategoryClassifier.isGenericPayee(payee) && note.isNullOrBlank() && itemsSummary.isNullOrBlank()) return "Unspecified"
         val recent = transactionDao.getRecentTransactions(300)
         val rules = categoryRuleDao.getAllRules()
-        return SmartExpenseEngine.predictCategoryContextual(
+        val contextual = SmartExpenseEngine.predictCategoryContextual(
             payee = payee,
             amountPaise = amountPaise,
             timestampMillis = timestampMillis,
@@ -689,6 +701,7 @@ class TransactionRepository(
             learnedRules = rules,
             rawContent = rawContent
         )
+        return if (contextual.isBlank() || contextual == "Uncategorized") "Unspecified" else contextual
     }
 
     fun recurringPaymentsFlow(): Flow<List<RecurringPayment>> =
@@ -1181,8 +1194,15 @@ class TransactionRepository(
                 isAutoTransfer -> "Transfer"
                 type == TransactionType.CREDIT -> "Uncategorized"
                 else -> {
-                    val rawCat = learnedEval.inferredCategory?.takeIf { it.isNotBlank() && !it.equals("Uncategorized", ignoreCase = true) }
-                        ?: classifyCategory(aliasedPayee, parsed.rawText, amount, timestamp, type)
+                    val rawCat = learnedEval.inferredCategory?.takeIf { it.isNotBlank() && !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }
+                        ?: classifyCategory(
+                            payee = aliasedPayee,
+                            rawContent = parsed.rawText,
+                            amountPaise = amount,
+                            timestampMillis = timestamp,
+                            type = type,
+                            note = parsed.note
+                        )
                     if (rawCat.isBlank() || rawCat.equals("Transfer", ignoreCase = true) || rawCat.equals("Uncategorized", ignoreCase = true)) {
                         "Unspecified"
                     } else {
@@ -1324,10 +1344,37 @@ class TransactionRepository(
         refreshWidget()
     }
 
+    /**
+     * Smart layer pass: scans transactions with category "Unspecified" or "Uncategorized"
+     * and upgrades them if the entity or transaction note matches a category rule or keyword.
+     */
+    suspend fun reclassifyUnspecifiedTransactions(): Int = withContext(Dispatchers.IO) {
+        var count = 0
+        val recentAll = transactionDao.getRecentTransactions(5000)
+        database.withTransaction {
+            for (txn in recentAll) {
+                if (txn.type != TransactionType.DEBIT) continue
+                val isUnspecified = txn.category.equals("Unspecified", ignoreCase = true) || txn.category.equals("Uncategorized", ignoreCase = true)
+                if (!isUnspecified) continue
+
+                val smartCat = CategoryClassifier.classifySync(
+                    payee = txn.payee,
+                    rawContent = txn.rawContent,
+                    note = txn.note ?: txn.itemsSummary
+                )
+                if (smartCat != "Uncategorized" && smartCat != "Unspecified") {
+                    transactionDao.updateTransaction(txn.copy(category = smartCat))
+                    count++
+                }
+            }
+        }
+        if (count > 0) refreshWidget()
+        count
+    }
 
     companion object {
         /** Bump when the parser/categoriser changes so the next launch repairs old rows once. */
-        private const val HEAL_VERSION = 2
+        private const val HEAL_VERSION = 3
         private const val HEAL_INTERVAL_MS = 20L * 60_000L
 
         const val REVIEW_THRESHOLD_PAISE = 100_000L

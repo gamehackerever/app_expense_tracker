@@ -64,6 +64,36 @@ object CategoryClassifier {
             "self transfer", "credit card bill", "cc bill", "internal transfer",
             "auto sweep", "own a/c", "sweep in", "sweep out", "upi lite load", "wallet load"
         ),
+        "Food & Dining" to createRegex(
+            "puffs?", "egg\\s+puff", "veg\\s+puff", "chicken\\s+puff", "paneer\\s+puff",
+            "breakfast", "lunch", "dinner", "supper", "brunch", "meals?", "tiffin",
+            "sandwiches?", "sandwich", "toast", "noodles", "chowmein", "fried\\s+rice", "pasta",
+            "kachori", "jalebi", "pakoda", "pakoras?", "bhajji", "bajjis?", "vada", "medu\\s+vada",
+            "dosa", "masala\\s+dosa", "idli", "vada\\s+pav", "pav\\s+bhaji", "misal\\s+pav", "poori", "puri",
+            "chole\\s+bhature", "bhatura", "parathas?", "parotta", "porotta", "aloo\\s+paratha", "rotis?", "naan", "kulcha", "chapati",
+            "pastry", "pastries", "brownies?", "cakes?", "donuts?", "doughnuts?", "desserts?", "waffles?",
+            "cappuccino", "latte", "espresso", "soda", "cold\\s+drinks?",
+            "gulab\\s+jamun", "rasgulla", "kaju\\s+katli", "halwa", "laddus?", "ladoos?", "barfi", "pedas?",
+            "starbucks", "swiggy", "zomato", "dineout", "eazy diner", "magicpin", "eatsure",
+            "rebel foods", "faasos", "behrouz", "oven story", "lunchbox", "mcdonalds?", "kfc",
+            "burger", "burger king", "cafe", "restaurant", "pizza", "pizza hut", "subway",
+            "dominos?", "tea", "coffee", "bistro", "bakery", "bakers", "hotel", "shawarma",
+            "biryani", "broast", "shawaya", "mandhi", "kuzhimanthi", "alfaham", "canteen", "mess",
+            "coolbar", "bakes", "juice", "chai", "chaayos", "chai point", "chai sutta",
+            "third wave", "blue tokai", "ccd", "cafe coffee day", "diner", "eatery",
+            "kitchen", "grill", "haldirams?", "bikanervala", "a2b", "adyar ananda",
+            "saravana bhavan", "rameshwaram cafe", "udupi", "udipi", "darshini", "aryas",
+            "indian coffee house", "paragon", "rahmath", "thalappakatti", "paradise biryani",
+            "meghana foods", "empire restaurant", "bawarchi", "pista house", "al-baik", "al baik",
+            "barbeque nation", "wow momo", "taco bell", "baskin robbins", "naturals ice", "ibaco",
+            "polar bear", "corner house", "keventers", "belgian waffle", "theobroma",
+            "karachi bakery", "monginis", "mio amore", "just bake", "smoor", "sri krishna sweets",
+            "dhaba", "bhojanalaya", "thali", "food court", "momos", "rolls", "kathi", "frankie",
+            "chaat", "pani puri", "samosas?", "puttu", "thattukada", "tapri", "lassi", "shakes?", "milkshakes?", "smoothies?",
+            "sweets", "mithai", "namkeen", "farsan", "snacks", "restobar", "pub", "brewery",
+            "kebab", "tandoori", "chicken", "mutton", "ice\\s*cream", "icecream", "kulfi", "falooda", "meals", "bhavan",
+            "food", "foods", "eats", "refreshments?", "bites"
+        ),
         "Groceries" to createRegex(
             "blinkit", "zepto", "instamart", "swiggy instamart", "bigbasket", "bbnow", "bb daily",
             "dmart", "d-mart", "avenue supermarts", "grofers", "spencer", "spencers", "supermarket",
@@ -74,29 +104,11 @@ object CategoryClassifier {
             "mother dairy", "amul", "nandini", "milma", "aavin", "verka", "country delight",
             "akshayakalpa", "licious", "freshtohome", "tender cuts", "zappfresh", "star bazaar",
             "spar hypermarket", "kirana", "provisions?", "minimart", "general store",
-            "departmental store", "dairy", "milk", "butcher", "fish market", "poultry", "atta chakki",
+            "departmental store", "dairy", "milk", "curd", "dahi", "paneer", "butter", "cheese", "ghee",
+            "rice", "wheat", "atta", "flour", "dals?", "pulses", "oil", "cooking\\s+oil", "spices", "masala", "salt", "sugar",
+            "(?<!egg\\s+)eggs?(?!\\s*(?:puff|roll|curry|bhurji|rice|fried|toast|noodles|sandwich|omlet|omelet|omelette))",
+            "butcher", "fish market", "poultry", "atta chakki", "bread", "biscuits?", "maggi", "cereals?", "oats",
             "ma mart", "super mart", "fresh mart", "supermarket"
-        ),
-        "Food & Dining" to createRegex(
-            "starbucks", "swiggy", "zomato", "dineout", "eazy diner", "magicpin", "eatsure",
-            "rebel foods", "faasos", "behrouz", "oven story", "lunchbox", "mcdonalds?", "kfc",
-            "burger", "burger king", "cafe", "restaurant", "pizza", "pizza hut", "subway",
-            "dominos?", "tea", "coffee", "bistro", "bakery", "bakers", "hotel", "shawarma",
-            "biryani", "broast", "shawaya", "mandhi", "kuzhimanthi", "alfaham", "canteen", "mess",
-            "coolbar", "bakes", "juice", "chai", "chaayos", "chai point", "chai sutta",
-            "third wave", "blue tokai", "ccd", "cafe coffee day", "diner", "tiffin", "eatery",
-            "kitchen", "grill", "haldirams?", "bikanervala", "a2b", "adyar ananda",
-            "saravana bhavan", "rameshwaram cafe", "udupi", "udipi", "darshini", "aryas",
-            "indian coffee house", "paragon", "rahmath", "thalappakatti", "paradise biryani",
-            "meghana foods", "empire restaurant", "bawarchi", "pista house", "al-baik", "al baik",
-            "barbeque nation", "wow momo", "taco bell", "baskin robbins", "naturals ice", "ibaco",
-            "polar bear", "corner house", "keventers", "belgian waffle", "waffles?", "theobroma",
-            "karachi bakery", "monginis", "mio amore", "just bake", "smoor", "sri krishna sweets",
-            "dhaba", "bhojanalaya", "thali", "food court", "momos", "rolls", "kathi", "frankie",
-            "chaat", "pani puri", "samosa", "vada pav", "misal", "pav bhaji", "dosa", "idli",
-            "parotta", "porotta", "puttu", "thattukada", "tapri", "lassi", "shake", "smoothie",
-            "sweets", "mithai", "namkeen", "farsan", "snacks", "restobar", "pub", "brewery",
-            "kebab", "tandoori", "chicken", "mutton", "ice cream", "icecream", "kulfi", "falooda", "meals", "bhavan"
         ),
         "Fuel & Fastag" to createRegex(
             "hpcl", "hindustan petroleum", "hp pay", "bpcl", "bharat petroleum", "smartdrive",
@@ -375,21 +387,45 @@ object CategoryClassifier {
         return Regex("(?i)\\b($pattern)\\b")
     }
 
-    fun classifySync(payee: String, rawContent: String): String {
+    fun classifySync(
+        payee: String,
+        rawContent: String = "",
+        note: String? = null,
+        itemsSummary: String? = null
+    ): String {
+        // 1. SMART LAYER: Evaluate user-written transaction note or items summary first.
+        // A note like "puff", "dinner", "petrol", "hair cut" directly identifies the expense.
+        val combinedNote = listOfNotNull(
+            note?.takeIf { it.isNotBlank() },
+            itemsSummary?.takeIf { it.isNotBlank() && it != note }
+        ).joinToString(" ").trim()
+
+        if (combinedNote.isNotBlank()) {
+            val cleanNote = combinedNote.replace('_', ' ').replace('/', ' ').trim()
+            val canonicalNote = PayeeHeuristics.canonicalize(cleanNote)
+            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
+                if (regex.containsMatchIn(canonicalNote)) {
+                    return category
+                }
+            }
+            PayeeHeuristics.categoryHint(cleanNote)?.let { return it }
+        }
+
         val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim()
         val generic = isGenericPayee(cleanPayee)
 
-        // 0. Check VPA memory first
+        // 2. Check VPA memory first
         if (!generic) {
-            SmsPatternLearner.lookupVpa(cleanPayee)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
+            SmsPatternLearner.lookupVpa(cleanPayee)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }?.let {
                 return it
             }
         }
         val cleanContent = rawContent.replace('_', ' ').replace('/', ' ').trim()
-        SmsPatternLearner.lookupVpa(cleanContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
+        SmsPatternLearner.lookupVpa(cleanContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }?.let {
             return it
         }
 
+        // 3. Entity / Payee keyword evaluation
         if (!generic) {
             // Fold spelling variants first so "Biriyani" / "Cofee" / "Super Market" hit the same keyword rules.
             val canonical = PayeeHeuristics.canonicalize(cleanPayee)
@@ -400,7 +436,7 @@ object CategoryClassifier {
             }
         }
 
-        // Test the full narration against the payee keyword rules
+        // 4. Test the full narration against the payee keyword rules
         if (cleanContent.isNotBlank() && cleanContent != cleanPayee) {
             val canonicalContent = PayeeHeuristics.canonicalize(cleanContent)
             for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
@@ -410,7 +446,7 @@ object CategoryClassifier {
             }
         }
 
-        // Last: generic shop-type words and one-letter typos ("... Foods", "... Medicals", "Restorent").
+        // 5. Generic shop-type words and one-letter typos ("... Foods", "... Medicals", "Restorent").
         if (!generic) PayeeHeuristics.categoryHint(cleanPayee)?.let { return it }
         if (cleanContent.isNotBlank()) PayeeHeuristics.categoryHint(cleanContent)?.let { return it }
 
@@ -426,20 +462,39 @@ object CategoryClassifier {
 
     suspend fun classify(
         payee: String,
-        rawContent: String,
-        ruleDao: CategoryRuleDao
+        rawContent: String = "",
+        ruleDao: CategoryRuleDao? = null,
+        note: String? = null,
+        itemsSummary: String? = null
     ): String {
+        // 1. SMART LAYER: Evaluate user-written transaction note or items summary first.
+        val combinedNote = listOfNotNull(
+            note?.takeIf { it.isNotBlank() },
+            itemsSummary?.takeIf { it.isNotBlank() && it != note }
+        ).joinToString(" ").trim()
+
+        if (combinedNote.isNotBlank()) {
+            val cleanNote = combinedNote.replace('_', ' ').replace('/', ' ').trim()
+            val canonicalNote = PayeeHeuristics.canonicalize(cleanNote)
+            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
+                if (regex.containsMatchIn(canonicalNote)) {
+                    return category
+                }
+            }
+            PayeeHeuristics.categoryHint(cleanNote)?.let { return it }
+        }
+
         val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim().lowercase(Locale.ROOT)
         val generic = isGenericPayee(cleanPayee)
 
-        // 0. Check VPA memory
+        // 2. Check VPA memory
         if (!generic) {
-            SmsPatternLearner.lookupVpa(cleanPayee)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
+            SmsPatternLearner.lookupVpa(cleanPayee)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }?.let {
                 return it
             }
         }
         val cleanContent = rawContent.replace('_', ' ').replace('/', ' ').trim()
-        SmsPatternLearner.lookupVpa(cleanContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
+        SmsPatternLearner.lookupVpa(cleanContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }?.let {
             return it
         }
 
@@ -447,10 +502,12 @@ object CategoryClassifier {
             categoryCache[cleanPayee]?.let { return it }
 
             // 1. Exact or substring learned rule (never query for generic fallback payees)
-            val learned = ruleDao.findMatchingCategory(cleanPayee)
-            if (!learned.isNullOrBlank() && !learned.equals("Uncategorized", ignoreCase = true)) {
-                categoryCache[cleanPayee] = learned
-                return learned
+            if (ruleDao != null) {
+                val learned = ruleDao.findMatchingCategory(cleanPayee)
+                if (!learned.isNullOrBlank() && !learned.equals("Uncategorized", ignoreCase = true) && !learned.equals("Unspecified", ignoreCase = true)) {
+                    categoryCache[cleanPayee] = learned
+                    return learned
+                }
             }
 
             // 2. Known-merchant regex on the payee (spelling variants folded first)
@@ -463,9 +520,11 @@ object CategoryClassifier {
             }
 
             // 3. Subword 3-gram + word token + bigram Naive Bayes generalization from taught rules
-            NaiveBayesCategorizer.predict(cleanPayee, ruleDao)?.let {
-                categoryCache[cleanPayee] = it.category
-                return it.category
+            if (ruleDao != null) {
+                NaiveBayesCategorizer.predict(cleanPayee, ruleDao)?.let {
+                    categoryCache[cleanPayee] = it.category
+                    return it.category
+                }
             }
 
             // 3b. Generic shop-type words and typos. Below anything the user taught, above raw SMS text.

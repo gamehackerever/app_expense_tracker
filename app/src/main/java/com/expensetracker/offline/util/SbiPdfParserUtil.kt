@@ -544,10 +544,10 @@ object SbiPdfParserUtil {
             }
             processedKeys.add(inBatchKey)
 
-            // Auto-categorize using CategoryClassifier; if unclassified/peer transfer, use "Unspecified"
-            val rawCategory = CategoryClassifier.classifySync(row.payee, row.description)
+            // Auto-categorize using CategoryClassifier smart layer; if unclassified/peer transfer, use "Unspecified"
+            val rawCategory = CategoryClassifier.classifySync(row.payee, row.description, note = row.description)
             val effectiveCategory = if (row.type == TransactionType.DEBIT &&
-                (rawCategory.isBlank() || rawCategory.equals("Transfer", ignoreCase = true) || rawCategory.equals("Uncategorized", ignoreCase = true))
+                (rawCategory.isBlank() || rawCategory.equals("Transfer", ignoreCase = true) || rawCategory.equals("Uncategorized", ignoreCase = true) || rawCategory.equals("Unspecified", ignoreCase = true))
             ) {
                 "Unspecified"
             } else {
