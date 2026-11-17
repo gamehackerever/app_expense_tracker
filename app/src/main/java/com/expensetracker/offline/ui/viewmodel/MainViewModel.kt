@@ -2,6 +2,7 @@ package com.expensetracker.offline.ui.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -13,6 +14,8 @@ import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.util.SbiImportResult
+import com.expensetracker.offline.util.SbiPdfParserUtil
 import com.expensetracker.offline.data.repository.CreditCardConfig
 import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.engine.parser.FinancialParser
@@ -1022,5 +1025,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.undoRepayment(creditTxn)
         }
+    }
+
+    suspend fun importSbiPdfStatement(
+        uri: Uri,
+        password: String
+    ): SbiImportResult = withContext(Dispatchers.IO) {
+        val rawText = SbiPdfParserUtil.extractTextFromPdf(getApplication(), uri, password)
+        val accountNum = SbiPdfParserUtil.extractAccountNumber(rawText)
+        val parsedRows = SbiPdfParserUtil.parseSbiStatementText(rawText)
+        SbiPdfParserUtil.importParsedTransactions(
+            dao = app.database.transactionDao(),
+            rows = parsedRows,
+            accountNumber = accountNum
+        )
     }
 }
