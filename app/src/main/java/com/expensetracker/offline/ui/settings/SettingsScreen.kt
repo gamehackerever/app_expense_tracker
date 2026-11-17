@@ -730,14 +730,46 @@ fun SettingsScreen(
                 onClick = { openSection(it) }
             )
 
+            SettingsSection(
+                title = "Bank Statements",
+                modifier = Modifier.trackSection("Statements", sectionPositions)
+            ) {
+                SettingsItem(
+                    icon = Icons.Default.PictureAsPdf,
+                    title = "Upload Bank PDF Statement",
+                    subtitle = "Import password-protected PDF e-statements (Canara Bank, SBI, etc.)",
+                    onClick = {
+                        haptic.tap()
+                        sbiPdfPickerLauncher.launch("application/pdf")
+                    }
+                )
+
+                SettingsDivider()
+
+                SettingsItem(
+                    icon = Icons.Default.AccountBalanceWallet,
+                    title = "Upload Payment Statement (CSV / Takeout)",
+                    subtitle = "Import PhonePe statement, Google Pay Takeout, or bank CSV",
+                    onClick = {
+                        haptic.tap()
+                        statementPicker.launch(arrayOf("*/*"))
+                    }
+                )
+            }
+
             SettingsHub(
                 groups = listOf(
                     "Money" to listOf(
                         SettingsHubEntry(Icons.Default.Savings, "Budget & Cycle", "Monthly limit, billing cycle, fixed costs", "budget"),
                         SettingsHubEntry(
                             Icons.Default.Bolt, "Capture & Import",
-                            if (isManualModePreferred) "Auto-capture is paused" else "Live SMS capture, inbox scan, statements",
+                            if (isManualModePreferred) "Auto-capture is paused" else "Live SMS capture, inbox scan",
                             "capture"
+                        ),
+                        SettingsHubEntry(
+                            Icons.Default.PictureAsPdf, "Bank Statements",
+                            "Upload bank PDF statements & CSV exports",
+                            "statements"
                         )
                     ),
                     "App" to listOf(
@@ -1272,6 +1304,106 @@ if (openPage == "capture") {
 }
 
             // ─────────────────────────────────────────────────────────────────
+            // 3b. Bank Statements
+            // ─────────────────────────────────────────────────────────────────
+if (openPage == "statements" || openPage == "capture") {
+            SettingsSection(
+                title = "Bank Statements",
+                isHighlighted = highlightedSection == "Statements",
+                showTitle = openPage == "capture",
+                modifier = Modifier.trackSection("Statements", sectionPositions)
+            ) {
+                SettingsItem(
+                    icon = Icons.Default.PictureAsPdf,
+                    title = "Upload Bank PDF Statement",
+                    subtitle = "Import password-protected PDF e-statements (Canara Bank, SBI, HDFC, ICICI, etc.)",
+                    onClick = {
+                        haptic.tap()
+                        sbiPdfPickerLauncher.launch("application/pdf")
+                    }
+                )
+
+                SettingsInset(start = 16.dp) {
+                    OutlinedButton(
+                        onClick = {
+                            haptic.tap()
+                            sbiPdfPickerLauncher.launch("application/pdf")
+                        },
+                        enabled = !isSbiPdfBusy,
+                        shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.PictureAsPdf,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Select PDF Statement",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                SettingsDivider()
+
+                SettingsItem(
+                    icon = Icons.Default.AccountBalanceWallet,
+                    title = "Upload Payment Statement (CSV / Takeout)",
+                    subtitle = "Import PhonePe statement, Google Pay Takeout activity, or bank CSV exports",
+                    onClick = {
+                        haptic.tap()
+                        statementPicker.launch(arrayOf("*/*"))
+                    }
+                )
+
+                SettingsInset(start = 16.dp) {
+                    OutlinedButton(
+                        onClick = {
+                            haptic.tap()
+                            statementPicker.launch(arrayOf("*/*"))
+                        },
+                        enabled = !statementBusy,
+                        shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.AccountBalanceWallet,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Select Statement File (CSV / Takeout)",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                SettingsDivider()
+
+                SettingsItem(
+                    icon = Icons.AutoMirrored.Filled.HelpOutline,
+                    title = "Password Help for PDF Statements",
+                    subtitle = "• Canara Bank: 1st 4 letters of your name in CAPITAL LETTERS + DOB (DDMM)\n• SBI: Date of Birth (DDMMYY) + last 4 digits of registered mobile"
+                )
+            }
+}
+
+            // ─────────────────────────────────────────────────────────────────
             // 4. Security & Alerts
             // ─────────────────────────────────────────────────────────────────
 if (openPage == "alerts") {
@@ -1733,8 +1865,8 @@ if (openPage == "data") {
 
                 SettingsItem(
                     icon = Icons.Default.PictureAsPdf,
-                    title = "SBI Statement (PDF)",
-                    subtitle = "Import password-protected SBI savings/current e-statements"
+                    title = "Bank PDF Statement",
+                    subtitle = "Import password-protected bank PDF e-statements (Canara Bank, SBI, etc.)"
                 )
 
                 SettingsInset(start = 16.dp) {
@@ -1759,7 +1891,7 @@ if (openPage == "data") {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "Import SBI PDF Statement",
+                            "Import Bank PDF Statement",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
@@ -2224,7 +2356,7 @@ if (openPage == "health") {
             },
             title = {
                 Text(
-                    "Enter SBI PDF Password",
+                    "Enter Bank PDF Password",
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp
                 )
@@ -2232,7 +2364,7 @@ if (openPage == "health") {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "State Bank of India (SBI) e-statements are password protected.\n\nYour password is usually your Date of Birth (DDMMYY) followed by the last 4 digits of your registered mobile number (e.g., DDMMYYXXXX).",
+                        "Bank e-statements are password protected:\n\n• Canara Bank: 1st 4 letters of your name in CAPITAL LETTERS + DOB (DDMM)\n• SBI: Date of Birth (DDMMYY) + last 4 digits of registered mobile (DDMMYYXXXX)",
                         fontSize = 13.sp,
                         lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2241,7 +2373,7 @@ if (openPage == "health") {
                         value = sbiPassword,
                         onValueChange = { sbiPassword = it },
                         label = { Text("PDF Password") },
-                        placeholder = { Text("e.g. 1508901234") },
+                        placeholder = { Text("e.g. RAHU1508 or 1508901234") },
                         singleLine = true,
                         enabled = !isSbiPdfBusy,
                         visualTransformation = if (isSbiPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
@@ -2279,10 +2411,10 @@ if (openPage == "health") {
                             try {
                                 val result = viewModel.importSbiPdfStatement(uri, pwd)
                                 if (result.totalParsed == 0) {
-                                    showSnack("No SBI transactions recognized in this PDF.")
+                                    showSnack("No bank transactions recognized in this PDF.")
                                 } else {
                                     showSnack(
-                                        "SBI Import: ${result.newlyInserted} added, ${result.duplicatesSkipped} duplicates skipped."
+                                        "${result.bankName} Statement: ${result.newlyInserted} added, ${result.duplicatesSkipped} duplicates skipped."
                                     )
                                 }
                                 showSbiPasswordDialog = false

@@ -6,10 +6,12 @@ import com.expensetracker.offline.ui.components.quietClickable
 import com.expensetracker.offline.util.tap
 import com.expensetracker.offline.ui.components.fadingHorizontalScroll
 import android.content.Context
+import android.os.SystemClock
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -29,7 +31,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -477,8 +481,42 @@ fun InsightsScreen(
     }
     val headerDividerAlpha by animateFloatAsState(if (isScrolled) 1f else 0f, tween(180), label = "insightsHeaderDivider")
 
+    val density = LocalDensity.current
+    val swipeThresholdPx = remember(density) { with(density) { 56.dp.toPx() } }
+    val flingVelocityThresholdPx = remember(density) { with(density) { 500.dp.toPx() } }
+
+    val swipeBackModifier = Modifier.pointerInput(Unit) {
+        var totalDragX = 0f
+        var dragStartTime = 0L
+        detectHorizontalDragGestures(
+            onDragStart = {
+                totalDragX = 0f
+                dragStartTime = SystemClock.uptimeMillis()
+            },
+            onDragEnd = {
+                val durationMs = (SystemClock.uptimeMillis() - dragStartTime).coerceAtLeast(1)
+                val velocityX = (totalDragX / durationMs) * 1000f
+                // Swipe to the right: user drags towards right (positive X displacement)
+                if (totalDragX > swipeThresholdPx || (velocityX > flingVelocityThresholdPx && totalDragX > with(density) { 20.dp.toPx() })) {
+                    haptic.tap()
+                    onBack()
+                }
+                totalDragX = 0f
+            },
+            onDragCancel = {
+                totalDragX = 0f
+            },
+            onHorizontalDrag = { _, dragAmount ->
+                totalDragX += dragAmount
+            }
+        )
+    }
+
     CompositionLocalProvider(LocalAnimationReady provides startBarAnimations) {
     Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(swipeBackModifier),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             AppScreenTopBar(

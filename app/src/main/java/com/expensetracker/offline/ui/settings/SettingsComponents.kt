@@ -688,6 +688,7 @@ internal data class SettingsHubEntry(val icon: ImageVector, val title: String, v
 internal fun settingsPageFor(sectionKey: String): String? = when (sectionKey.lowercase()) {
     "cycle", "budget" -> "budget"
     "live", "sms", "capture" -> "capture"
+    "statements", "statement", "pdf" -> "statements"
     "alerts" -> "alerts"
     "backup", "data" -> "data"
     "theme", "look" -> "look"
@@ -698,6 +699,7 @@ internal fun settingsPageFor(sectionKey: String): String? = when (sectionKey.low
 internal fun settingsPageTitle(page: String?): String = when (page) {
     "budget" -> "Budget & Cycle"
     "capture" -> "Capture & Import"
+    "statements" -> "Bank Statements"
     "alerts" -> "Security & Alerts"
     "data" -> "Data & Backup"
     "look" -> "Appearance"

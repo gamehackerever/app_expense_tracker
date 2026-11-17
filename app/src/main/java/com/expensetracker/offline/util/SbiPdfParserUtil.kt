@@ -42,7 +42,8 @@ data class SbiImportResult(
     val newlyInserted: Int,
     val duplicatesSkipped: Int,
     val insertedTransactions: List<TransactionEntity>,
-    val detectedAccountNumber: String? = null
+    val detectedAccountNumber: String? = null,
+    val bankName: String = "Bank"
 )
 
 object SbiPdfParserUtil {
@@ -590,7 +591,8 @@ object SbiPdfParserUtil {
             newlyInserted = toInsert.size,
             duplicatesSkipped = duplicatesCount,
             insertedTransactions = toInsert,
-            detectedAccountNumber = accountNumber
+            detectedAccountNumber = accountNumber,
+            bankName = bankNameOverride ?: "Bank"
         )
     }
 }

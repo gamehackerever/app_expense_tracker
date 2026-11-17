@@ -9,6 +9,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
@@ -21,7 +22,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import com.expensetracker.offline.ui.insights.MoneyHero
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -75,6 +78,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -1949,8 +1953,52 @@ fun DashboardScreen(
         )
     }
 
+    val density = LocalDensity.current
+    val swipeThresholdPx = remember(density) { with(density) { 56.dp.toPx() } }
+    val flingVelocityThresholdPx = remember(density) { with(density) { 500.dp.toPx() } }
+
+    val isSwipeToInsightsEnabled = !isAppLocked &&
+        !searchOpen &&
+        !isSelectionMode &&
+        !showAccountsDialog &&
+        !showAddExpenseSheet &&
+        !showStartDayDialog &&
+        !showBulkDeleteConfirm
+
+    val swipeModifier = if (isSwipeToInsightsEnabled) {
+        Modifier.pointerInput(isSwipeToInsightsEnabled) {
+            var totalDragX = 0f
+            var dragStartTime = 0L
+            detectHorizontalDragGestures(
+                onDragStart = {
+                    totalDragX = 0f
+                    dragStartTime = SystemClock.uptimeMillis()
+                },
+                onDragEnd = {
+                    val durationMs = (SystemClock.uptimeMillis() - dragStartTime).coerceAtLeast(1)
+                    val velocityX = (totalDragX / durationMs) * 1000f
+                    // Swipe to the left: user drags towards left (negative X displacement)
+                    if (totalDragX < -swipeThresholdPx || (velocityX < -flingVelocityThresholdPx && totalDragX < -with(density) { 20.dp.toPx() })) {
+                        haptic.tap()
+                        onNavigateToInsights()
+                    }
+                    totalDragX = 0f
+                },
+                onDragCancel = {
+                    totalDragX = 0f
+                },
+                onHorizontalDrag = { _, dragAmount ->
+                    totalDragX += dragAmount
+                }
+            )
+        }
+    } else Modifier
+
     CompositionLocalProvider(com.expensetracker.offline.ui.insights.LocalAnimationReady provides isAnimationTriggered) {
     Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(swipeModifier),
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = {
             SnackbarHost(hostState = snackbarHostState) { data ->
