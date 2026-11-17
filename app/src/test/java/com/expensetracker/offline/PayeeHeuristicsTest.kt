@@ -34,6 +34,11 @@ class PayeeHeuristicsTest {
         assertEquals("Food & Dining", CategoryClassifier.classifySync("Ramesh Kumar", "UPI/412345/Ramesh", note = "puff"))
         assertEquals("Food & Dining", CategoryClassifier.classifySync("Suresh", "Paid to Suresh", note = "egg puff and chai"))
         assertEquals("Food & Dining", CategoryClassifier.classifySync("UPI Payment", "Paid 50", note = "veg puff"))
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Raju", "Paid 80", note = "egg roll"))
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Anand", "Paid 120", note = "egg fried rice"))
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Hotel", "Paid 50", note = "omelet"))
+        assertEquals("Groceries", CategoryClassifier.classifySync("Vendor", "Paid 60", note = "eggs"))
+        assertEquals("Groceries", CategoryClassifier.classifySync("Farm Fresh", "Paid 180", note = "tray of eggs"))
     }
 
     @Test fun smartLayer_noteClassifiesVariousExpenseCategories() {

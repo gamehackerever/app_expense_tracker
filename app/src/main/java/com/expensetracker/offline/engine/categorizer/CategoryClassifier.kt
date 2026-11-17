@@ -66,6 +66,8 @@ object CategoryClassifier {
         ),
         "Food & Dining" to createRegex(
             "puffs?", "egg\\s+puff", "veg\\s+puff", "chicken\\s+puff", "paneer\\s+puff",
+            "egg\\s+roll", "egg\\s+curry", "egg\\s+bhurji", "egg\\s+fried\\s+rice", "egg\\s+rice", "egg\\s+toast", "egg\\s+noodles",
+            "omelet", "omelette", "omlet", "boiled\\s+egg",
             "breakfast", "lunch", "dinner", "supper", "brunch", "meals?", "tiffin",
             "sandwiches?", "sandwich", "toast", "noodles", "chowmein", "fried\\s+rice", "pasta",
             "kachori", "jalebi", "pakoda", "pakoras?", "bhajji", "bajjis?", "vada", "medu\\s+vada",
@@ -106,8 +108,7 @@ object CategoryClassifier {
             "spar hypermarket", "kirana", "provisions?", "minimart", "general store",
             "departmental store", "dairy", "milk", "curd", "dahi", "paneer", "butter", "cheese", "ghee",
             "rice", "wheat", "atta", "flour", "dals?", "pulses", "oil", "cooking\\s+oil", "spices", "masala", "salt", "sugar",
-            "(?<!egg\\s+)eggs?(?!\\s*(?:puff|roll|curry|bhurji|rice|fried|toast|noodles|sandwich|omlet|omelet|omelette))",
-            "butcher", "fish market", "poultry", "atta chakki", "bread", "biscuits?", "maggi", "cereals?", "oats",
+            "eggs?", "butcher", "fish market", "poultry", "atta chakki", "bread", "biscuits?", "maggi", "cereals?", "oats",
             "ma mart", "super mart", "fresh mart", "supermarket"
         ),
         "Fuel & Fastag" to createRegex(
