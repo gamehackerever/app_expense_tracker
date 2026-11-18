@@ -31,7 +31,8 @@ data class SbiParsedRow(
     val amountPaise: Long,
     val type: TransactionType,
     val balancePaise: Long?,
-    val rawLine: String
+    val rawLine: String,
+    val note: String? = null
 )
 
 /**
@@ -262,17 +263,18 @@ object SbiPdfParserUtil {
         val firstAmountIndex = amountMatches.first().second
         val narrationPart = rest.substring(0, firstAmountIndex).trim()
 
-        val (payee, refNo) = extractPayeeAndRef(narrationPart, detectedType)
+        val parsedNarration = extractPayeeAndRef(narrationPart, detectedType)
 
         return SbiParsedRow(
             dateTimestamp = timestamp,
             description = narrationPart,
-            payee = payee,
-            refNo = refNo,
+            payee = parsedNarration.payee,
+            refNo = parsedNarration.refNo,
             amountPaise = amountPaise,
             type = detectedType,
             balancePaise = balancePaise,
-            rawLine = rawLine
+            rawLine = rawLine,
+            note = parsedNarration.note
         )
     }
 
@@ -314,11 +316,17 @@ object SbiPdfParserUtil {
         return TransactionType.DEBIT
     }
 
+    data class ParsedNarration(
+        val payee: String,
+        val refNo: String?,
+        val note: String? = null
+    )
+
     /**
-     * Extracts merchant/payee name and reference number (UTR/cheque) from the narration.
+     * Extracts merchant/payee name, reference number, and user note from narration.
      * Supports SBI, Canara Bank, and all standard NPCI UPI / IMPS / NEFT formats.
      */
-    private fun extractPayeeAndRef(narration: String, type: TransactionType): Pair<String, String?> {
+    private fun extractPayeeAndRef(narration: String, type: TransactionType): ParsedNarration {
         val normalized = narration.replace('_', ' ').trim()
 
         // 1. UPI Narrations across Indian Banks (Canara, SBI, PNB, BoB, HDFC, ICICI, etc.)
@@ -378,7 +386,20 @@ object SbiPdfParserUtil {
                 else -> if (type == TransactionType.DEBIT) "UPI Payment" else "UPI Received"
             }
 
-            return Pair(cleanPayee.take(45), refNo)
+            // Extract candidate note/memo if present in UPI narration
+            val extractedNote = candidateSegments.firstOrNull { seg ->
+                seg != extractedName &&
+                seg != cleanPayee &&
+                !seg.equals("UPI TRANSFER", ignoreCase = true) &&
+                !seg.equals("NA", ignoreCase = true) &&
+                !seg.equals("NONE", ignoreCase = true) &&
+                !seg.equals("PAYMENT", ignoreCase = true) &&
+                !seg.equals("TRANSFER", ignoreCase = true) &&
+                !seg.equals("UPI", ignoreCase = true) &&
+                !seg.startsWith("UPI", ignoreCase = true)
+            }
+
+            return ParsedNarration(cleanPayee.take(45), refNo, extractedNote?.take(80))
         }
 
         var cleaned = normalized
@@ -416,7 +437,7 @@ object SbiPdfParserUtil {
             else -> if (type == TransactionType.DEBIT) "Bank Debit" else "Bank Credit"
         }
 
-        return Pair(payee, refNo)
+        return ParsedNarration(payee, refNo, null)
     }
 
     /**
@@ -548,8 +569,8 @@ object SbiPdfParserUtil {
             }
             processedKeys.add(inBatchKey)
 
-            // Auto-categorize using CategoryClassifier smart layer; if unclassified/peer transfer, use "Unspecified"
-            val rawCategory = CategoryClassifier.classifySync(row.payee, row.description, note = row.description)
+            // Auto-categorize using CategoryClassifier smart layer; evaluate extracted note if present, otherwise description
+            val rawCategory = CategoryClassifier.classifySync(row.payee, row.description, note = row.note ?: row.description)
             val effectiveCategory = if (row.type == TransactionType.DEBIT &&
                 (rawCategory.isBlank() || rawCategory.equals("Transfer", ignoreCase = true) || rawCategory.equals("Uncategorized", ignoreCase = true) || rawCategory.equals("Unspecified", ignoreCase = true))
             ) {
@@ -571,7 +592,7 @@ object SbiPdfParserUtil {
                 referenceId = row.refNo,
                 rawContent = "Imported statement: ${row.rawLine}",
                 category = effectiveCategory,
-                note = row.description.takeIf { it != row.payee },
+                note = row.note,
                 balance = row.balancePaise,
                 itemsSummary = null,
                 bankName = canonicalBank,

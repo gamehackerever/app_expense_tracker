@@ -86,7 +86,7 @@ object FinancialParser {
     private val FOREIGN_AMOUNT_REGEX = Regex("(?<![A-Za-z])(" + ForeignCurrency.codes.joinToString("|") + ")\\s*[:.]?\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)")
     private val DOLLAR_AMOUNT_REGEX = Regex("(?<![A-Za-z0-9])(?:US)?\\$\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)")
     private val QUOTED_NOTE_REGEX = Regex("""["“]([^"”\n\r]{2,80})["”]""")
-    private val PREFIX_NOTE_REGEX = Regex("""(?i)(?:note\s*[:\-]\s*|for\s+["']?)([^"'\n\r,]+)(?:["']|\s*(?:using|via|upi|ref|$))""")
+    private val PREFIX_NOTE_REGEX = Regex("""(?i)(?:note\s*[:\-]\s*|(?:for|towards)\s+["']?)([^"'\n\r,]+)(?:["']|\s*(?:using|via|upi|ref|bal|$))""")
     private val SYSTEM_NOISE_REGEX = Regex("""(?i)(upi ref|transaction id|paid using|bank account|google pay|\d{10,16})""")
     private val DIGIT_ONLY_REGEX = Regex("""^\d{6,16}.*""")
     private val VPA_CLEANUP_REGEX = Regex("(?i)^(vpa|a/c|acct|upi|account)\\s+")
@@ -225,7 +225,7 @@ object FinancialParser {
 
     // Note: [.,;()] is outside \s+ so "UPI/6284123456/MERCHANT. Final balance" stops cleanly at the period!
     private val UPI_SLASH_PATTERN = Pattern.compile(
-        "(?i)UPI[:/]([A-Za-z0-9/_\\-.\\s]+?)(?=(?:\\s*\\(|\\s+(?:on|using|via|ref|rrn|utr|avl|bal|avail|final|sms|call|not\\s+you)|[.,;()]|\\s+-|$))"
+        "(?i)UPI[:/]([A-Za-z0-9/_\\-.\\s@]+?)(?=(?:\\s*\\(|\\s+(?:on|using|via|ref|rrn|utr|avl|bal|avail|final|sms|call|not\\s+you)|[.,;()]|\\s+-|$))"
     )
 
     private val REF_ID_PATTERNS = listOf(
@@ -431,6 +431,32 @@ object FinancialParser {
 
         PREFIX_NOTE_REGEX.find(rawText)?.groupValues?.get(1)?.trim()?.let {
             if (!isSystemNoise(it)) return it
+        }
+
+        if (rawText.contains("UPI/", ignoreCase = true) || rawText.contains("UPI-", ignoreCase = true)) {
+            val upiMatcher = UPI_SLASH_PATTERN.matcher(rawText)
+            if (upiMatcher.find()) {
+                val upiPayload = upiMatcher.group(1).orEmpty()
+                val segments = upiPayload.split(Regex("[/\\-]"))
+                    .map { it.trim(' ', '.', ',', ':', ';', '(', ')') }
+                    .filter { it.isNotBlank() }
+
+                val candidateNotes = segments.filter { seg ->
+                    !seg.all { it.isDigit() } &&
+                    !seg.contains("@") &&
+                    seg.length in 2..80 &&
+                    seg.uppercase(Locale.ROOT) !in setOf(
+                        "DR", "CR", "P2M", "P2A", "REV", "UPI", "TRANSFER", "TO", "BY",
+                        "CNRB", "SBIN", "HDFC", "ICIC", "UTIB", "KKBK", "BARB", "PUNB", "UBIN",
+                        "YESB", "FDRL", "SIBL", "OKAXIS", "OKSBI", "OKHDFC", "OKICICI", "PAYTM",
+                        "APL", "YBL", "IBL", "NA", "NONE", "PAYMENT"
+                    )
+                }
+                if (candidateNotes.size >= 2) {
+                    val note = candidateNotes.last()
+                    if (!isSystemNoise(note)) return note
+                }
+            }
         }
 
         val lines = rawText.lines().map { it.trim() }.filter { it.isNotBlank() }

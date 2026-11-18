@@ -41,110 +41,110 @@ import kotlin.math.abs
  */
 private enum class CategoryKind(val color: Color?, val icon: ImageVector, val keywords: Set<String>) {
     FITNESS(
-        Color(0xFF22C55E), Icons.Default.FitnessCenter, // Energetic Green
+        Color(0xFF00E676), Icons.Default.FitnessCenter, // Electric Neon Green
         setOf("gym", "fitness", "workout", "creatine", "protein", "whey", "sports", "sport", "turf", "badminton", "swimming", "yoga", "cult")
     ),
     AUDIO_STREAMING(
-        Color(0xFF1DB954), Icons.Default.Headphones, // Spotify Green
+        Color(0xFF1ED760), Icons.Default.Headphones, // Vivid Spotify Green
         setOf("spotify", "music", "podcast", "audible", "gaana", "wynk", "saavn", "jiosaavn")
     ),
     CLOUD_DIGITAL(
-        Color(0xFF38BDF8), Icons.Default.Cloud, // Sky Blue
+        Color(0xFF00B0FF), Icons.Default.Cloud, // Electric Sky Blue
         setOf("photos", "icloud", "cloud", "drive", "storage", "chatgpt", "openai", "claude", "github", "notion", "canva")
     ),
     TELECOM(
-        Color(0xFF06B6D4), Icons.Default.PhoneAndroid, // Cyan
+        Color(0xFF00E5FF), Icons.Default.PhoneAndroid, // Bright Cyan
         setOf("recharge", "telecom", "vi", "jio", "airtel", "bsnl", "vodafone", "prepaid", "postpaid", "sim", "mobile", "dth", "tataplay", "fiber", "broadband")
     ),
     CHAI_CAFE(
-        Color(0xFFD97706), Icons.Default.LocalCafe, // Warm Chai Amber
+        Color(0xFFFF9800), Icons.Default.LocalCafe, // Warm Golden Amber
         setOf("chai", "tea", "coffee", "cafe", "chaayos", "starbucks", "bakery", "bakers")
     ),
     FOOD(
-        Color(0xFFF59E0B), Icons.Default.Fastfood, // Vibrant Amber
+        Color(0xFFFF7A00), Icons.Default.Fastfood, // Vivid Tangerine Orange
         setOf("food", "dining", "restaurant", "restaurants", "snack", "snacks", "meal", "meals",
-            "lunch", "dinner", "breakfast", "zomato", "swiggy", "broast", "shawarma", "biryani", "mandhi", "canteen", "mess", "dosa", "tiffin", "thali", "sweets", "mithai")
+            "lunch", "dinner", "breakfast", "zomato", "swiggy", "broast", "shawarma", "biryani", "mandhi", "canteen", "mess", "dosa", "tiffin", "thali", "sweets", "mithai", "puff", "puffs")
     ),
     GROCERIES(
-        Color(0xFF10B981), Icons.Default.ShoppingCart, // Emerald
+        Color(0xFF00C853), Icons.Default.ShoppingCart, // Vivid Emerald Green
         setOf("groceries", "grocery", "vegetables", "fruits", "supermarket", "mart", "kirana", "milk", "milma", "nandini", "amul", "blinkit", "zepto", "instamart", "bigbasket", "dmart", "sabzi", "mandi", "dairy")
     ),
     FUEL_FASTAG(
-        Color(0xFFF97316), Icons.Default.LocalGasStation, // Vibrant Orange
+        Color(0xFFFF3D00), Icons.Default.LocalGasStation, // Vivid Red-Orange Flame
         setOf("fuel", "fastag", "petrol", "diesel", "cng", "hpcl", "bpcl", "iocl", "shell", "nayara", "toll", "nhai", "parking")
     ),
     TRAIN_METRO(
-        Color(0xFF2563EB), Icons.Default.Train, // Railway Blue
+        Color(0xFF2979FF), Icons.Default.Train, // Royal Electric Blue
         setOf("train", "irctc", "metro", "railway", "rail", "dmrc", "bmrcl", "kmrl", "cmrl")
     ),
     FLIGHT(
-        Color(0xFF0284C7), Icons.Default.Flight, // Sky Blue
+        Color(0xFF00B4D8), Icons.Default.Flight, // Bright Azure
         setOf("flight", "flights", "airline", "indigo", "airindia", "vistara", "akasa", "airport")
     ),
     TRANSPORT(
-        Color(0xFF3B82F6), Icons.Default.DirectionsCar, // Bright Blue
+        Color(0xFF3D5AFE), Icons.Default.DirectionsCar, // Electric Cobalt Blue
         setOf("travel", "transport", "transportation", "cab", "cabs", "taxi", "auto", "uber", "ola", "rapido",
             "bus", "commute", "ride", "rides", "ksrtc", "redbus")
     ),
     SUBSCRIPTIONS(
-        Color(0xFFA855F7), Icons.Default.Subscriptions, // Rich Purple
+        Color(0xFFA855F7), Icons.Default.Subscriptions, // Luminous Violet
         setOf("subscriptions", "subscription", "ott", "netflix", "hotstar", "prime", "youtube", "sonyliv", "zee5", "mandate", "autopay")
     ),
     ENTERTAINMENT(
-        Color(0xFFEC4899), Icons.Default.Movie, // Pink
+        Color(0xFFFF2D76), Icons.Default.Movie, // Neon Hot Pink
         setOf("entertainment", "movie", "movies", "games", "gaming", "pvr", "inox", "bookmyshow", "cinema", "concert", "wonderla")
     ),
     EMI_LOANS(
-        Color(0xFFEA580C), Icons.Default.CreditScore, // Deep Amber-Orange
+        Color(0xFFFF9100), Icons.Default.CreditScore, // Vivid Amber Gold
         setOf("emi", "loans", "loan", "bajaj", "muthoot", "manappuram", "repayment", "kreditbee", "lazypay", "simpl", "slice", "cred", "nach")
     ),
     RENT_HOUSING(
-        Color(0xFF6366F1), Icons.Default.Home, // Indigo
+        Color(0xFF651FFF), Icons.Default.Home, // Deep Electric Indigo
         setOf("rent", "housing", "home", "society", "maintenance", "furniture", "hostel", "pg", "flat", "nobroker", "mygate", "landlord")
     ),
     HOUSEHOLD_SERVICES(
-        Color(0xFF0D9488), Icons.Default.CleaningServices, // Deep Teal
+        Color(0xFF00BFA5), Icons.Default.CleaningServices, // Vivid Turquoise Teal
         setOf("household", "services", "maid", "cook", "laundry", "dryclean", "cleaning", "plumber", "electrician", "carpenter", "urban", "lpg", "cylinder", "indane", "bharatgas", "bisleri")
     ),
     BILLS(
-        Color(0xFF0891B2), Icons.AutoMirrored.Filled.ReceiptLong, // Cyan-Blue
+        Color(0xFF00ACC1), Icons.AutoMirrored.Filled.ReceiptLong, // Deep Ocean Cyan
         setOf("bills", "bill", "utilities", "utility", "electricity", "internet", "wifi",
             "insurance", "kseb", "bescom", "tneb", "msedcl", "water", "gas", "bbps")
     ),
     PERSONAL_CARE(
-        Color(0xFFF43F5E), Icons.Default.Spa, // Rose
+        Color(0xFFFF4081), Icons.Default.Spa, // Vivid Fuchsia Rose
         setOf("personal", "care", "salon", "spa", "parlour", "barber", "haircut", "grooming", "nykaa", "purplle", "cosmetics", "skincare")
     ),
     SHOPPING(
-        Color(0xFF8B5CF6), Icons.Default.ShoppingBag, // Violet
+        Color(0xFF7C4DFF), Icons.Default.ShoppingBag, // Electric Violet
         setOf("shopping", "clothes", "clothing", "fashion", "electronics", "amazon", "flipkart", "myntra", "ajio", "zudio", "meesho", "croma", "decathlon", "tanishq", "jewellery")
     ),
     GIFTS_FESTIVALS(
-        Color(0xFFE11D48), Icons.Default.VolunteerActivism, // Festive Crimson-Rose
+        Color(0xFFF50057), Icons.Default.VolunteerActivism, // Vivid Electric Crimson
         setOf("gifts", "gift", "festivals", "festival", "puja", "pooja", "temple", "mandir", "donation", "charity", "shagun", "dakshina", "zakat", "tithe", "fnp")
     ),
     TRANSFER(
-        Color(0xFF64748B), Icons.AutoMirrored.Filled.CompareArrows, // Slate
+        Color(0xFF78909C), Icons.AutoMirrored.Filled.CompareArrows, // Cool Steel Slate
         setOf("transfer", "transfers", "self", "sweep", "withdrawal", "atm")
     ),
     BANK(
-        Color(0xFF64748B), Icons.Default.AccountBalance, // Slate
+        Color(0xFF546E7A), Icons.Default.AccountBalance, // Clean Steel
         setOf("bank", "charges", "charge", "fee", "fees", "interest", "tax", "taxes", "gst", "penalty")
     ),
     HEALTH(
-        Color(0xFFEF4444), Icons.Default.LocalHospital, // Crisp Red
+        Color(0xFFFF1744), Icons.Default.LocalHospital, // Crisp Luminous Red
         setOf("health", "healthcare", "medical", "medicine", "medicines", "pharmacy", "hospital", "doctor", "clinic", "dental", "apollo", "medplus", "pharmeasy", "1mg", "pathology", "diagnostics")
     ),
     EDUCATION(
-        Color(0xFF84CC16), Icons.Default.School, // Lime
+        Color(0xFF84CC16), Icons.Default.School, // Electric Lime
         setOf("education", "school", "tuition", "course", "courses", "books", "study", "college", "exam", "coaching", "physicswallah", "allen", "unacademy", "stationery")
     ),
     INVESTMENTS(
-        Color(0xFF14B8A6), Icons.AutoMirrored.Filled.TrendingUp, // Teal
+        Color(0xFF10B981), Icons.AutoMirrored.Filled.TrendingUp, // Vibrant Sea Green
         setOf("investment", "investments", "mutual", "fund", "funds", "sip", "stocks", "stock", "zerodha", "groww", "upstox", "indmoney", "dhan", "angel", "lic", "nps", "ppf", "gold")
     ),
     UNSPECIFIED(
-        Color(0xFF64748B), Icons.Default.Category, // Slate Gray
+        Color(0xFF818CF8), Icons.Default.Category, // Luminous Periwinkle / Iris
         setOf("unspecified", "uncategorized", "unclassified")
     ),
     OTHER(null, Icons.Default.Category, emptySet())
@@ -162,12 +162,16 @@ fun getCategoryColor(category: String): Color =
     kindOf(category).color ?: customPalette[abs(category.hashCode()) % customPalette.size]
 
 private val customPalette = listOf(
-    Color(0xFF14B8A6), // Teal
-    Color(0xFF8B5CF6), // Violet
-    Color(0xFF3B82F6), // Blue
-    Color(0xFFF43F5E), // Rose
-    Color(0xFF0EA5E9), // Sky
-    Color(0xFFF97316)  // Orange
+    Color(0xFFFF7A00), // Vibrant Tangerine
+    Color(0xFF7C4DFF), // Electric Violet
+    Color(0xFF00E5FF), // Bright Cyan
+    Color(0xFFFF1744), // Vivid Crimson
+    Color(0xFF00E676), // Electric Mint
+    Color(0xFFFF9100), // Amber Gold
+    Color(0xFF2979FF), // Royal Blue
+    Color(0xFFFF2D76), // Hot Pink
+    Color(0xFF00BFA5), // Turquoise Teal
+    Color(0xFFA855F7)  // Bright Purple
 )
 
 fun getCategoryIcon(category: String): ImageVector = kindOf(category).icon

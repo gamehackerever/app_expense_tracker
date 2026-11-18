@@ -125,6 +125,7 @@ class SbiPdfParserTest {
         assertEquals("SWIGGY", rows[0].payee)
         assertEquals("413524123456", rows[0].refNo)
         assertEquals(1234500L, rows[0].balancePaise)
+        assertEquals("Order123", rows[0].note)
 
         // Row 2: Amazon Pay (P2M)
         assertEquals(TransactionType.DEBIT, rows[1].type)

@@ -296,4 +296,17 @@ class FinancialParserTest {
         assertEquals("Canara Bank", p.bankName)
         assertEquals("1234", p.accountNumber)
     }
+
+    @Test
+    fun canaraAi1_upiSlashWithNote_extractsPayeeAndNote() {
+        val p = notif(
+            "Debited Rs. 80.00 from A/c ...1234 on 18-Nov-2026 via UPI/413524123456/DR/RAJU/CNRB/raju@okaxis/egg puff. Avl Bal Rs 12,000.00",
+            "Canara ai1"
+        )
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(8_000L, p.amount)
+        assertEquals("Raju", p.payee)
+        assertEquals("egg puff", p.note)
+    }
 }

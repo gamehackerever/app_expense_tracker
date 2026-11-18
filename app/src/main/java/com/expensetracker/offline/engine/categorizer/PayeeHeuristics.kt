@@ -28,11 +28,18 @@ object PayeeHeuristics {
         Regex("(?i)\\b(parotta|porotta|paratha|parota)\\b") to "parotta",
         Regex("(?i)\\b(juse|juce|jusce)\\b") to "juice",
         Regex("(?i)\\b(medicals?|medicle|medicals)\\b") to "medical",
-        Regex("(?i)\\b(chikken|chicken)\\b") to "chicken",
+        Regex("(?i)\\b(chikken|chiken|chikn|chicken)\\b") to "chicken",
         Regex("(?i)\\b(hotal|hottel)\\b") to "hotel",
         Regex("(?i)\\b(mobail|mobiles?)\\b") to "mobile",
         Regex("(?i)\\b(puf|pufff|pufs)\\b") to "puff",
-        Regex("(?i)\\b(samosas|somosa|samosaa)\\b") to "samosa"
+        Regex("(?i)\\b(samosas|somosa|samosaa)\\b") to "samosa",
+        Regex("(?i)\\b(momos|momo|momoes)\\b") to "momos",
+        Regex("(?i)\\b(dosaa|dose|dosai)\\b") to "dosa",
+        Regex("(?i)\\b(idly|iddly)\\b") to "idli",
+        Regex("(?i)\\b(stationary|stationery)\\b") to "stationery",
+        Regex("(?i)\\b(recharg|rechargee)\\b") to "recharge",
+        Regex("(?i)\\b(hair\\s*cutt?|haircut)\\b") to "haircut",
+        Regex("(?i)\\b(vegitables?|vegitable|vegitbl)\\b") to "vegetables"
     )
 
     /** Lower-cases and folds spelling variants. Safe to call on any payee. */
@@ -51,11 +58,14 @@ object PayeeHeuristics {
         "tiffin" to "Food & Dining", "dosa" to "Food & Dining", "sweets" to "Food & Dining",
         "puff" to "Food & Dining", "samosa" to "Food & Dining", "burger" to "Food & Dining",
         "pizza" to "Food & Dining", "sandwich" to "Food & Dining", "tea" to "Food & Dining",
+        "momos" to "Food & Dining", "dhaba" to "Food & Dining", "curry" to "Food & Dining",
         "supermarket" to "Groceries", "vegetables" to "Groceries", "provision" to "Groceries",
-        "grocery" to "Groceries",
+        "grocery" to "Groceries", "dairy" to "Groceries",
         "pharmacy" to "Health", "hospital" to "Health", "clinic" to "Health", "medicine" to "Health",
-        "petrol" to "Fuel & Fastag", "diesel" to "Fuel & Fastag", "electricity" to "Bills & Utilities",
-        "haircut" to "Personal Care", "salon" to "Personal Care"
+        "petrol" to "Fuel & Fastag", "diesel" to "Fuel & Fastag", "fastag" to "Fuel & Fastag",
+        "electricity" to "Bills & Utilities", "broadband" to "Bills & Utilities",
+        "haircut" to "Personal Care", "salon" to "Personal Care",
+        "stationery" to "Education", "tuition" to "Education"
     )
 
     /** One-letter typo in a long word ("Biriyani" is handled by [canonicalize]; "Restorent" lands here). */
@@ -95,14 +105,15 @@ object PayeeHeuristics {
     // ───────────────────────── generic shop-type words ─────────────────────────
 
     private val WORD_HINTS: List<Pair<Regex, String>> = listOf(
-        Regex("(?i)\\b(foods?|fast\\s?food|meals?|oota|kebabs?|tandoori|grill|fry|chicken|mutton|beef|fish\\s?fry|ice\\s?cream|icecream|kulfi|falooda|milkshake|cool\\s?bar|bhavan|bhavanam|snack\\s?bar|tea\\s?stall|tea\\s?shop|coffee\\s?shop|juice\\s?(shop|centre|center)|cakes?|bakes?|chips|hot\\s?chips|sweet\\s?stall|dhaba|nadan|thattu|puffs?|samosas?|biryani|shawarma|burger|pizza|sandwich|momos?|rolls?|dosa|idli|parotta|porotta|tiffin|canteen|mess|bakers?|bakery|chai|coffee|breakfast|lunch|dinner)\\b") to "Food & Dining",
-        Regex("(?i)\\b(stores?|provision|traders|agencies|vegetable|veg|fruit|fruits|poultry|dairy|milk|ration|kirana|bazaar|bazar|supermarket|grocery|groceries|sabzi|mandi)\\b") to "Groceries",
+        Regex("(?i)\\b(foods?|fast\\s?food|meals?|oota|kebabs?|tandoori|grill|fry|chicken|mutton|beef|fish\\s?fry|ice\\s?cream|icecream|kulfi|falooda|milkshake|cool\\s?bar|bhavan|bhavanam|snack\\s?bar|tea\\s?stall|tea\\s?shop|coffee\\s?shop|juice\\s?(shop|centre|center)|cakes?|bakes?|chips|hot\\s?chips|sweet\\s?stall|dhaba|nadan|thattu|puffs?|samosas?|biryani|shawarma|burger|pizza|sandwich|momos?|rolls?|dosa|idli|parotta|porotta|tiffin|canteen|mess|bakers?|bakery|chai|coffee|breakfast|lunch|dinner|curry|roast|paneer|kulcha|bhurji|dhokla|dabeli|pav\\s?bhaji|vada\\s?pav)\\b") to "Food & Dining",
+        Regex("(?i)\\b(stores?|provision|traders|agencies|vegetable|veg|veggies|fruit|fruits|poultry|dairy|milk|ration|kirana|bazaar|bazar|supermarket|grocery|groceries|sabzi|mandi|supermart|minimart|freshmart)\\b") to "Groceries",
         Regex("(?i)\\b(medical|pharma|pharmacy|labs?|scans?|opticals?|eye\\s?care|hospital|clinic|dental|ayurved\\w*|medicine|medicines|tablet|tablets|doctor)\\b") to "Health",
         Regex("(?i)\\b(mobile|communications?|electricals?|electronics?|hardware|fancy|readymades?|garments?|gents|ladies\\s?wear|collections|fashions?|footwear|watch(es)?|gold|jewel\\w*|furniture|toys|gift\\s?(shop|centre|center)|clothes|shopping)\\b") to "Shopping",
-        Regex("(?i)\\b(uidai|aadhaar|aadhar|passport|parivahan|mparivahan|rto|akshaya|csc|common\\s?service|registration|challan|stamp\\s?paper|court\\s?fee|e-?seva|electricity|bijli|power\\s?bill|water\\s?bill|cylinder|lpg|gas\\s?bill)\\b") to "Bills & Utilities",
-        Regex("(?i)\\b(travels|tours|transport|cabs?|taxi|autos?\\s?stand|bus\\s?stand|ksrtc|auto\\s?fare|metro|train|flight|fare|ride)\\b") to "Travel",
+        Regex("(?i)\\b(uidai|aadhaar|aadhar|passport|parivahan|mparivahan|rto|akshaya|csc|common\\s?service|registration|challan|stamp\\s?paper|court\\s?fee|e-?seva|electricity|bijli|power\\s?bill|water\\s?bill|cylinder|lpg|gas\\s?bill|broadband|wifi|bbps)\\b") to "Bills & Utilities",
+        Regex("(?i)\\b(travels|tours|transport|cabs?|taxi|autos?\\s?stand|bus\\s?stand|ksrtc|auto\\s?fare|metro|train|flight|fare|ride|rickshaw|autorickshaw)\\b") to "Travel",
         Regex("(?i)\\b(petro|bunk|filling|fuels?|petrol|diesel|cng|fastag|toll|parking)\\b") to "Fuel & Fastag",
         Regex("(?i)\\b(beauty|unisex|saloon|salon|parlour|hair|barbers?|spa|haircut|grooming|facial)\\b") to "Personal Care",
+        Regex("(?i)\\b(rent|flat\\s?rent|house\\s?rent|room\\s?rent|pg\\s?rent|hostel\\s?rent|maintenance|society\\s?maintenance)\\b") to "Rent & Housing",
         Regex("(?i)\\b(game\\s?zone|arcade|snooker|turf|cinemas?|theatre|movies?|show)\\b") to "Entertainment",
         Regex("(?i)\\b(tuition|academy|school|college|institute|stationery|books?|xerox|photostat|fees?|coaching)\\b") to "Education"
     )
