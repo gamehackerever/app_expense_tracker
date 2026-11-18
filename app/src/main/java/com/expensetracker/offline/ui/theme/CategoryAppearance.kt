@@ -66,7 +66,7 @@ private enum class CategoryKind(val color: Color?, val icon: ImageVector, val ke
             "lunch", "dinner", "breakfast", "zomato", "swiggy", "broast", "shawarma", "biryani", "mandhi", "canteen", "mess", "dosa", "tiffin", "thali", "sweets", "mithai", "puff", "puffs")
     ),
     GROCERIES(
-        Color(0xFF00E676), Icons.Default.ShoppingCart, // Vivid Mint Green
+        Color(0xFFFF1744), Icons.Default.ShoppingCart, // Vivid Primary Red
         setOf("groceries", "grocery", "vegetables", "fruits", "supermarket", "mart", "kirana", "milk", "milma", "nandini", "amul", "blinkit", "zepto", "instamart", "bigbasket", "dmart", "sabzi", "mandi", "dairy")
     ),
     FUEL_FASTAG(

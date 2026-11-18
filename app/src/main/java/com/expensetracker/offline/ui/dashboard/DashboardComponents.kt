@@ -2253,7 +2253,7 @@ internal fun SafeToSpendCard(
     }
 }
 
-internal fun startMillisFor(range: TimeRange, startDayOfMonth: Int): Long {
+internal fun startMillisFor(range: TimeRange, startDayOfMonth: Int, cycleOffset: Int = 0): Long {
     return when (range) {
         TimeRange.ALL_TIME -> 0L
         TimeRange.TODAY -> Calendar.getInstance().apply {
@@ -2263,7 +2263,7 @@ internal fun startMillisFor(range: TimeRange, startDayOfMonth: Int): Long {
             set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
-        TimeRange.THIS_MONTH -> BillingCycleHelper.getCycleRange(startDayOfMonth).first
+        TimeRange.THIS_MONTH -> BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset).first
         TimeRange.LAST_MONTH -> BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -1).first
         TimeRange.THIS_YEAR -> Calendar.getInstance().apply {
             set(Calendar.DAY_OF_YEAR, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
@@ -2272,9 +2272,9 @@ internal fun startMillisFor(range: TimeRange, startDayOfMonth: Int): Long {
 }
 
 /** End of the window for [range]: full cycle end for month ranges, end-of-year for year, or end-of-today. */
-internal fun endMillisFor(range: TimeRange, startDayOfMonth: Int): Long =
+internal fun endMillisFor(range: TimeRange, startDayOfMonth: Int, cycleOffset: Int = 0): Long =
     when (range) {
-        TimeRange.THIS_MONTH -> BillingCycleHelper.getCycleRange(startDayOfMonth).second
+        TimeRange.THIS_MONTH -> BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset).second
         TimeRange.LAST_MONTH -> BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -1).second
         TimeRange.THIS_YEAR -> Calendar.getInstance().apply {
             set(Calendar.MONTH, Calendar.DECEMBER); set(Calendar.DAY_OF_MONTH, 31)

@@ -90,10 +90,20 @@ object BillingCycleHelper {
     }
 
     fun getCycleLabel(startDay: Int, referenceDate: LocalDate = LocalDate.now()): String {
-        val (cycleStart, cycleEnd) = getCycleDates(startDay, referenceDate)
+        return getCycleLabelForOffset(startDay, cycleOffset = 0, referenceDate = referenceDate)
+    }
+
+    fun getCycleLabelForOffset(
+        startDay: Int,
+        cycleOffset: Int,
+        referenceDate: LocalDate = LocalDate.now()
+    ): String {
+        val (baseStart, _) = getCycleDates(startDay, referenceDate)
+        val shiftedStart = if (cycleOffset == 0) baseStart else baseStart.plusMonths(cycleOffset.toLong())
+        val shiftedEnd = shiftedStart.plusMonths(1).minusDays(1)
         val formatter = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
-        val s = cycleStart.format(formatter)
-        val e = cycleEnd.format(formatter)
+        val s = shiftedStart.format(formatter)
+        val e = shiftedEnd.format(formatter)
         return "$s – $e"
     }
 

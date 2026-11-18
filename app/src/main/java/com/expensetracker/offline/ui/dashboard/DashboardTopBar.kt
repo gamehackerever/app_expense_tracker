@@ -90,7 +90,7 @@ fun DashboardTopBar(
                 }
             } else {
                 DashboardHeader(
-                    monthLabel = if (previousCycleLabel != null) "Previous cycle" else currentMonthName,
+                    monthLabel = currentMonthName,
                     cycleLabel = previousCycleLabel ?: com.expensetracker.offline.util.BillingCycleHelper.getCycleLabel(startDayOfMonth),
                     statusColor = statusColor,
                     searchActive = searchOpen || searchQuery.isNotEmpty(),
