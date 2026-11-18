@@ -2,6 +2,7 @@ package com.expensetracker.offline.data.repository
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.expensetracker.offline.data.local.dao.AccountInfo
 import java.util.Locale
 
 data class CreditCardConfig(
@@ -32,6 +33,32 @@ class SettingsRepository(context: Context) {
             }
         }
         set(value) = prefs.edit().putFloat(KEY_LOW_BALANCE_THRESHOLD, value).apply()
+
+    var primaryAccountBank: String
+        get() = prefs.getString(KEY_PRIMARY_ACCOUNT_BANK, null)?.trim()?.ifBlank { null } ?: "Canara Bank"
+        set(value) {
+            val clean = com.expensetracker.offline.util.AccountNormalizer.canonicalBankName(value) ?: value.trim().ifBlank { "Canara Bank" }
+            prefs.edit().putString(KEY_PRIMARY_ACCOUNT_BANK, clean).apply()
+        }
+
+    var primaryAccountNumber: String?
+        get() = prefs.getString(KEY_PRIMARY_ACCOUNT_NUMBER, null)?.trim()?.ifBlank { null }
+        set(value) {
+            val clean = com.expensetracker.offline.util.AccountNormalizer.accountNumber(value)
+            prefs.edit().putString(KEY_PRIMARY_ACCOUNT_NUMBER, clean).apply()
+        }
+
+    fun getPrimaryAccount(): AccountInfo = AccountInfo(primaryAccountBank, primaryAccountNumber)
+
+    fun setPrimaryAccount(bankName: String, accountNumber: String?) {
+        val cleanBank = com.expensetracker.offline.util.AccountNormalizer.canonicalBankName(bankName)
+            ?: bankName.trim().ifBlank { "Canara Bank" }
+        val cleanAcc = com.expensetracker.offline.util.AccountNormalizer.accountNumber(accountNumber)
+        prefs.edit()
+            .putString(KEY_PRIMARY_ACCOUNT_BANK, cleanBank)
+            .putString(KEY_PRIMARY_ACCOUNT_NUMBER, cleanAcc)
+            .apply()
+    }
 
     var isBudgetEnabled: Boolean
         get() = prefs.getBoolean(KEY_BUDGET_ENABLED, false)
@@ -705,6 +732,8 @@ class SettingsRepository(context: Context) {
 
     companion object {
         const val PREFS_NAME = "expense_tracker_prefs"
+        const val KEY_PRIMARY_ACCOUNT_BANK = "key_primary_account_bank"
+        const val KEY_PRIMARY_ACCOUNT_NUMBER = "key_primary_account_number"
         const val KEY_LOW_BALANCE_ALERT_ENABLED = "key_low_balance_alert_enabled"
         const val KEY_LOW_BALANCE_THRESHOLD = "key_low_balance_threshold"
         const val KEY_MONTHLY_BUDGET_V2 = "key_monthly_budget_v2"

@@ -549,4 +549,11 @@ interface TransactionDao {
           AND (accountNumber IS NULL OR accountNumber != :canonicalAccountNumber)
     """)
     suspend fun unifyBankAccountNumber(bankName: String, canonicalAccountNumber: String): Int
+
+    @Query("""
+        UPDATE transactions
+        SET bankName = :canonicalBankName,
+            accountNumber = :canonicalAccountNumber
+    """)
+    suspend fun unifyAllTransactionsToSingleAccount(canonicalBankName: String, canonicalAccountNumber: String?): Int
 }

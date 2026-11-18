@@ -420,62 +420,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ): List<AccountBalanceInsight> {
         if (txnsWithDebts.isEmpty()) return emptyList()
 
-        val normalized = txnsWithDebts.map { item ->
-            val t = item.transaction
-            val cBank = AccountNormalizer.canonicalBankName(t.bankName)
-            val cAcc = AccountNormalizer.accountNumber(t.accountNumber)
-            item to (cBank to cAcc)
+        val primaryBank = settingsRepo.primaryAccountBank
+        val primaryAcc = settingsRepo.primaryAccountNumber
+
+        val sorted = txnsWithDebts.map { it.transaction }.sortedWith(
+            compareBy<TransactionEntity> { it.timestamp }.thenBy { it.id }
+        )
+
+        val lastExplicitIdx = sorted.indexOfLast { it.balance != null }
+        val (baseBalance, lastExplicitTs) = if (lastExplicitIdx >= 0) {
+            val explicitTxn = sorted[lastExplicitIdx]
+            (explicitTxn.balance ?: 0L) to explicitTxn.timestamp
+        } else {
+            val cached = BalanceCache.baselineOf(settingsRepo.prefs, primaryBank, primaryAcc)
+            val cachedTs = BalanceCache.timestampOf(settingsRepo.prefs, primaryBank, primaryAcc)
+            (cached ?: 0L) to cachedTs
         }
 
-        val byBank = normalized.filter { it.second.first != null }
-            .groupBy { it.second.first!! }
+        val lastUpdated = sorted.lastOrNull()?.timestamp ?: System.currentTimeMillis()
 
-        val result = mutableListOf<AccountBalanceInsight>()
-
-        for ((bankName, bankItems) in byBank) {
-            val knownAccs = bankItems.mapNotNull { it.second.second }.distinct()
-            val primaryAcc = knownAccs.firstOrNull()
-
-            val itemsForAccs = bankItems.groupBy { (_, pair) ->
-                pair.second ?: primaryAcc
-            }
-
-            for ((accNumber, accItems) in itemsForAccs) {
-                val sorted = accItems.map { it.first.transaction }.sortedWith(
-                    compareBy<TransactionEntity> { it.timestamp }.thenBy { it.id }
-                )
-
-                val lastExplicitIdx = sorted.indexOfLast { it.balance != null }
-                val (baseBalance, lastExplicitTs) = if (lastExplicitIdx >= 0) {
-                    val explicitTxn = sorted[lastExplicitIdx]
-                    (explicitTxn.balance ?: 0L) to explicitTxn.timestamp
-                } else {
-                    val cached = BalanceCache.baselineOf(settingsRepo.prefs, bankName, accNumber)
-                    val cachedTs = BalanceCache.timestampOf(settingsRepo.prefs, bankName, accNumber)
-                    (cached ?: 0L) to cachedTs
-                }
-
-                val lastUpdated = sorted.lastOrNull()?.timestamp ?: System.currentTimeMillis()
-
-                if (lastExplicitIdx >= 0 || baseBalance > 0L) {
-                    val subsequent = if (lastExplicitIdx >= 0) sorted.subList(lastExplicitIdx + 1, sorted.size) else sorted
-                    var liveBalance = baseBalance
-                    for (t in subsequent) {
-                        if (t.timestamp >= lastExplicitTs) {
-                            if (t.type == TransactionType.DEBIT) {
-                                liveBalance -= t.amount
-                            } else if (t.type == TransactionType.CREDIT) {
-                                liveBalance += t.amount
-                            }
-                        }
+        val liveBalance = if (lastExplicitIdx >= 0 || baseBalance > 0L) {
+            val subsequent = if (lastExplicitIdx >= 0) sorted.subList(lastExplicitIdx + 1, sorted.size) else sorted
+            var running = baseBalance
+            for (t in subsequent) {
+                if (t.timestamp >= lastExplicitTs) {
+                    if (t.type == TransactionType.DEBIT) {
+                        running -= t.amount
+                    } else if (t.type == TransactionType.CREDIT) {
+                        running += t.amount
                     }
-                    result.add(AccountBalanceInsight(bankName, accNumber, liveBalance, lastUpdated))
-                } else {
-                    result.add(AccountBalanceInsight(bankName, accNumber, null, lastUpdated))
                 }
             }
+            running
+        } else {
+            null
         }
-        return result.sortedByDescending { it.lastUpdated }
+
+        return listOf(
+            AccountBalanceInsight(
+                bankName = primaryBank,
+                accountNumber = primaryAcc,
+                latestBalance = liveBalance,
+                lastUpdated = lastUpdated
+            )
+        )
     }
 
     val accountBalances: StateFlow<List<AccountBalanceInsight>> = allTransactionsWithDebts.map { txns ->
@@ -486,16 +474,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         list.map { AccountInfo(it.bankName, it.accountNumber) }.distinct()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val latestBalance: StateFlow<Long?> = combine(accountBalances, selectedAccount) { accounts, selected ->
-        if (selected != null) {
-            accounts.find {
-                it.bankName.equals(selected.bankName, ignoreCase = true) &&
-                (it.accountNumber == selected.accountNumber || selected.accountNumber == null)
-            }?.latestBalance
-        } else {
-            val validBalances = accounts.mapNotNull { it.latestBalance }
-            if (validBalances.isNotEmpty()) validBalances.sum() else null
-        }
+    val latestBalance: StateFlow<Long?> = accountBalances.map { accounts ->
+        accounts.firstOrNull()?.latestBalance
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -1071,6 +1051,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updatePrimaryAccount(bankName: String, accountNumber: String?) {
+        val cleanBank = AccountNormalizer.canonicalBankName(bankName) ?: bankName.trim().ifBlank { "Canara Bank" }
+        val cleanAcc = AccountNormalizer.accountNumber(accountNumber)
+        settingsRepo.setPrimaryAccount(cleanBank, cleanAcc)
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.enforceSingleAccountMode()
+            dbEpoch.value += 1
+        }
+    }
+
     suspend fun importSbiPdfStatement(
         uri: Uri,
         password: String
@@ -1079,11 +1069,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val accountNum = SbiPdfParserUtil.extractAccountNumber(rawText)
         val detectedBank = SbiPdfParserUtil.detectBankName(rawText)
         val parsedRows = SbiPdfParserUtil.parseSbiStatementText(rawText)
-        SbiPdfParserUtil.importParsedTransactions(
+        val result = SbiPdfParserUtil.importParsedTransactions(
             dao = app.database.transactionDao(),
             rows = parsedRows,
             accountNumber = accountNum,
             bankNameOverride = detectedBank
         )
+        val canonicalBank = AccountNormalizer.canonicalBankName(detectedBank) ?: detectedBank
+        val canonicalAcc = AccountNormalizer.accountNumber(accountNum)
+        settingsRepo.setPrimaryAccount(canonicalBank, canonicalAcc)
+        repository.enforceSingleAccountMode()
+        dbEpoch.value += 1
+        result
     }
 }

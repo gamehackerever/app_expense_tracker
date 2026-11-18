@@ -118,22 +118,25 @@ object SbiPdfParserUtil {
      * Detects bank name from statement header or narration text.
      */
     fun detectBankName(rawText: String): String {
-        val upper = rawText.uppercase(Locale.ROOT)
-        return when {
-            upper.contains("CANARA BANK") || upper.contains("CANARA") || upper.contains("CNRB") -> "Canara Bank"
-            upper.contains("STATE BANK OF INDIA") || upper.contains("SBI") || upper.contains("SBIN") -> "SBI"
-            upper.contains("HDFC") -> "HDFC Bank"
-            upper.contains("ICICI") -> "ICICI Bank"
-            upper.contains("AXIS BANK") || upper.contains("UTIB") -> "Axis Bank"
-            upper.contains("KOTAK") || upper.contains("KKBK") -> "Kotak Mahindra Bank"
-            upper.contains("PUNJAB NATIONAL BANK") || upper.contains("PNB") || upper.contains("PUNB") -> "PNB"
-            upper.contains("BANK OF BARODA") || upper.contains("BOB") || upper.contains("BARB") -> "Bank of Baroda"
-            upper.contains("UNION BANK") || upper.contains("UBIN") -> "Union Bank"
-            upper.contains("INDIAN BANK") || upper.contains("IDIB") -> "Indian Bank"
-            upper.contains("FEDERAL BANK") || upper.contains("FDRL") -> "Federal Bank"
-            upper.contains("SOUTH INDIAN BANK") || upper.contains("SIBL") -> "South Indian Bank"
-            else -> "Bank"
+        val header = rawText.take(2500).uppercase(Locale.ROOT)
+        val full = rawText.uppercase(Locale.ROOT)
+        for (text in listOf(header, full)) {
+            when {
+                text.contains("CANARA BANK") || text.contains("CANARA") || text.contains("CNRB") -> return "Canara Bank"
+                text.contains("STATE BANK OF INDIA") || (text.contains("SBI") && !text.contains("SBIN")) -> return "SBI"
+                text.contains("HDFC") -> return "HDFC Bank"
+                text.contains("ICICI") -> return "ICICI Bank"
+                text.contains("AXIS BANK") || (text.contains("AXIS") && !text.contains("UTIB")) -> return "Axis Bank"
+                text.contains("KOTAK") || text.contains("KKBK") -> return "Kotak Mahindra Bank"
+                text.contains("PUNJAB NATIONAL BANK") || (text.contains("PNB") && !text.contains("PUNB")) -> return "PNB"
+                text.contains("BANK OF BARODA") || (text.contains("BOB") && !text.contains("BARB")) -> return "Bank of Baroda"
+                text.contains("UNION BANK") || text.contains("UBIN") -> return "Union Bank"
+                text.contains("INDIAN BANK") || text.contains("IDIB") -> return "Indian Bank"
+                text.contains("FEDERAL BANK") || text.contains("FDRL") -> return "Federal Bank"
+                text.contains("SOUTH INDIAN BANK") || text.contains("SIBL") -> return "South Indian Bank"
+            }
         }
+        return "Canara Bank"
     }
 
     /**
@@ -555,8 +558,8 @@ object SbiPdfParserUtil {
                 rawCategory
             }
             val isTransfer = effectiveCategory.equals("Self Transfer", ignoreCase = true)
-            val detectedBank = bankNameOverride ?: detectBankName(row.rawLine)
-            val canonicalBank = AccountNormalizer.canonicalBankName(detectedBank) ?: detectedBank
+            val canonicalBank = AccountNormalizer.canonicalBankName(bankNameOverride) ?: "Canara Bank"
+            val canonicalAcc = AccountNormalizer.accountNumber(accountNumber)
 
             val entity = TransactionEntity(
                 id = 0,
@@ -572,7 +575,7 @@ object SbiPdfParserUtil {
                 balance = row.balancePaise,
                 itemsSummary = null,
                 bankName = canonicalBank,
-                accountNumber = AccountNormalizer.accountNumber(accountNumber),
+                accountNumber = canonicalAcc,
                 accountType = "BANK",
                 isNecessity = false,
                 excludeFromSpend = isTransfer,
@@ -582,8 +585,12 @@ object SbiPdfParserUtil {
             toInsert.add(entity)
         }
 
+        val statementBank = AccountNormalizer.canonicalBankName(bankNameOverride) ?: "Canara Bank"
+        val statementAcc = AccountNormalizer.accountNumber(accountNumber)
+
         if (toInsert.isNotEmpty()) {
             dao.insertTransactions(toInsert)
+            dao.unifyAllTransactionsToSingleAccount(statementBank, statementAcc)
         }
 
         SbiImportResult(
@@ -591,8 +598,8 @@ object SbiPdfParserUtil {
             newlyInserted = toInsert.size,
             duplicatesSkipped = duplicatesCount,
             insertedTransactions = toInsert,
-            detectedAccountNumber = accountNumber,
-            bankName = bankNameOverride ?: "Bank"
+            detectedAccountNumber = statementAcc,
+            bankName = statementBank
         )
     }
 }

@@ -1546,7 +1546,7 @@ fun DashboardScreen(
         AccountsDialog(
             accountBalances = accountBalances,
             selectedAccount = selectedAccount,
-            contextLabel = selectedAccount?.bankName ?: "All Accounts",
+            contextLabel = selectedAccount?.bankName ?: accountBalances.firstOrNull()?.bankName ?: "Bank",
             contextBalance = effectiveBalance,
             safeToSpendBreakdown = safeToSpendBreakdown,
             transactions = transactions,
