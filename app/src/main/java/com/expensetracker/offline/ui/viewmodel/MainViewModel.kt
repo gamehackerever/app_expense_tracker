@@ -1052,7 +1052,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updatePrimaryAccount(bankName: String, accountNumber: String?) {
-        val cleanBank = AccountNormalizer.canonicalBankName(bankName) ?: bankName.trim().ifBlank { "Canara Bank" }
+        val cleanBank = bankName.trim().ifBlank { "Primary" }
         val cleanAcc = AccountNormalizer.accountNumber(accountNumber)
         settingsRepo.setPrimaryAccount(cleanBank, cleanAcc)
         viewModelScope.launch(Dispatchers.IO) {
@@ -1067,17 +1067,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ): SbiImportResult = withContext(Dispatchers.IO) {
         val rawText = SbiPdfParserUtil.extractTextFromPdf(getApplication(), uri, password)
         val accountNum = SbiPdfParserUtil.extractAccountNumber(rawText)
-        val detectedBank = SbiPdfParserUtil.detectBankName(rawText)
         val parsedRows = SbiPdfParserUtil.parseSbiStatementText(rawText)
         val result = SbiPdfParserUtil.importParsedTransactions(
             dao = app.database.transactionDao(),
             rows = parsedRows,
             accountNumber = accountNum,
-            bankNameOverride = detectedBank
+            bankNameOverride = "Primary"
         )
-        val canonicalBank = AccountNormalizer.canonicalBankName(detectedBank) ?: detectedBank
         val canonicalAcc = AccountNormalizer.accountNumber(accountNum)
-        settingsRepo.setPrimaryAccount(canonicalBank, canonicalAcc)
+        settingsRepo.setPrimaryAccount("Primary", canonicalAcc)
         repository.enforceSingleAccountMode()
         dbEpoch.value += 1
         result

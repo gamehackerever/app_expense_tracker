@@ -136,7 +136,7 @@ object SbiPdfParserUtil {
                 text.contains("SOUTH INDIAN BANK") || text.contains("SIBL") -> return "South Indian Bank"
             }
         }
-        return "Canara Bank"
+        return "Primary"
     }
 
     /**
@@ -558,7 +558,7 @@ object SbiPdfParserUtil {
                 rawCategory
             }
             val isTransfer = effectiveCategory.equals("Self Transfer", ignoreCase = true)
-            val canonicalBank = AccountNormalizer.canonicalBankName(bankNameOverride) ?: "Canara Bank"
+            val canonicalBank = "Primary"
             val canonicalAcc = AccountNormalizer.accountNumber(accountNumber)
 
             val entity = TransactionEntity(
@@ -585,7 +585,7 @@ object SbiPdfParserUtil {
             toInsert.add(entity)
         }
 
-        val statementBank = AccountNormalizer.canonicalBankName(bankNameOverride) ?: "Canara Bank"
+        val statementBank = "Primary"
         val statementAcc = AccountNormalizer.accountNumber(accountNumber)
 
         if (toInsert.isNotEmpty()) {

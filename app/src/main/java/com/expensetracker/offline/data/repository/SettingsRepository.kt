@@ -35,9 +35,16 @@ class SettingsRepository(context: Context) {
         set(value) = prefs.edit().putFloat(KEY_LOW_BALANCE_THRESHOLD, value).apply()
 
     var primaryAccountBank: String
-        get() = prefs.getString(KEY_PRIMARY_ACCOUNT_BANK, null)?.trim()?.ifBlank { null } ?: "Canara Bank"
+        get() {
+            val stored = prefs.getString(KEY_PRIMARY_ACCOUNT_BANK, null)?.trim()?.ifBlank { null }
+            return if (stored == null || stored.equals("Canara Bank", ignoreCase = true) || stored.equals("Bank", ignoreCase = true)) {
+                "Primary"
+            } else {
+                stored
+            }
+        }
         set(value) {
-            val clean = com.expensetracker.offline.util.AccountNormalizer.canonicalBankName(value) ?: value.trim().ifBlank { "Canara Bank" }
+            val clean = value.trim().ifBlank { "Primary" }
             prefs.edit().putString(KEY_PRIMARY_ACCOUNT_BANK, clean).apply()
         }
 
@@ -51,8 +58,7 @@ class SettingsRepository(context: Context) {
     fun getPrimaryAccount(): AccountInfo = AccountInfo(primaryAccountBank, primaryAccountNumber)
 
     fun setPrimaryAccount(bankName: String, accountNumber: String?) {
-        val cleanBank = com.expensetracker.offline.util.AccountNormalizer.canonicalBankName(bankName)
-            ?: bankName.trim().ifBlank { "Canara Bank" }
+        val cleanBank = bankName.trim().ifBlank { "Primary" }
         val cleanAcc = com.expensetracker.offline.util.AccountNormalizer.accountNumber(accountNumber)
         prefs.edit()
             .putString(KEY_PRIMARY_ACCOUNT_BANK, cleanBank)

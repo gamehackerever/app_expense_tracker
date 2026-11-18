@@ -735,20 +735,18 @@ fun SettingsScreen(
             )
 
             SettingsSection(
-                title = "Bank Account & Statements",
+                title = "Account & Statements",
                 modifier = Modifier.trackSection("Statements", sectionPositions)
             ) {
-                val primaryBank = settingsRepo.primaryAccountBank
                 val primaryAcc = settingsRepo.primaryAccountNumber
-                val accountDesc = if (primaryAcc.isNullOrBlank()) "Active Account · Strictly 1 account active" else "•••• $primaryAcc · Strictly 1 account active"
+                val accountDesc = if (primaryAcc.isNullOrBlank()) "Single active account" else "•••• $primaryAcc · Single active account"
 
                 SettingsItem(
                     icon = Icons.Default.AccountBalance,
-                    title = primaryBank,
-                    subtitle = "$accountDesc\nTap to change bank account or set account number",
+                    title = "Primary Account",
+                    subtitle = "$accountDesc\nTap to set account number",
                     onClick = {
                         haptic.tap()
-                        editBankName = primaryBank
                         editAccountNumber = primaryAcc ?: ""
                         showEditAccountDialog = true
                     }
@@ -758,8 +756,8 @@ fun SettingsScreen(
 
                 SettingsItem(
                     icon = Icons.Default.PictureAsPdf,
-                    title = "Upload Bank PDF Statement",
-                    subtitle = "Import password-protected PDF e-statements (Canara Bank, SBI, etc.)",
+                    title = "Upload PDF Statement",
+                    subtitle = "Import password-protected PDF e-statements into your Primary account",
                     onClick = {
                         haptic.tap()
                         sbiPdfPickerLauncher.launch("application/pdf")
@@ -1330,22 +1328,20 @@ if (openPage == "capture") {
             // ─────────────────────────────────────────────────────────────────
 if (openPage == "statements" || openPage == "capture") {
             SettingsSection(
-                title = "Bank Account & Statements",
+                title = "Account & Statements",
                 isHighlighted = highlightedSection == "Statements",
                 showTitle = openPage == "capture",
                 modifier = Modifier.trackSection("Statements", sectionPositions)
             ) {
-                val primaryBank = settingsRepo.primaryAccountBank
                 val primaryAcc = settingsRepo.primaryAccountNumber
-                val accountDesc = if (primaryAcc.isNullOrBlank()) "Active Account · Strictly 1 account active" else "•••• $primaryAcc · Strictly 1 account active"
+                val accountDesc = if (primaryAcc.isNullOrBlank()) "Single active account" else "•••• $primaryAcc · Single active account"
 
                 SettingsItem(
                     icon = Icons.Default.AccountBalance,
-                    title = primaryBank,
-                    subtitle = "$accountDesc\nTap to change bank account or set account number",
+                    title = "Primary Account",
+                    subtitle = "$accountDesc\nTap to set account number",
                     onClick = {
                         haptic.tap()
-                        editBankName = primaryBank
                         editAccountNumber = primaryAcc ?: ""
                         showEditAccountDialog = true
                     }
@@ -1355,8 +1351,8 @@ if (openPage == "statements" || openPage == "capture") {
 
                 SettingsItem(
                     icon = Icons.Default.PictureAsPdf,
-                    title = "Upload Bank PDF Statement",
-                    subtitle = "Import password-protected PDF e-statements (Canara Bank, SBI, HDFC, ICICI, etc.)",
+                    title = "Upload PDF Statement",
+                    subtitle = "Import password-protected PDF e-statements into your Primary account",
                     onClick = {
                         haptic.tap()
                         sbiPdfPickerLauncher.launch("application/pdf")
@@ -1438,7 +1434,7 @@ if (openPage == "statements" || openPage == "capture") {
                 SettingsItem(
                     icon = Icons.AutoMirrored.Filled.HelpOutline,
                     title = "Password Help for PDF Statements",
-                    subtitle = "• Canara Bank: 1st 4 letters of your name in CAPITAL LETTERS + DOB (DDMM)\n• SBI: Date of Birth (DDMMYY) + last 4 digits of registered mobile"
+                    subtitle = "• 1st 4 letters of your name in CAPITAL LETTERS + DOB (DDMM)\n• Date of Birth (DDMMYY) + last 4 digits of registered mobile"
                 )
             }
 }
@@ -1905,8 +1901,8 @@ if (openPage == "data") {
 
                 SettingsItem(
                     icon = Icons.Default.PictureAsPdf,
-                    title = "Bank PDF Statement",
-                    subtitle = "Import password-protected bank PDF e-statements (Canara Bank, SBI, etc.)"
+                    title = "PDF Statement",
+                    subtitle = "Import password-protected PDF e-statements into your Primary account"
                 )
 
                 SettingsInset(start = 16.dp) {
@@ -2252,36 +2248,26 @@ if (openPage == "health") {
 
     if (showEditAccountDialog) {
         AppDialog(
-            title = "Bank Account",
+            title = "Primary Account",
             onDismiss = {
                 haptic.tap()
                 showEditAccountDialog = false
             },
-            confirmText = "Save Account",
-            confirmEnabled = editBankName.trim().isNotBlank(),
+            confirmText = "Save",
+            confirmEnabled = true,
             onConfirm = {
                 haptic.confirm()
-                viewModel.updatePrimaryAccount(editBankName.trim(), editAccountNumber.trim().ifBlank { null })
+                viewModel.updatePrimaryAccount("Primary", editAccountNumber.trim().ifBlank { null })
                 showEditAccountDialog = false
-                showSnack("Bank account set to ${editBankName.trim()}")
+                showSnack("Primary Account details updated")
             }
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "The app strictly maintains 1 bank account. All transactions and statements are tracked under this account.",
+                    "The app strictly maintains a single Primary Account. All transactions and statements are tracked under this account.",
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedTextField(
-                    value = editBankName,
-                    onValueChange = { editBankName = it.take(40) },
-                    label = { Text("Bank Name") },
-                    placeholder = { Text("e.g. Canara Bank, SBI, HDFC") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(AppRadius.small),
-                    keyboardOptions = KeyboardOptions(capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Words),
-                    modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = editAccountNumber,
@@ -2451,7 +2437,7 @@ if (openPage == "health") {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "Bank e-statements are password protected:\n\n• Canara Bank: 1st 4 letters of your name in CAPITAL LETTERS + DOB (DDMM)\n• SBI: Date of Birth (DDMMYY) + last 4 digits of registered mobile (DDMMYYXXXX)",
+                        "e-Statements are typically password protected by your bank.\n\nCommon password formats include:\n• 1st 4 letters of your name in CAPITAL LETTERS + DOB (DDMM)\n• Date of Birth (DDMMYY) + last 4 digits of registered mobile (DDMMYYXXXX)",
                         fontSize = 13.sp,
                         lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2501,7 +2487,7 @@ if (openPage == "health") {
                                     showSnack("No bank transactions recognized in this PDF.")
                                 } else {
                                     showSnack(
-                                        "${result.bankName} Statement: ${result.newlyInserted} added, ${result.duplicatesSkipped} duplicates skipped."
+                                        "Statement Import: ${result.newlyInserted} added, ${result.duplicatesSkipped} duplicates skipped."
                                     )
                                 }
                                 showSbiPasswordDialog = false

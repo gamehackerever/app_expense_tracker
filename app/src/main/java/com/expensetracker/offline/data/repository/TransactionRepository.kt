@@ -258,27 +258,16 @@ class TransactionRepository(
 
     suspend fun enforceSingleAccountMode() {
         runCatching {
+            val primaryBank = settingsRepo?.primaryAccountBank ?: "Primary"
             val transactions = transactionDao.getRecentTransactions(200)
-            val existingBankPref = settingsRepo?.prefs?.getString(SettingsRepository.KEY_PRIMARY_ACCOUNT_BANK, null)
-            val existingAccPref = settingsRepo?.prefs?.getString(SettingsRepository.KEY_PRIMARY_ACCOUNT_NUMBER, null)
-
-            val bankCandidates = transactions.mapNotNull { it.bankName }.filter { it.isNotBlank() && !it.equals("Bank", ignoreCase = true) }
-            val bestBank = when {
-                existingBankPref != null -> existingBankPref
-                bankCandidates.any { it.contains("Canara", ignoreCase = true) } -> "Canara Bank"
-                bankCandidates.isNotEmpty() -> {
-                    bankCandidates.groupingBy { com.expensetracker.offline.util.AccountNormalizer.canonicalBankName(it) ?: it }
-                        .eachCount().maxByOrNull { it.value }?.key ?: "Canara Bank"
-                }
-                else -> "Canara Bank"
-            }
+            val existingAccPref = settingsRepo?.primaryAccountNumber
 
             val accCandidates = transactions.mapNotNull { it.accountNumber }.filter { it.isNotBlank() }
             val bestAcc = existingAccPref ?: accCandidates.groupingBy { com.expensetracker.offline.util.AccountNormalizer.accountNumber(it) }
                 .eachCount().maxByOrNull { it.value }?.key
 
-            settingsRepo?.setPrimaryAccount(bestBank, bestAcc)
-            transactionDao.unifyAllTransactionsToSingleAccount(bestBank, bestAcc)
+            settingsRepo?.setPrimaryAccount(primaryBank, bestAcc)
+            transactionDao.unifyAllTransactionsToSingleAccount(primaryBank, bestAcc)
             refreshWidget()
         }
     }
@@ -294,11 +283,10 @@ class TransactionRepository(
     }
 
     suspend fun insertTransaction(transaction: TransactionEntity): Long {
-        val primaryBank = settingsRepo?.primaryAccountBank ?: "Canara Bank"
+        val primaryBank = settingsRepo?.primaryAccountBank ?: "Primary"
         val primaryAcc = settingsRepo?.primaryAccountNumber
-        val canonicalBank = com.expensetracker.offline.util.AccountNormalizer.canonicalBankName(transaction.bankName) ?: primaryBank
         val canonicalAcc = com.expensetracker.offline.util.AccountNormalizer.accountNumber(transaction.accountNumber) ?: primaryAcc
-        val normalizedTxn = transaction.copy(bankName = canonicalBank, accountNumber = canonicalAcc)
+        val normalizedTxn = transaction.copy(bankName = primaryBank, accountNumber = canonicalAcc)
 
         var derivedBalance: Long? = null
         val id = database.withTransaction {
@@ -326,7 +314,7 @@ class TransactionRepository(
             context?.let { ctx ->
                 BalanceCache.updateIfNewer(
                     BalanceCache.prefs(ctx),
-                    canonicalBank,
+                    primaryBank,
                     canonicalAcc,
                     balance,
                     normalizedTxn.timestamp
@@ -1241,10 +1229,9 @@ class TransactionRepository(
                 }
             }
 
-            val primaryBank = settingsRepo?.primaryAccountBank ?: "Canara Bank"
+            val primaryBank = settingsRepo?.primaryAccountBank ?: "Primary"
             val primaryAcc = settingsRepo?.primaryAccountNumber
-            val detectedBank = AccountNormalizer.canonicalBankName(parsed.bankName ?: learnedEval.inferredBankName)
-            val finalBankName = if (detectedBank == null || detectedBank.equals("Bank", ignoreCase = true)) primaryBank else primaryBank
+            val finalBankName = primaryBank
             val finalAccountNumber = AccountNormalizer.accountNumber(parsed.accountNumber) ?: primaryAcc
 
             val id = transactionDao.insertTransaction(
