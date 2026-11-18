@@ -42,7 +42,6 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.ShoppingBasket
 import androidx.compose.material.icons.filled.SouthWest
-import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -528,17 +527,9 @@ fun DashboardTransactionCard(
                         Spacer(Modifier.height(4.dp))
                         InlineMeta(
                             icon = if (!transaction.itemsSummary.isNullOrBlank()) Icons.Default.ShoppingBasket else Icons.AutoMirrored.Filled.Notes,
-                            text = if (!transaction.itemsSummary.isNullOrBlank()) detail else "Remarks: $detail",
+                            text = detail,
                             color = colors.onSurfaceVariant,
                             maxLines = DetailMaxLines
-                        )
-                    } else if (!transaction.referenceId.isNullOrBlank() && transaction.source != TransactionSource.MANUAL) {
-                        Spacer(Modifier.height(4.dp))
-                        InlineMeta(
-                            icon = Icons.Default.Tag,
-                            text = "Ref: ${transaction.referenceId}",
-                            color = colors.onSurfaceVariant.copy(alpha = 0.8f),
-                            maxLines = 1
                         )
                     }
 
