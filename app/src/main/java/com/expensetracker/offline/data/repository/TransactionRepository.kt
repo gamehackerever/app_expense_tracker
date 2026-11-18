@@ -542,16 +542,24 @@ class TransactionRepository(
                         }
                     }
 
-                    if (txn.source == TransactionSource.MANUAL || txn.rawContent.isBlank() || txn.rawContent == "Manual Entry") {
-                        // Upgrade "Unspecified" / "Uncategorized" on manual/restored entries if merchant keyword or note matches
+                    if (txn.source == TransactionSource.MANUAL || txn.rawContent.isBlank() || txn.rawContent == "Manual Entry" || txn.rawContent.startsWith("Imported statement:")) {
+                        // Upgrade "Unspecified" / "Uncategorized" on manual/restored/imported entries if merchant keyword or note matches
                         if (txn.type == TransactionType.DEBIT && isCurrentUnspecified) {
+                            val extractedNote = if (txn.note.isNullOrBlank() && txn.rawContent.startsWith("Imported statement:")) {
+                                com.expensetracker.offline.util.SbiPdfParserUtil.extractNoteFromRawLine(txn.rawContent)
+                            } else {
+                                txn.note
+                            }
                             val trueCat = CategoryClassifier.classifySync(
                                 payee = currentPayee,
                                 rawContent = txn.rawContent,
-                                note = txn.note ?: txn.itemsSummary
+                                note = extractedNote ?: txn.itemsSummary
                             )
                             if (trueCat != "Uncategorized" && trueCat != "Unspecified") {
-                                transactionDao.updateTransaction(txn.copy(category = trueCat))
+                                transactionDao.updateTransaction(txn.copy(category = trueCat, note = extractedNote ?: txn.note))
+                                anyHealed = true
+                            } else if (extractedNote != null && txn.note == null) {
+                                transactionDao.updateTransaction(txn.copy(note = extractedNote))
                                 anyHealed = true
                             }
                         }
@@ -1388,14 +1396,22 @@ class TransactionRepository(
                 val isUnspecified = txn.category.equals("Unspecified", ignoreCase = true) || txn.category.equals("Uncategorized", ignoreCase = true)
                 if (!isUnspecified) continue
 
+                val extractedNote = if (txn.note.isNullOrBlank() && txn.rawContent.startsWith("Imported statement:")) {
+                    com.expensetracker.offline.util.SbiPdfParserUtil.extractNoteFromRawLine(txn.rawContent)
+                } else {
+                    txn.note
+                }
+
                 val smartCat = CategoryClassifier.classifySync(
                     payee = txn.payee,
                     rawContent = txn.rawContent,
-                    note = txn.note ?: txn.itemsSummary
+                    note = extractedNote ?: txn.itemsSummary
                 )
                 if (smartCat != "Uncategorized" && smartCat != "Unspecified") {
-                    transactionDao.updateTransaction(txn.copy(category = smartCat))
+                    transactionDao.updateTransaction(txn.copy(category = smartCat, note = extractedNote ?: txn.note))
                     count++
+                } else if (extractedNote != null && txn.note == null) {
+                    transactionDao.updateTransaction(txn.copy(note = extractedNote))
                 }
             }
         }
@@ -1405,7 +1421,7 @@ class TransactionRepository(
 
     companion object {
         /** Bump when the parser/categoriser changes so the next launch repairs old rows once. */
-        private const val HEAL_VERSION = 3
+        private const val HEAL_VERSION = 4
         private const val HEAL_INTERVAL_MS = 20L * 60_000L
 
         const val REVIEW_THRESHOLD_PAISE = 100_000L

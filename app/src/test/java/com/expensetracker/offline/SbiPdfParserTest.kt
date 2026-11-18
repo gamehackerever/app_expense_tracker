@@ -150,4 +150,46 @@ class SbiPdfParserTest {
         assertEquals("JOHN DOE", rows[4].payee)
         assertEquals("413827456789", rows[4].refNo)
     }
+
+    @Test
+    fun testBookMyShowAndPenStatementCategorization() {
+        val statement = """
+            CANARA BANK
+            A/c No: 1234101012345
+            Date Description Ref No. Debit Credit Balance
+            15/05/2024 UPI/413928567890/DR/BOOKMYSHOW/CNRB/bookmyshow@icici/tickets 500.00 11,196.00
+            16/05/2024 UPI/414029678901/DR/RAJU/CNRB/raju@okaxis/pen 20.00 11,176.00
+            17/05/2024 POS 00123456 BIGTREE ENTERTAINMENT MUMBAI 650.00 10,526.00
+            18/05/2024 UPI/414130789012/DR/SRI_KRISHNA_STATIONERY/CNRB/stationery@sbi 150.00 10,376.00
+        """.trimIndent()
+
+        val rows = SbiPdfParserUtil.parseSbiStatementText(statement)
+        assertEquals(4, rows.size)
+
+        // Row 1: BookMyShow -> Entertainment
+        assertEquals("BOOKMYSHOW", rows[0].payee)
+        assertEquals("tickets", rows[0].note)
+        val cat1 = com.expensetracker.offline.engine.categorizer.CategoryClassifier.classifySync(rows[0].payee, rows[0].description, rows[0].note)
+        assertEquals("Entertainment", cat1)
+
+        // Row 2: Pen -> Education
+        assertEquals("RAJU", rows[1].payee)
+        assertEquals("pen", rows[1].note)
+        val cat2 = com.expensetracker.offline.engine.categorizer.CategoryClassifier.classifySync(rows[1].payee, rows[1].description, rows[1].note)
+        assertEquals("Education", cat2)
+
+        // Row 3: Bigtree Entertainment -> Entertainment
+        assertEquals("BIGTREE ENTERTAINMENT MUMBAI", rows[2].payee)
+        val cat3 = com.expensetracker.offline.engine.categorizer.CategoryClassifier.classifySync(rows[2].payee, rows[2].description, rows[2].note)
+        assertEquals("Entertainment", cat3)
+
+        // Row 4: Stationery -> Education
+        assertEquals("SRI KRISHNA STATIONERY", rows[3].payee)
+        val cat4 = com.expensetracker.offline.engine.categorizer.CategoryClassifier.classifySync(rows[3].payee, rows[3].description, rows[3].note)
+        assertEquals("Education", cat4)
+
+        // Verify note extraction from rawLine
+        assertEquals("pen", SbiPdfParserUtil.extractNoteFromRawLine(rows[1].rawLine))
+        assertEquals("tickets", SbiPdfParserUtil.extractNoteFromRawLine(rows[0].rawLine))
+    }
 }

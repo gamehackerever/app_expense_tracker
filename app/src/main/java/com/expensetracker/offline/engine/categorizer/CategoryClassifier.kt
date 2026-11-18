@@ -195,13 +195,15 @@ object CategoryClassifier {
             "et prime", "moneycontrol pro"
         ),
         "Entertainment" to createRegex(
+            "book\\s*my\\s*show", "bookmyshow", "bigtree\\s*(?:entertainment)?", "bigtree", "bms",
             "pvr", "inox", "pvr inox", "cinepolis", "miraj cinemas", "carnival cinemas",
-            "ags cinemas", "sathyam cinemas", "spi cinemas", "bookmyshow", "paytm insider",
-            "district", "steam", "playstation", "psn", "xbox", "epic games", "nintendo",
+            "ags cinemas", "sathyam cinemas", "spi cinemas", "paytm insider", "ticketnew",
+            "insider\\.in", "district", "steam", "playstation", "psn", "xbox", "epic games", "nintendo",
             "riot games", "krafton", "bgmi", "wonderla", "imagicaa", "esselworld", "ramoji",
             "snow world", "veega land", "smaash", "timezone", "funcity", "amoeba", "bowling",
             "go karting", "laser tag", "playo", "hudle", "turf", "badminton court", "box cricket",
-            "futsal", "gaming", "cinema", "movies", "theatre", "multiplex", "concert"
+            "futsal", "gaming", "cinema", "movies?", "theatre", "multiplex", "concert",
+            "movie\\s*tickets?", "cinema\\s*tickets?", "theatre\\s*tickets?", "concert\\s*tickets?", "show\\s*tickets?"
         ),
         "Personal Care" to createRegex(
             "nykaa", "purplle", "tira", "sephora", "mac cosmetics", "sugar cosmetics",
@@ -213,17 +215,28 @@ object CategoryClassifier {
             "facial", "manicure", "pedicure", "cosmetics", "skincare"
         ),
         "Education" to createRegex(
-            "physicswallah", "pw live", "allen career", "aakash institute", "resonance",
+            "pens?", "ball\\s*pens?", "gel\\s*pens?", "fountain\\s*pens?", "ink\\s*pens?", "pilot\\s*pens?", "sketch\\s*pens?",
+            "pencils?", "lead\\s*pencils?", "colour\\s*pencils?", "color\\s*pencils?",
+            "stationery", "stationary", "staionery", "stationers?", "stationery\\s*mart", "stationery\\s*shop", "stationery\\s*store",
+            "notebooks?", "notepads?", "registers?", "erasers?", "sharpeners?", "rulers?", "geometry\\s*box", "compass",
+            "highlighters?", "markers?", "whiteboard\\s*markers?", "staplers?", "staple\\s*pins?", "fevicol", "glue\\s*stick", "paper\\s*clips?",
+            "chart\\s*papers?", "a4\\s*sheets?", "a4\\s*papers?", "printer\\s*papers?", "drawing\\s*books?", "craft\\s*papers?",
+            "classmate", "camlin", "kokuyo", "doms", "apsara", "nataraj", "reynolds", "flair\\s*(?:pen)?", "luxor", "uniball", "staedtler", "faber\\s*castell", "parker\\s*(?:pen)?",
+            "xerox", "photostat", "printouts?", "spiral\\s*binding", "lamination", "photocopy",
+            "bookstore", "book\\s*store", "book\\s*depot", "book\\s*stall", "book\\s*shop", "crossword\\s*bookstores?", "sapna\\s*book", "dc\\s*books", "mathrubhumi\\s*books", "higginbothams",
+            "crossword", "scholastic",
+            "physicswallah", "pw\\b", "pw live", "allen career", "aakash institute", "resonance",
             "fiitjee", "motion education", "narayana group", "sri chaitanya", "brilliant pala",
             "xylem learning", "eduport", "entri app", "adda247", "testbook", "oliveboard",
             "byjus", "byju's", "unacademy", "vedantu", "toppr", "extramarks", "doubtnut",
             "upgrad", "scaler", "great learning", "simplilearn", "masai school", "nxtwave",
             "coding ninjas", "coursera", "udemy", "edx", "pluralsight", "skillshare", "datacamp",
-            "leetcode", "duolingo", "sapna book", "dc books", "mathrubhumi books", "higginbothams",
-            "crossword", "scholastic", "nta exam", "upsc", "ssc fee", "ibps", "gate exam",
-            "cat exam", "icai", "school fee", "college fee", "university fee", "tuition",
-            "coaching", "academy", "institute", "semester fee", "exam fee", "admission fee",
-            "bookstore", "book stall", "stationery", "xerox", "photocopy"
+            "leetcode", "duolingo", "nta exam", "upsc", "ssc fee", "ibps", "gate exam",
+            "cat exam", "icai", "school\\s*fees?", "college\\s*fees?", "university\\s*fees?", "tuition", "tution",
+            "coaching", "academy", "institute", "semester\\s*fees?", "exam\\s*fees?", "admission\\s*fees?",
+            "hostel\\s*fees?", "library\\s*fees?", "course\\s*fees?", "training\\s*fees?", "education", "schools?",
+            "colleges?", "university", "vidyalaya", "gurukul", "preschool", "kindergarten",
+            "daycare", "creche"
         ),
         "Shopping" to createRegex(
             "amazon", "amzn", "flipkart", "myntra", "meesho", "ajio", "zara", "h&m", "uniqlo",
@@ -350,14 +363,36 @@ object CategoryClassifier {
             "microsoft 365", "chatgpt", "openai", "claude", "anthropic", "canva", "adobe"
         ),
         "Entertainment" to createRegex(
-            "pvr inox", "cinepolis", "bookmyshow", "steam", "playstation", "wonderla"
+            "book\\s*my\\s*show", "bookmyshow", "bigtree\\s*(?:entertainment)?", "bms", "ticketnew",
+            "paytm\\s*insider", "insider\\.in", "district", "pvr", "inox", "pvr\\s*inox", "cinepolis",
+            "miraj\\s*cinemas?", "carnival\\s*cinemas?", "wave\\s*cinemas?", "imax", "cinemas?",
+            "theatres?", "multiplex", "movie\\s*tickets?", "cinema\\s*tickets?", "theatre\\s*tickets?",
+            "concert\\s*tickets?", "show\\s*tickets?", "movies?", "wonderla", "imagicaa?", "essel\\s*world",
+            "smaaash", "play\\s*arena", "timezone", "mystery\\s*rooms", "trampoline\\s*park",
+            "steam", "playstation", "sony\\s*interactive", "xbox", "nintendo", "epic\\s*games",
+            "riot\\s*games", "blizzard", "ubisoft", "ea\\s*games", "krafton", "bgmi", "supercell",
+            "roblox", "discord", "gaming\\s*zone", "arcade", "snooker", "bowling", "standup\\s*comedy"
         ),
         "Personal Care" to createRegex(
-            "nykaa", "purplle", "sephora", "mamaearth", "minimalist", "lakme salon", "naturals salon"
+            "nykaa", "purplle", "sephora", "mamaearth", "minimalist", "lakme\\s*salon", "naturals\\s*salon", "enrich\\s*salon", "jawed\\s*habib",
+            "salon", "saloon", "parlour", "parlor", "haircut", "barber", "spa", "grooming", "facial", "massage", "shave", "skincare", "cosmetics"
         ),
         "Education" to createRegex(
-            "physicswallah", "allen career", "aakash institute", "brilliant pala", "xylem learning",
-            "eduport", "entri app", "adda247", "testbook", "unacademy", "coursera", "udemy", "dc books"
+            "pens?", "ball\\s*pens?", "gel\\s*pens?", "fountain\\s*pens?", "ink\\s*pens?", "pilot\\s*pens?", "sketch\\s*pens?",
+            "pencils?", "lead\\s*pencils?", "colour\\s*pencils?", "color\\s*pencils?",
+            "stationery", "stationary", "staionery", "stationers?", "stationery\\s*mart", "stationery\\s*shop", "stationery\\s*store",
+            "notebooks?", "notepads?", "registers?", "erasers?", "sharpeners?", "rulers?", "geometry\\s*box", "compass",
+            "highlighters?", "markers?", "whiteboard\\s*markers?", "staplers?", "staple\\s*pins?", "fevicol", "glue\\s*stick", "paper\\s*clips?",
+            "chart\\s*papers?", "a4\\s*sheets?", "a4\\s*papers?", "printer\\s*papers?", "drawing\\s*books?", "craft\\s*papers?",
+            "book\\s*store", "book\\s*depot", "book\\s*stall", "book\\s*shop", "crossword\\s*bookstores?", "sapna\\s*book\\s*house", "higginbothams", "dc\\s*books",
+            "xerox", "photostat", "printouts?", "spiral\\s*binding", "lamination",
+            "classmate", "camlin", "kokuyo", "doms", "apsara", "nataraj", "reynolds", "flair\\s*(?:pen)?", "luxor", "uniball", "staedtler", "faber\\s*castell", "parker\\s*(?:pen)?",
+            "tuition", "tution", "coaching", "academy", "vidyalaya", "vidyapeeth", "gurukul", "schools?", "colleges?", "university", "preschool", "kindergarten", "daycare",
+            "school\\s*fees?", "college\\s*fees?", "tuition\\s*fees?", "tution\\s*fees?", "coaching\\s*fees?", "exam\\s*fees?", "admission\\s*fees?", "semester\\s*fees?", "hostel\\s*fees?",
+            "physicswallah", "pw\\b", "allen\\s*(?:career)?", "aakash\\s*(?:institute)?", "fiitjee", "resonance", "pace\\s*iit", "sri\\s*chaitanya", "narayana\\s*educational",
+            "brilliant\\s*pala", "xylem\\s*learning", "eduport", "entri\\s*app", "adda247", "testbook", "unacademy", "byjus?", "vedantu",
+            "coursera", "udemy", "edx", "skillshare", "upgrad", "simplilearn", "great\\s*learning", "scaler\\s*academy", "coding\\s*ninjas", "geeksforgeeks", "leetcode",
+            "upsc", "neet", "jee\\s*(?:main|advanced)", "gate\\s*exam", "cat\\s*exam", "clat", "ielts", "toefl", "gre\\s*exam", "gmat", "textbooks?", "study\\s*materials?"
         ),
         "Shopping" to createRegex(
             "amazon", "flipkart", "myntra", "meesho", "ajio", "zara", "uniqlo", "decathlon",
@@ -368,14 +403,16 @@ object CategoryClassifier {
             "firstcry", "kalyan silks", "jayalakshmi", "seemas", "pulimoottil"
         ),
         "Health" to createRegex(
-            "apollo pharmacy", "apollo hospitals", "pharmeasy", "tata 1mg", "netmeds", "medplus",
-            "lal pathlabs", "thyrocare", "ddrc", "manipal hospital", "fortis", "amrita hospital",
-            "rajagiri", "lakeshore", "baby memorial", "cultfit", "healthkart", "muscleblaze"
+            "apollo\\s*pharmacy", "apollo\\s*hospitals?", "pharmeasy", "tata\\s*1mg", "1mg", "netmeds", "medplus",
+            "lal\\s*pathlabs", "thyrocare", "ddrc", "manipal\\s*hospital", "fortis", "amrita\\s*hospital",
+            "rajagiri", "lakeshore", "baby\\s*memorial", "cultfit", "healthkart", "muscleblaze",
+            "pharmacy", "medicals?", "medicine", "medicines", "tablets?", "syrup", "clinic", "hospital", "doctor",
+            "dentist", "dental", "pathology", "diagnostics", "blood\\s*test", "lab\\s*test", "opticals?", "eye\\s*care", "scans?"
         ),
         "Investments" to createRegex(
-            "zerodha", "groww", "upstox", "angel one", "paytm money", "indmoney", "kuvera",
-            "smallcase", "geojit", "cams", "kfintech", "sbi mf", "hdfc mf", "parag parikh",
-            "jar app", "gullak", "safegold", "ksfe"
+            "zerodha", "groww", "upstox", "angel\\s*one", "paytm\\s*money", "indmoney", "kuvera",
+            "smallcase", "geojit", "cams", "kfintech", "sbi\\s*mf", "hdfc\\s*mf", "parag\\s*parikh",
+            "jar\\s*app", "gullak", "safegold", "ksfe", "mutual\\s*funds?", "sip", "stocks?", "shares?", "demat"
         ),
         "Gifts & Festivals" to createRegex(
             "ferns n petals", "floweraura", "guruvayur", "sabarimala", "travancore devaswom",

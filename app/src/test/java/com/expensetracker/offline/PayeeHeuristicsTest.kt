@@ -57,6 +57,30 @@ class PayeeHeuristicsTest {
         assertEquals("Food & Dining", CategoryClassifier.classifySync("Bangalore Puffs & Bakes", "Bangalore Puffs & Bakes"))
     }
 
+    @Test fun smartLayer_bookMyShow_classifiedAsEntertainment() {
+        assertEquals("Entertainment", CategoryClassifier.classifySync("BookMyShow", "UPI/412345/BOOKMYSHOW/CNRB"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Book My Show", "UPI/412345/BOOK_MY_SHOW/CNRB"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Bigtree Entertainment", "POS 412345 BIGTREE ENTERTAINMENT MUMBAI"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Bigtree", "INB/BIGTREE/412345"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("BMS", "UPI/412345/BMS/ICIC"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Raju", "Paid to Raju", note = "BookMyShow"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Raju", "Paid to Raju", note = "book my show"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Deepak", "Paid to Deepak", note = "movie tickets"))
+    }
+
+    @Test fun smartLayer_penAndStationery_classifiedAsEducation() {
+        assertEquals("Education", CategoryClassifier.classifySync("Raju", "UPI/412345/DR/RAJU/CNRB/raju@okaxis/pen", note = "pen"))
+        assertEquals("Education", CategoryClassifier.classifySync("Vendor", "Paid 20", note = "pens"))
+        assertEquals("Education", CategoryClassifier.classifySync("Shop", "Paid 50", note = "pencils"))
+        assertEquals("Education", CategoryClassifier.classifySync("Store", "Paid 100", note = "notebook"))
+        assertEquals("Education", CategoryClassifier.classifySync("Sri Krishna Stationery", "UPI/412345/SRI_KRISHNA_STATIONERY"))
+        assertEquals("Education", CategoryClassifier.classifySync("Apsara Pen House", "POS 412345 APSARA PEN HOUSE"))
+        assertEquals("Education", CategoryClassifier.classifySync("Vendor", "Paid 80", note = "staionery"))
+        assertEquals("Education", CategoryClassifier.classifySync("Vendor", "Paid 80", note = "stationery"))
+        assertEquals("Education", CategoryClassifier.classifySync("Student Xerox", "UPI/412345/STUDENT_XEROX"))
+        assertEquals("Education", CategoryClassifier.classifySync("Vendor", "Paid 30", note = "xerox and printout"))
+    }
+
     @Test fun smartLayer_unclassifiablePersonWithoutNote_staysUncategorized() {
         assertEquals("Uncategorized", CategoryClassifier.classifySync("Ramesh Kumar", "UPI/412345/Ramesh/CNRB", note = null))
     }

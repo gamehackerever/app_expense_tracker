@@ -36,7 +36,10 @@ object PayeeHeuristics {
         Regex("(?i)\\b(momos|momo|momoes)\\b") to "momos",
         Regex("(?i)\\b(dosaa|dose|dosai)\\b") to "dosa",
         Regex("(?i)\\b(idly|iddly)\\b") to "idli",
-        Regex("(?i)\\b(stationary|stationery)\\b") to "stationery",
+        Regex("(?i)\\b(stationary|stationery|staionery)\\b") to "stationery",
+        Regex("(?i)\\b(tution|tuition|tutions)\\b") to "tuition",
+        Regex("(?i)\\b(book\\s*my\\s*show|bookmyshow|bigtree)\\b") to "bookmyshow",
+        Regex("(?i)\\b(xerox|zerox|photostat)\\b") to "xerox",
         Regex("(?i)\\b(recharg|rechargee)\\b") to "recharge",
         Regex("(?i)\\b(hair\\s*cutt?|haircut)\\b") to "haircut",
         Regex("(?i)\\b(vegitables?|vegitable|vegitbl)\\b") to "vegetables"
@@ -65,7 +68,10 @@ object PayeeHeuristics {
         "petrol" to "Fuel & Fastag", "diesel" to "Fuel & Fastag", "fastag" to "Fuel & Fastag",
         "electricity" to "Bills & Utilities", "broadband" to "Bills & Utilities",
         "haircut" to "Personal Care", "salon" to "Personal Care",
-        "stationery" to "Education", "tuition" to "Education"
+        "stationery" to "Education", "tuition" to "Education", "coaching" to "Education",
+        "school" to "Education", "college" to "Education",
+        "bookmyshow" to "Entertainment", "cinema" to "Entertainment", "theatre" to "Entertainment",
+        "movie" to "Entertainment"
     )
 
     /** One-letter typo in a long word ("Biriyani" is handled by [canonicalize]; "Restorent" lands here). */
@@ -114,8 +120,8 @@ object PayeeHeuristics {
         Regex("(?i)\\b(petro|bunk|filling|fuels?|petrol|diesel|cng|fastag|toll|parking)\\b") to "Fuel & Fastag",
         Regex("(?i)\\b(beauty|unisex|saloon|salon|parlour|hair|barbers?|spa|haircut|grooming|facial)\\b") to "Personal Care",
         Regex("(?i)\\b(rent|flat\\s?rent|house\\s?rent|room\\s?rent|pg\\s?rent|hostel\\s?rent|maintenance|society\\s?maintenance)\\b") to "Rent & Housing",
-        Regex("(?i)\\b(game\\s?zone|arcade|snooker|turf|cinemas?|theatre|movies?|show)\\b") to "Entertainment",
-        Regex("(?i)\\b(tuition|academy|school|college|institute|stationery|books?|xerox|photostat|fees?|coaching)\\b") to "Education"
+        Regex("(?i)\\b(game\\s?zone|arcade|snooker|turf|cinemas?|theatres?|movies?|show|bookmyshow|bigtree|pvr|inox|cinepolis|multiplex|imax|amusement|wonderla)\\b") to "Entertainment",
+        Regex("(?i)\\b(tuition|tution|academy|school|college|institute|stationery|stationary|staionery|books?|xerox|photostat|fees?|coaching|pens?|pencils?|notebooks?|notepads?|registers?|classmate|camlin|doms|apsara|nataraj|reynolds)\\b") to "Education"
     )
 
     /** Category implied by generic shop-type words, or null when the name says nothing. */

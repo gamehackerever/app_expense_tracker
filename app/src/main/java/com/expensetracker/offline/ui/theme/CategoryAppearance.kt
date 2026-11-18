@@ -92,7 +92,7 @@ private enum class CategoryKind(val color: Color?, val icon: ImageVector, val ke
     ),
     ENTERTAINMENT(
         Color(0xFFFF1744), Icons.Default.Movie, // Vivid Crimson Red
-        setOf("entertainment", "movie", "movies", "games", "gaming", "pvr", "inox", "bookmyshow", "cinema", "concert", "wonderla")
+        setOf("entertainment", "movie", "movies", "games", "gaming", "pvr", "inox", "bookmyshow", "bigtree", "bms", "cinepolis", "cinema", "cinemas", "theatre", "theatres", "concert", "wonderla", "ticket", "tickets", "steam", "playstation")
     ),
     EMI_LOANS(
         Color(0xFFFF9100), Icons.Default.CreditScore, // Vivid Amber Gold
@@ -137,7 +137,7 @@ private enum class CategoryKind(val color: Color?, val icon: ImageVector, val ke
     ),
     EDUCATION(
         Color(0xFF00C853), Icons.Default.School, // Vivid Green
-        setOf("education", "school", "tuition", "course", "courses", "books", "study", "college", "exam", "coaching", "physicswallah", "allen", "unacademy", "stationery")
+        setOf("education", "school", "tuition", "tution", "course", "courses", "books", "study", "college", "exam", "coaching", "physicswallah", "allen", "unacademy", "stationery", "stationary", "staionery", "pen", "pens", "pencil", "pencils", "notebook", "notebooks", "xerox", "photostat")
     ),
     INVESTMENTS(
         Color(0xFF00C853), Icons.AutoMirrored.Filled.TrendingUp, // Vibrant Green

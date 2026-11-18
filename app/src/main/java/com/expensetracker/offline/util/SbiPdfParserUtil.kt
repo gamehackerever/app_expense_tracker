@@ -333,6 +333,23 @@ object SbiPdfParserUtil {
         val note: String? = null
     )
 
+    fun parseNarration(rawLine: String, type: TransactionType = TransactionType.DEBIT): ParsedNarration {
+        val clean = rawLine.removePrefix("Imported statement:").trim()
+        return extractPayeeAndRef(clean, type)
+    }
+
+    fun extractNoteFromRawLine(rawLine: String): String? {
+        val clean = rawLine.removePrefix("Imported statement:").trim()
+        val amountMatches = findAmounts(clean)
+        val narration = if (amountMatches.isNotEmpty()) {
+            clean.substring(0, amountMatches.first().second).trim()
+        } else {
+            clean
+        }
+        val note = extractPayeeAndRef(narration, TransactionType.DEBIT).note ?: return null
+        return note.replace(Regex("""\s+\d+[.,\d]*.*$"""), "").trim().ifBlank { null }
+    }
+
     /**
      * Extracts merchant/payee name, reference number, and user note from narration.
      * Supports SBI, Canara Bank, and all standard NPCI UPI / IMPS / NEFT formats.
@@ -435,6 +452,18 @@ object SbiPdfParserUtil {
             cleaned.contains("BIL/ONL", ignoreCase = true) || cleaned.contains("BIL/", ignoreCase = true) -> {
                 val billSegments = cleaned.split(Regex("[/\\-]")).filter { it.isNotBlank() && !it.all { c -> c.isDigit() } && !it.equals("BIL", ignoreCase = true) && !it.equals("ONL", ignoreCase = true) }
                 billSegments.firstOrNull() ?: "Bill Payment"
+            }
+            cleaned.contains("E-COM", ignoreCase = true) || cleaned.contains("INB/", ignoreCase = true) || cleaned.contains("MB/", ignoreCase = true) -> {
+                val ecomSegments = cleaned.split(Regex("[/\\-]")).filter {
+                    it.isNotBlank() && !it.all { c -> c.isDigit() } &&
+                    !it.equals("E-COM", ignoreCase = true) &&
+                    !it.equals("E-COMMERCE", ignoreCase = true) &&
+                    !it.equals("ECOM", ignoreCase = true) &&
+                    !it.equals("INB", ignoreCase = true) &&
+                    !it.equals("MB", ignoreCase = true) &&
+                    !it.equals("NET", ignoreCase = true)
+                }
+                ecomSegments.firstOrNull() ?: "Online Purchase"
             }
             cleaned.contains("NEFT/", ignoreCase = true) -> {
                 val neftSegments = cleaned.split(Regex("[/\\-]")).filter { it.isNotBlank() && !it.all { c -> c.isDigit() } && !it.equals("NEFT", ignoreCase = true) && it.length > 4 }
@@ -589,8 +618,8 @@ object SbiPdfParserUtil {
             }
             processedKeys.add(inBatchKey)
 
-            // Auto-categorize using CategoryClassifier smart layer; evaluate extracted note if present, otherwise description
-            val rawCategory = CategoryClassifier.classifySync(row.payee, row.description, note = row.note ?: row.description)
+            // Auto-categorize using CategoryClassifier smart layer; evaluate extracted note if present, then payee & description
+            val rawCategory = CategoryClassifier.classifySync(row.payee, row.description, note = row.note)
             val effectiveCategory = if (row.type == TransactionType.DEBIT &&
                 (rawCategory.isBlank() || rawCategory.equals("Transfer", ignoreCase = true) || rawCategory.equals("Uncategorized", ignoreCase = true) || rawCategory.equals("Unspecified", ignoreCase = true))
             ) {
