@@ -290,61 +290,6 @@ internal fun CategoryBreakdownCard(
             modifier = Modifier
                 .padding(horizontal = AppSpacing.cardPadding, vertical = 16.dp)
         ) {
-            // Top Category Highlight Header
-            val topCategory = remember(positiveCategories) { positiveCategories.maxByOrNull { it.totalSpent } }
-            if (topCategory != null && grandTotal > 0L) {
-                val topCatColor = getCategoryColor(topCategory.category)
-                val topPct = (topCategory.totalSpent.toDouble() / grandTotal.toDouble() * 100.0).roundToInt()
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(AppRadius.medium))
-                        .quietClickable {
-                            haptic.tap()
-                            selectedCategoryForPie = if (selectedCategoryForPie == topCategory.category) null else topCategory.category
-                        },
-                    color = topCatColor.copy(alpha = 0.08f),
-                    border = BorderStroke(1.dp, topCatColor.copy(alpha = 0.28f)),
-                    shape = RoundedCornerShape(AppRadius.medium)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CategoryGlyphBox(
-                            category = topCategory.category,
-                            categoryColor = topCatColor,
-                            size = 34.dp
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "TOP SPENDING CATEGORY",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = topCatColor,
-                                letterSpacing = 0.5.sp
-                            )
-                            Text(
-                                text = "${topCategory.category} · $topPct% of spend",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        Text(
-                            text = formatRupees(topCategory.totalSpent),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(10.dp))
-            }
-
             if (positiveCategories.isNotEmpty() && grandTotal > 0L) {
                 // Interactive Category Pie / Donut Chart
                 CategoryPieChart(

@@ -49,6 +49,17 @@ data class SbiImportResult(
 
 object SbiPdfParserUtil {
 
+    private val DATE_TIME_FORMATS = listOf(
+        "dd MMM yyyy HH:mm:ss", "d MMM yyyy HH:mm:ss", "dd-MMM-yyyy HH:mm:ss", "d-MMM-yyyy HH:mm:ss",
+        "dd/MM/yyyy HH:mm:ss", "d/M/yyyy HH:mm:ss", "dd-MM-yyyy HH:mm:ss", "d-M-yyyy HH:mm:ss",
+        "dd MMM yyyy hh:mm:ss a", "d MMM yyyy hh:mm:ss a", "dd-MMM-yyyy hh:mm:ss a", "d-MMM-yyyy hh:mm:ss a",
+        "dd/MM/yyyy hh:mm:ss a", "d/M/yyyy hh:mm:ss a", "dd-MM-yyyy hh:mm:ss a", "d-M-yyyy hh:mm:ss a",
+        "dd MMM yyyy HH:mm", "d MMM yyyy HH:mm", "dd-MMM-yyyy HH:mm", "d-MMM-yyyy HH:mm",
+        "dd/MM/yyyy HH:mm", "d/M/yyyy HH:mm", "dd-MM-yyyy HH:mm", "d-M-yyyy HH:mm",
+        "dd MMM yyyy hh:mm a", "d MMM yyyy hh:mm a", "dd-MMM-yyyy hh:mm a", "d-MMM-yyyy hh:mm a",
+        "dd/MM/yyyy hh:mm a", "d/M/yyyy hh:mm a", "dd-MM-yyyy hh:mm a", "d-M-yyyy hh:mm a"
+    )
+
     private val DATE_FORMATS = listOf(
         "dd MMM yyyy", "d MMM yyyy", "dd-MMM-yyyy", "d-MMM-yyyy",
         "dd/MM/yyyy", "d/M/yyyy", "dd-MM-yyyy", "d-M-yyyy",
@@ -62,7 +73,7 @@ object SbiPdfParserUtil {
 
     // Identifies line starting with Txn Date (and optional Value Date)
     private val DATE_START_REGEX = Regex(
-        """^(?<date>\d{1,2}(?:[\s/-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*|[/.-]\d{1,2})(?:[\s/-]\d{2,4})?)(?:\s+(?<vdate>\d{1,2}(?:[\s/-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*|[/.-]\d{1,2})(?:[\s/-]\d{2,4})?))?\s+(?<rest>.*)$""",
+        """^(?<date>\d{1,2}(?:[\s/-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*|[/.-]\d{1,2})(?:[\s/-]\d{2,4})?(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM|am|pm))?)?)(?:\s+(?<vdate>\d{1,2}(?:[\s/-](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*|[/.-]\d{1,2})(?:[\s/-]\d{2,4})?(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM|am|pm))?)?))?\s+(?<rest>.*)$""",
         RegexOption.IGNORE_CASE
     )
 
@@ -467,7 +478,16 @@ object SbiPdfParserUtil {
     }
 
     private fun parseDateToMillis(dateStr: String): Long? {
-        val clean = dateStr.trim().replace('-', ' ').replace('/', ' ').replace('.', ' ')
+        val trimmed = dateStr.trim()
+        val clean = trimmed.replace('-', ' ').replace('/', ' ').replace('.', ' ')
+        for (format in DATE_TIME_FORMATS) {
+            try {
+                val cleanFmt = format.replace('-', ' ').replace('/', ' ').replace('.', ' ')
+                val sdf = SimpleDateFormat(cleanFmt, Locale.US).apply { isLenient = false }
+                val parsed = sdf.parse(clean)
+                if (parsed != null) return parsed.time
+            } catch (_: Exception) {}
+        }
         for (format in DATE_FORMATS) {
             try {
                 val cleanFmt = format.replace('-', ' ').replace('/', ' ').replace('.', ' ')
