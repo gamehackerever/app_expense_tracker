@@ -229,7 +229,8 @@ class TransactionRepository(
         return transactionDao.searchAndFilterTransactionsFlow(escaped, category, startTime, limit)
     }
 
-    suspend fun updateTransaction(transaction: TransactionEntity) {
+    suspend fun updateTransaction(transaction: TransactionEntity, propagateToUnspecified: Boolean = true): Int {
+        var propagatedCount = 0
         database.withTransaction {
             val before = transactionDao.getTransactionById(transaction.id)
             // Recompute the derived account balance from the pre-update contribution so edits
@@ -242,6 +243,16 @@ class TransactionRepository(
             } else transaction
             transactionDao.updateTransaction(effectiveTxn)
             setOfNotNull(before?.linkedDebtId, transaction.linkedDebtId).forEach { reconcileDebt(it) }
+
+            // Active learning cluster propagation: update other unclassified transactions to this payee
+            if (propagateToUnspecified &&
+                !CategoryClassifier.isGenericPayee(transaction.payee) &&
+                !transaction.category.equals("Unspecified", ignoreCase = true) &&
+                !transaction.category.equals("Uncategorized", ignoreCase = true) &&
+                !transaction.category.equals("Transfer", ignoreCase = true)
+            ) {
+                propagatedCount = transactionDao.categorizeUnspecifiedByPayee(transaction.payee, transaction.category)
+            }
         }
         if (transaction.rawContent.isNotBlank() && transaction.rawContent != "Manual Entry") {
             SmsPatternLearner.learnApprovedReview(
@@ -253,7 +264,24 @@ class TransactionRepository(
                 resolvedBankName = transaction.bankName
             )
         }
+        learnCategoryRule(transaction.payee, transaction.category)
         refreshWidget()
+        return propagatedCount
+    }
+
+    /**
+     * Propagates a category to all other unclassified transactions matching the same payee,
+     * learns the rule in the database, invalidates the classifier cache, and updates the widget.
+     * Returns the count of transactions upgraded.
+     */
+    suspend fun propagateCategoryToUnspecified(payee: String, category: String): Int = withContext(Dispatchers.IO) {
+        if (CategoryClassifier.isGenericPayee(payee) || category.equals("Unspecified", ignoreCase = true) || category.equals("Uncategorized", ignoreCase = true)) {
+            return@withContext 0
+        }
+        val count = transactionDao.categorizeUnspecifiedByPayee(payee, category)
+        learnCategoryRule(payee, category)
+        if (count > 0) refreshWidget()
+        count
     }
 
     suspend fun enforceSingleAccountMode() {
@@ -553,7 +581,9 @@ class TransactionRepository(
                             val trueCat = CategoryClassifier.classifySync(
                                 payee = currentPayee,
                                 rawContent = txn.rawContent,
-                                note = extractedNote ?: txn.itemsSummary
+                                note = extractedNote ?: txn.itemsSummary,
+                                amountPaise = txn.amount,
+                                timestamp = txn.timestamp
                             )
                             if (trueCat != "Uncategorized" && trueCat != "Unspecified") {
                                 transactionDao.updateTransaction(txn.copy(category = trueCat, note = extractedNote ?: txn.note))
@@ -585,7 +615,9 @@ class TransactionRepository(
                     val trueCat = CategoryClassifier.classifySync(
                         payee = healedPayee,
                         rawContent = txn.rawContent,
-                        note = txn.note ?: txn.itemsSummary
+                        note = txn.note ?: txn.itemsSummary,
+                        amountPaise = txn.amount,
+                        timestamp = txn.timestamp
                     )
 
                     val healedCat = when {
@@ -713,7 +745,9 @@ class TransactionRepository(
             rawContent = rawContent,
             ruleDao = categoryRuleDao,
             note = note,
-            itemsSummary = itemsSummary
+            itemsSummary = itemsSummary,
+            amountPaise = amountPaise,
+            timestamp = timestampMillis
         )
         if (primary != "Uncategorized" && primary != "Unspecified") return primary
         if (CategoryClassifier.isGenericPayee(payee) && note.isNullOrBlank() && itemsSummary.isNullOrBlank()) return "Unspecified"
@@ -1405,7 +1439,9 @@ class TransactionRepository(
                 val smartCat = CategoryClassifier.classifySync(
                     payee = txn.payee,
                     rawContent = txn.rawContent,
-                    note = extractedNote ?: txn.itemsSummary
+                    note = extractedNote ?: txn.itemsSummary,
+                    amountPaise = txn.amount,
+                    timestamp = txn.timestamp
                 )
                 if (smartCat != "Uncategorized" && smartCat != "Unspecified") {
                     transactionDao.updateTransaction(txn.copy(category = smartCat, note = extractedNote ?: txn.note))

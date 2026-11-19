@@ -347,6 +347,10 @@ interface TransactionDao {
     @Query("UPDATE transactions SET category = :category WHERE payee = :payee AND type = 'DEBIT' AND LOWER(TRIM(category)) = 'uncategorized'")
     suspend fun categorizeUncategorizedByPayee(payee: String, category: String): Int
 
+    /** Active learning cluster propagation: updates all unclassified (Unspecified or Uncategorized) debits to this payee. */
+    @Query("UPDATE transactions SET category = :category WHERE payee = :payee AND type = 'DEBIT' AND (LOWER(TRIM(category)) = 'uncategorized' OR LOWER(TRIM(category)) = 'unspecified')")
+    suspend fun categorizeUnspecifiedByPayee(payee: String, category: String): Int
+
     @Query("UPDATE transactions SET payee = :newPayee, category = :newCategory WHERE payee = :oldPayee")
     suspend fun updatePayeeAndCategoryBulk(oldPayee: String, newPayee: String, newCategory: String)
 

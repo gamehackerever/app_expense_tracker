@@ -425,70 +425,26 @@ object CategoryClassifier {
         return Regex("(?i)\\b($pattern)\\b")
     }
 
-    fun classifySync(
-        payee: String,
-        rawContent: String = "",
-        note: String? = null,
-        itemsSummary: String? = null
-    ): String {
-        // 1. SMART LAYER: Evaluate user-written transaction note or items summary first.
-        // A note like "puff", "dinner", "petrol", "hair cut" directly identifies the expense.
-        val combinedNote = listOfNotNull(
-            note?.takeIf { it.isNotBlank() },
-            itemsSummary?.takeIf { it.isNotBlank() && it != note }
-        ).joinToString(" ").trim()
+    data class Decision(
+        val category: String,
+        val confidence: Float,
+        val source: DecisionSource,
+        val explanation: String
+    )
 
-        if (combinedNote.isNotBlank()) {
-            val cleanNote = combinedNote.replace('_', ' ').replace('/', ' ').trim()
-            val canonicalNote = PayeeHeuristics.canonicalize(cleanNote)
-            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(canonicalNote)) {
-                    return category
-                }
-            }
-            PayeeHeuristics.categoryHint(cleanNote)?.let { return it }
-        }
-
-        val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim()
-        val generic = isGenericPayee(cleanPayee)
-
-        // 2. Check VPA memory first
-        if (!generic) {
-            SmsPatternLearner.lookupVpa(cleanPayee)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }?.let {
-                return it
-            }
-        }
-        val cleanContent = rawContent.replace('_', ' ').replace('/', ' ').trim()
-        SmsPatternLearner.lookupVpa(cleanContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }?.let {
-            return it
-        }
-
-        // 3. Entity / Payee keyword evaluation
-        if (!generic) {
-            // Fold spelling variants first so "Biriyani" / "Cofee" / "Super Market" hit the same keyword rules.
-            val canonical = PayeeHeuristics.canonicalize(cleanPayee)
-            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(canonical)) {
-                    return category
-                }
-            }
-        }
-
-        // 4. Test the full narration against the payee keyword rules
-        if (cleanContent.isNotBlank() && cleanContent != cleanPayee) {
-            val canonicalContent = PayeeHeuristics.canonicalize(cleanContent)
-            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(canonicalContent)) {
-                    return category
-                }
-            }
-        }
-
-        // 5. Generic shop-type words and one-letter typos ("... Foods", "... Medicals", "Restorent").
-        if (!generic) PayeeHeuristics.categoryHint(cleanPayee)?.let { return it }
-        if (cleanContent.isNotBlank()) PayeeHeuristics.categoryHint(cleanContent)?.let { return it }
-
-        return "Uncategorized"
+    enum class DecisionSource {
+        USER_LEARNED_RULE,
+        VPA_MEMORY,
+        USER_NOTE,
+        MCC_CODE,
+        MCC_GATEWAY,
+        MERCHANT_ENTITY,
+        CONTEXTUAL_BEHAVIORAL,
+        SEMANTIC_VECTOR,
+        NAIVE_BAYES_ML,
+        RAW_CONTENT_MATCH,
+        SHOP_HEURISTIC,
+        FALLBACK_UNSPECIFIED
     }
 
     private val categoryCache = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -498,13 +454,43 @@ object CategoryClassifier {
         NaiveBayesCategorizer.invalidate()
     }
 
-    suspend fun classify(
+    /**
+     * Unified multi-factor decision engine combining:
+     * 1. User note & remarks (highest intent)
+     * 2. User-learned rules & VPA memory
+     * 3. ISO 18245 MCC code detection
+     * 4. Commercial payment gateway handle decoding
+     * 5. Known merchant entity matching
+     * 6. Contextual & behavioral signals (amount, time of day, day of week, telco tiers, rent window)
+     * 7. Machine Learning (Naive Bayes generalization from taught rules)
+     * 8. Offline semantic vector centroid matching (cosine similarity)
+     * 9. Raw narration scanning
+     * 10. Generic shop-type and typo heuristics
+     */
+    /**
+     * Synchronous decision engine combining:
+     * 1. User note & remarks (highest intent)
+     * 2. VPA memory
+     * 3. ISO 18245 MCC code detection
+     * 4. Commercial payment gateway handle decoding
+     * 5. Known merchant entity matching
+     * 6. Contextual & behavioral signals (amount, time of day, day of week, telco tiers, rent window)
+     * 7. Offline semantic vector centroid matching (cosine similarity)
+     * 8. Raw narration scanning
+     * 9. Generic shop-type and typo heuristics
+     */
+    fun classifyDetailedSync(
         payee: String,
         rawContent: String = "",
-        ruleDao: CategoryRuleDao? = null,
         note: String? = null,
-        itemsSummary: String? = null
-    ): String {
+        itemsSummary: String? = null,
+        amountPaise: Long? = null,
+        timestamp: Long? = null
+    ): Decision {
+        val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim()
+        val generic = isGenericPayee(cleanPayee)
+        val cleanContent = rawContent.replace('_', ' ').replace('/', ' ').trim()
+
         // 1. SMART LAYER: Evaluate user-written transaction note or items summary first.
         val combinedNote = listOfNotNull(
             note?.takeIf { it.isNotBlank() },
@@ -516,70 +502,199 @@ object CategoryClassifier {
             val canonicalNote = PayeeHeuristics.canonicalize(cleanNote)
             for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
                 if (regex.containsMatchIn(canonicalNote)) {
-                    return category
+                    return Decision(category, 0.95f, DecisionSource.USER_NOTE, "Matched user note keyword: $cleanNote")
                 }
             }
-            PayeeHeuristics.categoryHint(cleanNote)?.let { return it }
+            PayeeHeuristics.categoryHint(cleanNote)?.let {
+                return Decision(it, 0.88f, DecisionSource.USER_NOTE, "Shop/spelling hint on user note: $cleanNote")
+            }
+            SemanticCentroidClassifier.classifySemantic(cleanNote)?.let {
+                return Decision(it.category, it.similarity, DecisionSource.SEMANTIC_VECTOR, "Semantic match on user note: ${it.explanation}")
+            }
         }
 
-        val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim().lowercase(Locale.ROOT)
-        val generic = isGenericPayee(cleanPayee)
-
-        // 2. Check VPA memory
+        // 2. VPA memory lookup
         if (!generic) {
             SmsPatternLearner.lookupVpa(cleanPayee)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }?.let {
-                return it
+                return Decision(it, 0.95f, DecisionSource.VPA_MEMORY, "Learned VPA memory for payee $cleanPayee")
             }
         }
-        val cleanContent = rawContent.replace('_', ' ').replace('/', ' ').trim()
-        SmsPatternLearner.lookupVpa(cleanContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }?.let {
-            return it
+        if (cleanContent.isNotBlank()) {
+            SmsPatternLearner.lookupVpa(cleanContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }?.let {
+                return Decision(it, 0.92f, DecisionSource.VPA_MEMORY, "Learned VPA memory in raw narration")
+            }
         }
 
-        if (cleanPayee.isNotBlank() && !generic) {
-            categoryCache[cleanPayee]?.let { return it }
+        // 3. ISO 18245 MCC Code Detection in narration
+        MccAndGatewayClassifier.extractMccMatch(rawContent)?.let {
+            return Decision(it.category, 0.98f, DecisionSource.MCC_CODE, "ISO 18245 MCC ${it.mccCode} (${it.description})")
+        }
 
-            // 1. Exact or substring learned rule (never query for generic fallback payees)
-            if (ruleDao != null) {
-                val learned = ruleDao.findMatchingCategory(cleanPayee)
-                if (!learned.isNullOrBlank() && !learned.equals("Uncategorized", ignoreCase = true) && !learned.equals("Unspecified", ignoreCase = true)) {
-                    categoryCache[cleanPayee] = learned
-                    return learned
+        // 4. Commercial Payment Gateway Handle Decoding (e.g. bookmyshow@razorpay -> bookmyshow)
+        val vpaCandidates = listOfNotNull(
+            cleanPayee.takeIf { it.contains("@") },
+            cleanContent.split(Regex("\\s+")).firstOrNull { it.contains("@") }
+        )
+        for (vpa in vpaCandidates) {
+            val gw = MccAndGatewayClassifier.parseGatewayVpa(vpa)
+            if (gw != null && gw.second) { // isGateway = true
+                val gwHandle = PayeeHeuristics.canonicalize(gw.first)
+                for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
+                    if (regex.containsMatchIn(gwHandle)) {
+                        return Decision(category, 0.90f, DecisionSource.MCC_GATEWAY, "Decoded commercial gateway handle @${gw.first}")
+                    }
                 }
             }
+        }
 
-            // 2. Known-merchant regex on the payee (spelling variants folded first)
+        // 5. Known Merchant / Entity Regex on Payee
+        val isPerson = !generic && PayeeHeuristics.looksLikePerson(cleanPayee)
+        if (!generic) {
             val canonical = PayeeHeuristics.canonicalize(cleanPayee)
             for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
                 if (regex.containsMatchIn(canonical)) {
-                    categoryCache[cleanPayee] = category
-                    return category
+                    return Decision(category, 0.90f, DecisionSource.MERCHANT_ENTITY, "Known merchant entity match: $cleanPayee")
                 }
-            }
-
-            // 3. Subword 3-gram + word token + bigram Naive Bayes generalization from taught rules
-            if (ruleDao != null) {
-                NaiveBayesCategorizer.predict(cleanPayee, ruleDao)?.let {
-                    categoryCache[cleanPayee] = it.category
-                    return it.category
-                }
-            }
-
-            // 3b. Generic shop-type words and typos. Below anything the user taught, above raw SMS text.
-            PayeeHeuristics.categoryHint(cleanPayee)?.let {
-                categoryCache[cleanPayee] = it
-                return it
             }
         }
 
-        // 4. Last resort: scan the raw SMS/notification text for unambiguous brand names and merchant keywords
-        if (cleanContent.isNotBlank()) {
+        // 6. Generic Shop-Type Words & Typo Heuristics on Payee (e.g. "Mahalakshmi Stores", "City Medicals", "Jk Foods")
+        if (!generic && !isPerson) {
+            PayeeHeuristics.categoryHint(cleanPayee)?.let {
+                return Decision(it, 0.88f, DecisionSource.SHOP_HEURISTIC, "Generic shop type hint on payee: $cleanPayee")
+            }
+        }
+
+        // 7. Contextual & Behavioral Signals (Amount, Time, Day, Telco plans, Rent window)
+        ContextualClassifier.evaluate(
+            amountPaise = amountPaise,
+            timestamp = timestamp,
+            payee = cleanPayee,
+            note = note,
+            rawContent = rawContent
+        )?.let {
+            return Decision(it.category, it.confidence, DecisionSource.CONTEXTUAL_BEHAVIORAL, it.explanation)
+        }
+
+        // 8. Semantic Subword Centroid Embedding (only if not a recognized personal name)
+        val textToEmbed = listOfNotNull(
+            cleanPayee.takeIf { !generic && !isPerson },
+            cleanContent.takeIf { it.isNotBlank() && it != cleanPayee && (!isPerson || it.contains("@") || it.contains("/")) }
+        ).joinToString(" ")
+        if (textToEmbed.isNotBlank()) {
+            SemanticCentroidClassifier.classifySemantic(textToEmbed)?.let {
+                return Decision(it.category, it.similarity, DecisionSource.SEMANTIC_VECTOR, it.explanation)
+            }
+        }
+
+        // 9. Raw Narration / Content Scan for unambiguous brand names
+        if (cleanContent.isNotBlank() && cleanContent != cleanPayee) {
             val canonicalContent = PayeeHeuristics.canonicalize(cleanContent)
             for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(canonicalContent)) return category
+                if (regex.containsMatchIn(canonicalContent)) {
+                    return Decision(category, 0.85f, DecisionSource.RAW_CONTENT_MATCH, "Narration keyword match")
+                }
             }
-            PayeeHeuristics.categoryHint(cleanContent)?.let { return it }
+            PayeeHeuristics.categoryHint(cleanContent)?.let {
+                return Decision(it, 0.70f, DecisionSource.SHOP_HEURISTIC, "Generic shop type hint on narration")
+            }
         }
-        return "Uncategorized"
+
+        return Decision("Uncategorized", 0.0f, DecisionSource.FALLBACK_UNSPECIFIED, "No confident match found")
+    }
+
+    /**
+     * Asynchronous full decision engine including learned database rules and Naive Bayes ML.
+     */
+    suspend fun classifyDetailed(
+        payee: String,
+        rawContent: String = "",
+        note: String? = null,
+        itemsSummary: String? = null,
+        amountPaise: Long? = null,
+        timestamp: Long? = null,
+        ruleDao: CategoryRuleDao? = null
+    ): Decision {
+        val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim()
+        val generic = isGenericPayee(cleanPayee)
+
+        // 1. User Learned Rule (Exact or Substring)
+        if (cleanPayee.isNotBlank() && !generic && ruleDao != null) {
+            val learned = ruleDao.findMatchingCategory(cleanPayee.lowercase(Locale.ROOT))
+            if (!learned.isNullOrBlank() && !learned.equals("Uncategorized", ignoreCase = true) && !learned.equals("Unspecified", ignoreCase = true)) {
+                return Decision(learned, 1.0f, DecisionSource.USER_LEARNED_RULE, "Exact user-taught rule for $cleanPayee")
+            }
+        }
+
+        // 2. Synchronous pipeline (notes, MCC, gateway, regex, contextual, semantic, shop heuristics)
+        val syncDecision = classifyDetailedSync(
+            payee = payee,
+            rawContent = rawContent,
+            note = note,
+            itemsSummary = itemsSummary,
+            amountPaise = amountPaise,
+            timestamp = timestamp
+        )
+        if (syncDecision.category != "Uncategorized" && syncDecision.category != "Unspecified") {
+            return syncDecision
+        }
+
+        // 3. Machine Learning (Naive Bayes generalization from user-taught rules)
+        if (!generic && ruleDao != null) {
+            NaiveBayesCategorizer.predict(cleanPayee.lowercase(Locale.ROOT), ruleDao)?.let {
+                return Decision(it.category, it.confidence.toFloat(), DecisionSource.NAIVE_BAYES_ML, "Naive Bayes subword generalization")
+            }
+        }
+
+        return syncDecision
+    }
+
+    fun classifySync(
+        payee: String,
+        rawContent: String = "",
+        note: String? = null,
+        itemsSummary: String? = null,
+        amountPaise: Long? = null,
+        timestamp: Long? = null
+    ): String {
+        return classifyDetailedSync(
+            payee = payee,
+            rawContent = rawContent,
+            note = note,
+            itemsSummary = itemsSummary,
+            amountPaise = amountPaise,
+            timestamp = timestamp
+        ).category
+    }
+
+    suspend fun classify(
+        payee: String,
+        rawContent: String = "",
+        ruleDao: CategoryRuleDao? = null,
+        note: String? = null,
+        itemsSummary: String? = null,
+        amountPaise: Long? = null,
+        timestamp: Long? = null
+    ): String {
+        val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim().lowercase(Locale.ROOT)
+        if (cleanPayee.isNotBlank() && !isGenericPayee(cleanPayee)) {
+            categoryCache[cleanPayee]?.let { return it }
+        }
+
+        val decision = classifyDetailed(
+            payee = payee,
+            rawContent = rawContent,
+            note = note,
+            itemsSummary = itemsSummary,
+            amountPaise = amountPaise,
+            timestamp = timestamp,
+            ruleDao = ruleDao
+        )
+
+        if (cleanPayee.isNotBlank() && !isGenericPayee(cleanPayee) && decision.category != "Uncategorized" && decision.category != "Unspecified") {
+            categoryCache[cleanPayee] = decision.category
+        }
+
+        return decision.category
     }
 }

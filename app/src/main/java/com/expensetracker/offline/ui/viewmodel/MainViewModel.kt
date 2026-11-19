@@ -820,9 +820,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateTransaction(transaction: TransactionEntity, learnRule: Boolean = true) {
+    fun updateTransaction(transaction: TransactionEntity, learnRule: Boolean = true, propagateToUnspecified: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.updateTransaction(transaction)
+            val propagated = repository.updateTransaction(transaction, propagateToUnspecified = propagateToUnspecified)
             if (learnRule) {
                 repository.learnCategoryRule(transaction.payee, transaction.category)
             }

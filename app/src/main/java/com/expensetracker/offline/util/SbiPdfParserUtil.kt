@@ -619,7 +619,13 @@ object SbiPdfParserUtil {
             processedKeys.add(inBatchKey)
 
             // Auto-categorize using CategoryClassifier smart layer; evaluate extracted note if present, then payee & description
-            val rawCategory = CategoryClassifier.classifySync(row.payee, row.description, note = row.note)
+            val rawCategory = CategoryClassifier.classifySync(
+                payee = row.payee,
+                rawContent = row.description,
+                note = row.note,
+                amountPaise = row.amountPaise,
+                timestamp = row.dateTimestamp
+            )
             val effectiveCategory = if (row.type == TransactionType.DEBIT &&
                 (rawCategory.isBlank() || rawCategory.equals("Transfer", ignoreCase = true) || rawCategory.equals("Uncategorized", ignoreCase = true) || rawCategory.equals("Unspecified", ignoreCase = true))
             ) {
