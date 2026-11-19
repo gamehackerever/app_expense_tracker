@@ -165,6 +165,9 @@ fun InsightsScreen(
             InsightsTimeScope.MONTH -> {
                 BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset)
             }
+            InsightsTimeScope.YEAR -> {
+                BillingCycleHelper.getYearRangeForOffset(cycleOffset)
+            }
         }
     }
 
@@ -204,6 +207,14 @@ fun InsightsScreen(
             InsightsTimeScope.MONTH -> {
                 formatCycleRange(cycleStartMillis, cycleEndMillis)
             }
+            InsightsTimeScope.YEAR -> {
+                val yr = SimpleDateFormat("yyyy", Locale.getDefault()).format(java.util.Date(cycleStartMillis))
+                when (cycleOffset) {
+                    0 -> "This Year ($yr)"
+                    -1 -> "Last Year ($yr)"
+                    else -> yr
+                }
+            }
         }
     }
 
@@ -217,6 +228,15 @@ fun InsightsScreen(
                     daysLeft == 0 -> "Current cycle · Resets today"
                     daysLeft == 1 -> "Current cycle · 1 day left"
                     else -> "Current cycle · $daysLeft days left"
+                }
+            }
+            InsightsTimeScope.YEAR -> {
+                val yr = SimpleDateFormat("yyyy", Locale.getDefault()).format(java.util.Date(cycleStartMillis))
+                when {
+                    !isCurrent -> "Full Year $yr · Tap to return to current"
+                    daysLeft == 0 -> "Current year · Resets today"
+                    daysLeft == 1 -> "Current year · 1 day left"
+                    else -> "Current year · $daysLeft days left"
                 }
             }
         }
@@ -283,9 +303,31 @@ fun InsightsScreen(
             .sortedByDescending { it.totalSpent }
     }
 
-    val stats = remember(filteredTransactions, allTransactions, accountFilter, cycleStartMillis, cycleEndMillis, elapsedDays, startDayOfMonth, cycleOffset, pendingDeleteIds, earliestTxnMillis) {
+    val stats = remember(filteredTransactions, allTransactions, accountFilter, cycleStartMillis, cycleEndMillis, elapsedDays, startDayOfMonth, cycleOffset, pendingDeleteIds, earliestTxnMillis, selectedScope) {
         val elapsed = (minOf(System.currentTimeMillis(), cycleEndMillis) - cycleStartMillis).coerceAtLeast(0L)
-        val (prevStart, _) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset - 1)
+        val (prevStart, _) = when (selectedScope) {
+            InsightsTimeScope.DAY -> {
+                val cal = Calendar.getInstance().apply {
+                    add(Calendar.DAY_OF_YEAR, cycleOffset - 1)
+                    set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                }
+                Pair(cal.timeInMillis, cal.timeInMillis + DAY_MS)
+            }
+            InsightsTimeScope.WEEK -> {
+                val cal = Calendar.getInstance().apply {
+                    set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+                    add(Calendar.WEEK_OF_YEAR, cycleOffset - 1)
+                    set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                }
+                Pair(cal.timeInMillis, cal.timeInMillis + 7 * DAY_MS)
+            }
+            InsightsTimeScope.MONTH -> {
+                BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset - 1)
+            }
+            InsightsTimeScope.YEAR -> {
+                BillingCycleHelper.getYearRangeForOffset(cycleOffset - 1)
+            }
+        }
         val prevEnd = minOf(prevStart + elapsed, cycleStartMillis)
 
         val isDesc = allTransactions.size < 2 ||
@@ -360,45 +402,90 @@ fun InsightsScreen(
         map
     }
 
-    val trendPoints = remember(allTransactions, accountFilter, startDayOfMonth, cycleOffset, pendingDeleteIds) {
-        val monthFmt = SimpleDateFormat("MMM", Locale.getDefault())
-        val bounds = ((-5)..0).map { rel ->
-            val (cStart, cEnd) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset + rel)
-            Triple(rel, cStart, cEnd)
-        }
-        val earliestStart = bounds.first().second
-        val latestEnd = bounds.last().third
-        val spentByIdx = LongArray(6)
-        val incomeByIdx = LongArray(6)
-        val isDesc = allTransactions.size < 2 ||
-                allTransactions.first().transaction.timestamp >= allTransactions.last().transaction.timestamp
+    val trendPoints = remember(allTransactions, accountFilter, startDayOfMonth, cycleOffset, pendingDeleteIds, selectedScope) {
+        if (selectedScope == InsightsTimeScope.YEAR) {
+            val monthFmt = SimpleDateFormat("MMM", Locale.getDefault())
+            val targetYear = java.time.LocalDate.now().year + cycleOffset
+            val zone = java.time.ZoneId.systemDefault()
 
-        for (item in allTransactions) {
-            val t = item.transaction.timestamp
-            if (t > latestEnd) continue
-            if (t < earliestStart) continue
-            if (item.transaction.id in pendingDeleteIds || !matchesAccount(item.transaction, accountFilter)) continue
-            for (i in 0 until 6) {
-                val b = bounds[i]
-                if (t in b.second..b.third) {
-                    if (isSpendDebit(item.transaction)) spentByIdx[i] += myShareOf(item)
-                    else if (isIncomeCredit(item.transaction)) incomeByIdx[i] += item.transaction.amount
-                    break
+            val bounds = (1..12).map { monthNum ->
+                val startLocal = java.time.LocalDate.of(targetYear, monthNum, 1)
+                val endLocal = startLocal.plusMonths(1).minusDays(1)
+                val cStart = startLocal.atStartOfDay(zone).toInstant().toEpochMilli()
+                val cEnd = endLocal.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1L
+                Triple(monthNum, cStart, cEnd)
+            }
+
+            val earliestStart = bounds.first().second
+            val latestEnd = bounds.last().third
+            val spentByIdx = LongArray(12)
+            val incomeByIdx = LongArray(12)
+
+            for (item in allTransactions) {
+                val t = item.transaction.timestamp
+                if (t > latestEnd) continue
+                if (t < earliestStart) continue
+                if (item.transaction.id in pendingDeleteIds || !matchesAccount(item.transaction, accountFilter)) continue
+                for (i in 0 until 12) {
+                    val b = bounds[i]
+                    if (t in b.second..b.third) {
+                        if (isSpendDebit(item.transaction)) spentByIdx[i] += myShareOf(item)
+                        else if (isIncomeCredit(item.transaction)) incomeByIdx[i] += item.transaction.amount
+                        break
+                    }
                 }
             }
-        }
 
-        bounds.mapIndexed { i, (rel, cStart, cEnd) ->
-            // Use the cycle midpoint so a cycle like "28 Sept – 27 Oct" (where 24 days are in Oct)
-            // is labeled "Oct" rather than "Sept".
-            val midMillis = cStart + (cEnd - cStart) / 2L
-            CycleTrendPoint(
-                label = monthFmt.format(java.util.Date(midMillis)),
-                rangeLabel = formatCycleRange(cStart, cEnd),
-                spentPaise = spentByIdx[i],
-                incomePaise = incomeByIdx[i],
-                isSelected = rel == 0
-            )
+            val nowLocal = java.time.LocalDate.now()
+            val currentMonthNum = nowLocal.monthValue
+            val isCurrentYear = cycleOffset == 0
+
+            bounds.mapIndexed { i, (mNum, cStart, cEnd) ->
+                val midMillis = cStart + (cEnd - cStart) / 2L
+                CycleTrendPoint(
+                    label = monthFmt.format(java.util.Date(midMillis)),
+                    rangeLabel = formatCycleRange(cStart, cEnd),
+                    spentPaise = spentByIdx[i],
+                    incomePaise = incomeByIdx[i],
+                    isSelected = isCurrentYear && mNum == currentMonthNum
+                )
+            }
+        } else {
+            val monthFmt = SimpleDateFormat("MMM", Locale.getDefault())
+            val bounds = ((-5)..0).map { rel ->
+                val (cStart, cEnd) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, cycleOffset + rel)
+                Triple(rel, cStart, cEnd)
+            }
+            val earliestStart = bounds.first().second
+            val latestEnd = bounds.last().third
+            val spentByIdx = LongArray(6)
+            val incomeByIdx = LongArray(6)
+
+            for (item in allTransactions) {
+                val t = item.transaction.timestamp
+                if (t > latestEnd) continue
+                if (t < earliestStart) continue
+                if (item.transaction.id in pendingDeleteIds || !matchesAccount(item.transaction, accountFilter)) continue
+                for (i in 0 until 6) {
+                    val b = bounds[i]
+                    if (t in b.second..b.third) {
+                        if (isSpendDebit(item.transaction)) spentByIdx[i] += myShareOf(item)
+                        else if (isIncomeCredit(item.transaction)) incomeByIdx[i] += item.transaction.amount
+                        break
+                    }
+                }
+            }
+
+            bounds.mapIndexed { i, (rel, cStart, cEnd) ->
+                val midMillis = cStart + (cEnd - cStart) / 2L
+                CycleTrendPoint(
+                    label = monthFmt.format(java.util.Date(midMillis)),
+                    rangeLabel = formatCycleRange(cStart, cEnd),
+                    spentPaise = spentByIdx[i],
+                    incomePaise = incomeByIdx[i],
+                    isSelected = rel == 0
+                )
+            }
         }
     }
 
@@ -699,7 +786,8 @@ fun InsightsScreen(
                             )
 
                             if (hasSpending && effectiveMonthlyBudgetPaise > 0L && selectedAccountFilter == null) {
-                                val pctOfBudget = ((grandTotalDebit.toDouble() / (effectiveMonthlyBudgetPaise.toDouble())) * 100.0).roundToInt()
+                                val targetBudgetPaise = if (selectedScope == InsightsTimeScope.YEAR) effectiveMonthlyBudgetPaise * 12L else effectiveMonthlyBudgetPaise
+                                val pctOfBudget = ((grandTotalDebit.toDouble() / (targetBudgetPaise.toDouble())) * 100.0).roundToInt()
                                 val budgetTint = when {
                                     pctOfBudget > 100 -> InsightsColors.negative
                                     pctOfBudget >= 85 -> com.expensetracker.offline.ui.theme.AppColors.warning
@@ -711,7 +799,10 @@ fun InsightsScreen(
                                     color = budgetTint.copy(alpha = 0.12f)
                                 ) {
                                     Text(
-                                        "$pctOfBudget% of ${formatRupees(effectiveMonthlyBudgetPaise)} budget",
+                                        if (selectedScope == InsightsTimeScope.YEAR)
+                                            "$pctOfBudget% of ${formatRupees(targetBudgetPaise)} annual budget"
+                                        else
+                                            "$pctOfBudget% of ${formatRupees(targetBudgetPaise)} budget",
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = budgetTint,
@@ -734,8 +825,9 @@ fun InsightsScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
+                                val scopeName = selectedScope.label
                                 Text(
-                                    if (isCurrent) "Cycle · day $elapsedDays of $cycleLengthDays" else "Cycle · $cycleLengthDays days",
+                                    if (isCurrent) "$scopeName · day $elapsedDays of $cycleLengthDays" else "$scopeName · $cycleLengthDays days",
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -752,7 +844,7 @@ fun InsightsScreen(
                                 )
                             }
 
-                            val monthlyBudgetPaise = effectiveMonthlyBudgetPaise
+                            val monthlyBudgetPaise = if (selectedScope == InsightsTimeScope.YEAR) effectiveMonthlyBudgetPaise * 12L else effectiveMonthlyBudgetPaise
                             val hasActiveBudgetHere = monthlyBudgetPaise > 0L && selectedAccountFilter == null
                             val showSafeAllowance = hasSpending && isCurrent && hasActiveBudgetHere && daysLeft > 0
                             val showPrevComparison = hasSpending && !showSafeAllowance && stats.hasReliablePrevBaseline
@@ -909,8 +1001,8 @@ fun InsightsScreen(
                 }
             }
 
-            // ── Daily Calendar Heatmap ──
-            if (hasSpending) {
+            // ── Daily Calendar Heatmap (Day / Week / Cycle only) ──
+            if (hasSpending && selectedScope != InsightsTimeScope.YEAR) {
                 item(key = "daily_heatmap") {
                     EntranceItem("daily_heatmap", 4, seenSections, Modifier.animateItem(fadeInSpec = null)) {
                         DailyCalendarHeatmapCard(
@@ -926,7 +1018,7 @@ fun InsightsScreen(
             if (isLoaded && !hasSpending) {
                 item(key = "empty") {
                     EntranceItem("empty", 3, seenSections, Modifier.animateItem(fadeInSpec = null)) {
-                        EmptyInsightState(text = "No spending recorded in this cycle")
+                        EmptyInsightState(text = if (selectedScope == InsightsTimeScope.YEAR) "No spending recorded in this year" else "No spending recorded in this cycle")
                     }
                 }
             }

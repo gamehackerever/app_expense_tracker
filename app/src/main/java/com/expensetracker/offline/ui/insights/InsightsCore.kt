@@ -93,7 +93,8 @@ internal const val TOP_N_BY_DEFAULT = 5
 enum class InsightsTimeScope(val label: String) {
     DAY("Day"),
     WEEK("Week"),
-    MONTH("Cycle")
+    MONTH("Cycle"),
+    YEAR("Year")
 }
 
 // Thin alias kept so existing Insights call sites read the same palette as the Dashboard (AppColors).

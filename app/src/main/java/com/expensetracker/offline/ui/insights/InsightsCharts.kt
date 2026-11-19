@@ -119,7 +119,7 @@ internal fun CycleSelector(
             modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Segmented Scope Toggle [ Day | Week | Cycle ]
+            // Segmented Scope Toggle [ Day | Week | Cycle | Year ]
             Surface(
                 shape = RoundedCornerShape(AppRadius.pill),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -127,7 +127,7 @@ internal fun CycleSelector(
             ) {
                 Row(
                     modifier = Modifier.padding(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     InsightsTimeScope.values().forEach { scope ->
                         val isSelected = scope == selectedScope
@@ -149,7 +149,7 @@ internal fun CycleSelector(
                                 fontSize = 12.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                 color = textColor,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp)
+                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 5.dp)
                             )
                         }
                     }
@@ -355,9 +355,14 @@ internal fun MultiCycleTrendCard(
     if (allPoints.isEmpty()) return
     // Trim leading cycles that predate the user's data (keep the selected cycle even if it is empty),
     // so a new user sees real bars instead of a card that is mostly empty space.
+    // For 12-month Year view, always preserve the full 12 months (Jan–Dec) for calendar completeness.
     val points = remember(allPoints) {
-        val firstUseful = allPoints.indexOfFirst { it.spentPaise > 0L || it.incomePaise > 0L || it.isSelected }
-        if (firstUseful > 0) allPoints.drop(firstUseful) else allPoints
+        if (allPoints.size == 12) {
+            allPoints
+        } else {
+            val firstUseful = allPoints.indexOfFirst { it.spentPaise > 0L || it.incomePaise > 0L || it.isSelected }
+            if (firstUseful > 0) allPoints.drop(firstUseful) else allPoints
+        }
     }
     var selectedIdx by remember(points) { mutableIntStateOf(points.indexOfLast { it.isSelected }.coerceAtLeast(0)) }
     val selectedPoint = points.getOrNull(selectedIdx) ?: points.last()
@@ -368,6 +373,9 @@ internal fun MultiCycleTrendCard(
         )
     }
     val entered = rememberEntered(250)
+
+    val isYearView = allPoints.size == 12
+    val periodSuffix = if (isYearView) "" else " cycle"
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -387,8 +395,8 @@ internal fun MultiCycleTrendCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         if (selectedPoint.rangeLabel.isNotBlank())
-                            "${selectedPoint.label} cycle · ${selectedPoint.rangeLabel}"
-                        else "${selectedPoint.label} cycle",
+                            "${selectedPoint.label}$periodSuffix · ${selectedPoint.rangeLabel}"
+                        else "${selectedPoint.label}$periodSuffix",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -415,7 +423,7 @@ internal fun MultiCycleTrendCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
                 ) {
                     Text(
-                        if (points.size >= 2) "${points.size}-cycle trend" else "Trend",
+                        if (isYearView) "Monthly trend" else if (points.size >= 2) "${points.size}-cycle trend" else "Trend",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -428,7 +436,7 @@ internal fun MultiCycleTrendCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(120.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (points.size > 8) 4.dp else 10.dp),
                 verticalAlignment = Alignment.Bottom
             ) {
                 points.forEachIndexed { idx, pt ->
@@ -475,7 +483,7 @@ internal fun MultiCycleTrendCard(
                                 if (hasData) {
                                     Text(
                                         text = compactRupees(pt.spentPaise),
-                                        fontSize = 11.sp,
+                                        fontSize = if (points.size > 8) 9.sp else 11.sp,
                                         fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
                                         color = if (isSel) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
@@ -484,8 +492,8 @@ internal fun MultiCycleTrendCard(
                                 }
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxWidth(0.68f)
-                                        .widthIn(max = 48.dp)
+                                        .fillMaxWidth(if (points.size > 8) 0.85f else 0.68f)
+                                        .widthIn(max = if (points.size > 8) 28.dp else 48.dp)
                                         .fillMaxHeight(animSpend * 0.8f)
                                         .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
                                         .background(barColor)
@@ -495,7 +503,7 @@ internal fun MultiCycleTrendCard(
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = pt.label,
-                            fontSize = 11.sp,
+                            fontSize = if (points.size > 8) 10.sp else 11.sp,
                             fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
                             color = if (isSel) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1
@@ -504,7 +512,7 @@ internal fun MultiCycleTrendCard(
                 }
             }
 
-            if (points.size < 6) {
+            if (!isYearView && points.size < 6) {
                 Text(
                     "Earlier cycles will appear as you keep using the app",
                     fontSize = 12.sp,

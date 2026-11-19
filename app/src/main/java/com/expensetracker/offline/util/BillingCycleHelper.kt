@@ -59,6 +59,25 @@ object BillingCycleHelper {
     }
 
     /**
+     * Returns Pair(startMillis, endMillis) for a calendar year shifted by [yearOffset]
+     * (0 = current year, -1 = last year, etc.).
+     */
+    fun getYearRangeForOffset(
+        yearOffset: Int,
+        referenceDate: LocalDate = LocalDate.now()
+    ): Pair<Long, Long> {
+        val targetYear = referenceDate.year + yearOffset
+        val start = LocalDate.of(targetYear, 1, 1)
+        val end = LocalDate.of(targetYear, 12, 31)
+        val zone = ZoneId.systemDefault()
+
+        val startMillis = start.atStartOfDay(zone).toInstant().toEpochMilli()
+        val endMillis = end.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1L
+
+        return Pair(startMillis, endMillis)
+    }
+
+    /**
      * The calendar month that "owns" a billing cycle: the month containing most of its days.
      * A cycle of 27 Oct - 26 Nov has 5 days in Oct and 26 in Nov, so it belongs to November.
      * [cycleOffset] shifts whole cycles (0 = current, 1 = next, -1 = previous).

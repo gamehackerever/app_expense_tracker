@@ -28,4 +28,23 @@ class BillingCycleHelperTest {
     @Test fun offsetsPreviousCycles() {
         assertEquals(YearMonth.of(2026, 9), BillingCycleHelper.getCycleDominantMonth(27, -1, LocalDate.of(2026, 10, 25)))
     }
+
+    @Test fun yearRangeForCurrentAndOffsets() {
+        val ref = LocalDate.of(2026, 11, 19)
+        val zone = java.time.ZoneId.systemDefault()
+
+        // Current Year 2026
+        val (start2026, end2026) = BillingCycleHelper.getYearRangeForOffset(0, ref)
+        val expectedStart2026 = LocalDate.of(2026, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val expectedEnd2026 = LocalDate.of(2026, 12, 31).plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1L
+        assertEquals(expectedStart2026, start2026)
+        assertEquals(expectedEnd2026, end2026)
+
+        // Previous Year 2025
+        val (start2025, end2025) = BillingCycleHelper.getYearRangeForOffset(-1, ref)
+        val expectedStart2025 = LocalDate.of(2025, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val expectedEnd2025 = LocalDate.of(2025, 12, 31).plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1L
+        assertEquals(expectedStart2025, start2025)
+        assertEquals(expectedEnd2025, end2025)
+    }
 }
