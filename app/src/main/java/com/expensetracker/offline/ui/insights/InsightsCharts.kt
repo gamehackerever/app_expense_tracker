@@ -97,89 +97,127 @@ import kotlin.math.roundToInt
 
 @Composable
 internal fun CycleSelector(
+    selectedScope: InsightsTimeScope,
+    onScopeSelected: (InsightsTimeScope) -> Unit,
     startMillis: Long,
     endMillis: Long,
+    displayLabel: String,
+    subtitle: String,
     isCurrent: Boolean,
-    daysLeft: Int,
     canGoBack: Boolean,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onJumpToCurrent: () -> Unit
 ) {
-    val label = remember(startMillis, endMillis) { formatCycleRange(startMillis, endMillis) }
-    val subtitle = when {
-        !isCurrent -> "Past cycle · Tap to return to current"
-        daysLeft == 0 -> "Current cycle · Resets today"
-        daysLeft == 1 -> "Current cycle · 1 day left"
-        else -> "Current cycle · $daysLeft days left"
-    }
-
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(AppRadius.large),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            IconButton(onClick = onPrevious, enabled = canGoBack) {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous cycle")
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(AppRadius.small))
-                    .quietClickable(enabled = !isCurrent, onClick = onJumpToCurrent)
-                    .padding(vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            // Segmented Scope Toggle [ Day | Week | Cycle | Year ]
+            Surface(
+                shape = RoundedCornerShape(AppRadius.pill),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.padding(bottom = 6.dp)
             ) {
-                AnimatedContent(
-                    targetState = startMillis to label,
-                    transitionSpec = {
-                        val movingForward = targetState.first >= initialState.first
-                        val slideDir = if (movingForward) 1 else -1
-                        (slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { fullWidth -> slideDir * (fullWidth / 4) } +
-                                fadeIn(tween(220)))
-                            .togetherWith(
-                                slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { fullWidth -> -slideDir * (fullWidth / 4) } +
-                                        fadeOut(tween(150))
+                Row(
+                    modifier = Modifier.padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    InsightsTimeScope.values().forEach { scope ->
+                        val isSelected = scope == selectedScope
+                        val animBg by animateColorAsState(
+                            targetValue = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            animationSpec = tween(180),
+                            label = "scopeBg"
+                        )
+                        val textColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        Surface(
+                            shape = RoundedCornerShape(AppRadius.pill),
+                            color = animBg,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(AppRadius.pill))
+                                .quietClickable { onScopeSelected(scope) }
+                        ) {
+                            Text(
+                                text = scope.label,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = textColor,
+                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 5.dp)
                             )
-                            .using(SizeTransform(clip = false))
-                    },
-                    label = "cycleLabelSlide"
-                ) { (_, text) ->
-                    Text(
-                        text,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                AnimatedContent(
-                    targetState = subtitle to isCurrent,
-                    transitionSpec = {
-                        fadeIn(tween(200)) togetherWith fadeOut(tween(140))
-                    },
-                    label = "cycleSubtitleFade"
-                ) { (subText, current) ->
-                    Text(
-                        subText,
-                        fontSize = 12.sp,
-                        fontWeight = if (current) FontWeight.Normal else FontWeight.SemiBold,
-                        color = if (current) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                        }
+                    }
                 }
             }
 
-            IconButton(onClick = onNext, enabled = !isCurrent) {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next cycle")
+            // Navigation row with Left Arrow, Dynamic Label/Subtitle, and Right Arrow
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onPrevious, enabled = canGoBack) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous")
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(AppRadius.small))
+                        .quietClickable(enabled = !isCurrent, onClick = onJumpToCurrent)
+                        .padding(vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    AnimatedContent(
+                        targetState = startMillis to displayLabel,
+                        transitionSpec = {
+                            val movingForward = targetState.first >= initialState.first
+                            val slideDir = if (movingForward) 1 else -1
+                            (slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { fullWidth -> slideDir * (fullWidth / 4) } +
+                                    fadeIn(tween(220)))
+                                .togetherWith(
+                                    slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { fullWidth -> -slideDir * (fullWidth / 4) } +
+                                            fadeOut(tween(150))
+                                )
+                                .using(SizeTransform(clip = false))
+                        },
+                        label = "cycleLabelSlide"
+                    ) { (_, text) ->
+                        Text(
+                            text,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    AnimatedContent(
+                        targetState = subtitle to isCurrent,
+                        transitionSpec = {
+                            fadeIn(tween(200)) togetherWith fadeOut(tween(140))
+                        },
+                        label = "cycleSubtitleFade"
+                    ) { (subText, current) ->
+                        Text(
+                            subText,
+                            fontSize = 12.sp,
+                            fontWeight = if (current) FontWeight.Normal else FontWeight.SemiBold,
+                            color = if (current) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                IconButton(onClick = onNext, enabled = !isCurrent) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next")
+                }
             }
         }
     }
@@ -207,7 +245,7 @@ internal data class CycleTrendPoint(
 internal fun CashFlowSummaryCard(
     totalIncomePaise: Long,
     discretionarySpendPaise: Long,
-    investmentsPaise: Long,
+    investmentsPaise: Long = 0L,
     isAnimating: Boolean
 ) {
     val totalOutflow = discretionarySpendPaise + investmentsPaise
@@ -238,7 +276,7 @@ internal fun CashFlowSummaryCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Cash flow & wealth",
+                    "Cash flow",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -265,31 +303,20 @@ internal fun CashFlowSummaryCard(
                 )
                 HeroFact(
                     modifier = Modifier.weight(1f),
-                    label = "Discretionary",
+                    label = "Spending",
                     value = formatRupees(discretionarySpendPaise),
                     amountPaise = discretionarySpendPaise,
-                    caption = "living expenses",
+                    caption = "excl. investments",
                     valueColor = MaterialTheme.colorScheme.onSurface
                 )
-                if (investmentsPaise > 0L) {
-                    HeroFact(
-                        modifier = Modifier.weight(1f),
-                        label = "Investments",
-                        value = formatRupees(investmentsPaise),
-                        amountPaise = investmentsPaise,
-                        caption = "SIPs & wealth",
-                        valueColor = Color(0xFF14B8A6)
-                    )
-                } else {
-                    HeroFact(
-                        modifier = Modifier.weight(1f),
-                        label = "Net cash flow",
-                        value = (if (netSavingsPaise >= 0L) "+" else "−") + formatRupees( kotlin.math.abs(netSavingsPaise) ),
-                        amountPaise = netSavingsPaise,
-                        caption = if (netSavingsPaise >= 0L) "surplus" else "net outflow",
-                        valueColor = if (netSavingsPaise >= 0L) InsightsColors.positive else InsightsColors.negative
-                    )
-                }
+                HeroFact(
+                    modifier = Modifier.weight(1f),
+                    label = "Net flow",
+                    value = (if (netSavingsPaise >= 0L) "+" else "−") + formatRupees(kotlin.math.abs(netSavingsPaise)),
+                    amountPaise = netSavingsPaise,
+                    caption = if (netSavingsPaise >= 0L) "surplus" else "net deficit",
+                    valueColor = if (netSavingsPaise >= 0L) InsightsColors.positive else InsightsColors.negative
+                )
             }
 
             InsightsProgressBar(
@@ -328,9 +355,14 @@ internal fun MultiCycleTrendCard(
     if (allPoints.isEmpty()) return
     // Trim leading cycles that predate the user's data (keep the selected cycle even if it is empty),
     // so a new user sees real bars instead of a card that is mostly empty space.
+    // For 12-month Year view, always preserve the full 12 months (Jan–Dec) for calendar completeness.
     val points = remember(allPoints) {
-        val firstUseful = allPoints.indexOfFirst { it.spentPaise > 0L || it.incomePaise > 0L || it.isSelected }
-        if (firstUseful > 0) allPoints.drop(firstUseful) else allPoints
+        if (allPoints.size == 12) {
+            allPoints
+        } else {
+            val firstUseful = allPoints.indexOfFirst { it.spentPaise > 0L || it.incomePaise > 0L || it.isSelected }
+            if (firstUseful > 0) allPoints.drop(firstUseful) else allPoints
+        }
     }
     var selectedIdx by remember(points) { mutableIntStateOf(points.indexOfLast { it.isSelected }.coerceAtLeast(0)) }
     val selectedPoint = points.getOrNull(selectedIdx) ?: points.last()
@@ -341,6 +373,9 @@ internal fun MultiCycleTrendCard(
         )
     }
     val entered = rememberEntered(250)
+
+    val isYearView = allPoints.size == 12
+    val periodSuffix = if (isYearView) "" else " cycle"
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -360,8 +395,8 @@ internal fun MultiCycleTrendCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         if (selectedPoint.rangeLabel.isNotBlank())
-                            "${selectedPoint.label} cycle · ${selectedPoint.rangeLabel}"
-                        else "${selectedPoint.label} cycle",
+                            "${selectedPoint.label}$periodSuffix · ${selectedPoint.rangeLabel}"
+                        else "${selectedPoint.label}$periodSuffix",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -388,7 +423,7 @@ internal fun MultiCycleTrendCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
                 ) {
                     Text(
-                        if (points.size >= 2) "${points.size}-cycle trend" else "Trend",
+                        if (isYearView) "Monthly trend" else if (points.size >= 2) "${points.size}-cycle trend" else "Trend",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -401,7 +436,7 @@ internal fun MultiCycleTrendCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(120.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (points.size > 8) 4.dp else 10.dp),
                 verticalAlignment = Alignment.Bottom
             ) {
                 points.forEachIndexed { idx, pt ->
@@ -448,7 +483,7 @@ internal fun MultiCycleTrendCard(
                                 if (hasData) {
                                     Text(
                                         text = compactRupees(pt.spentPaise),
-                                        fontSize = 11.sp,
+                                        fontSize = if (points.size > 8) 9.sp else 11.sp,
                                         fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
                                         color = if (isSel) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
@@ -457,8 +492,8 @@ internal fun MultiCycleTrendCard(
                                 }
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxWidth(0.68f)
-                                        .widthIn(max = 48.dp)
+                                        .fillMaxWidth(if (points.size > 8) 0.85f else 0.68f)
+                                        .widthIn(max = if (points.size > 8) 28.dp else 48.dp)
                                         .fillMaxHeight(animSpend * 0.8f)
                                         .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
                                         .background(barColor)
@@ -468,7 +503,7 @@ internal fun MultiCycleTrendCard(
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = pt.label,
-                            fontSize = 11.sp,
+                            fontSize = if (points.size > 8) 10.sp else 11.sp,
                             fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
                             color = if (isSel) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1
@@ -477,7 +512,7 @@ internal fun MultiCycleTrendCard(
                 }
             }
 
-            if (points.size < 6) {
+            if (!isYearView && points.size < 6) {
                 Text(
                     "Earlier cycles will appear as you keep using the app",
                     fontSize = 12.sp,

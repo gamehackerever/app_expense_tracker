@@ -25,6 +25,7 @@ object CategoryClassifier {
         "Investments",
         "Gifts & Festivals",
         "Transfer",
+        "Unspecified",
         "Uncategorized"
     )
 
@@ -63,6 +64,38 @@ object CategoryClassifier {
             "self transfer", "credit card bill", "cc bill", "internal transfer",
             "auto sweep", "own a/c", "sweep in", "sweep out", "upi lite load", "wallet load"
         ),
+        "Food & Dining" to createRegex(
+            "puffs?", "egg\\s+puff", "veg\\s+puff", "chicken\\s+puff", "paneer\\s+puff",
+            "egg\\s+roll", "egg\\s+curry", "egg\\s+bhurji", "egg\\s+fried\\s+rice", "egg\\s+rice", "egg\\s+toast", "egg\\s+noodles",
+            "omelet", "omelette", "omlet", "boiled\\s+egg",
+            "breakfast", "lunch", "dinner", "supper", "brunch", "meals?", "tiffin",
+            "sandwiches?", "sandwich", "toast", "noodles", "chowmein", "fried\\s+rice", "pasta",
+            "kachori", "jalebi", "pakoda", "pakoras?", "bhajji", "bajjis?", "vada", "medu\\s+vada",
+            "dosa", "masala\\s+dosa", "idli", "vada\\s+pav", "pav\\s+bhaji", "misal\\s+pav", "poori", "puri",
+            "chole\\s+bhature", "bhatura", "parathas?", "parotta", "porotta", "aloo\\s+paratha", "rotis?", "naan", "kulcha", "chapati",
+            "pastry", "pastries", "brownies?", "cakes?", "donuts?", "doughnuts?", "desserts?", "waffles?",
+            "cappuccino", "latte", "espresso", "soda", "cold\\s+drinks?",
+            "gulab\\s+jamun", "rasgulla", "kaju\\s+katli", "halwa", "laddus?", "ladoos?", "barfi", "pedas?",
+            "starbucks", "swiggy", "zomato", "dineout", "eazy diner", "magicpin", "eatsure",
+            "rebel foods", "faasos", "behrouz", "oven story", "lunchbox", "mcdonalds?", "kfc",
+            "burger", "burger king", "cafe", "restaurant", "pizza", "pizza hut", "subway",
+            "dominos?", "tea", "coffee", "bistro", "bakery", "bakers", "hotel", "shawarma",
+            "biryani", "broast", "shawaya", "mandhi", "kuzhimanthi", "alfaham", "canteen", "mess",
+            "coolbar", "bakes", "juice", "chai", "chaayos", "chai point", "chai sutta",
+            "third wave", "blue tokai", "ccd", "cafe coffee day", "diner", "eatery",
+            "kitchen", "grill", "haldirams?", "bikanervala", "a2b", "adyar ananda",
+            "saravana bhavan", "rameshwaram cafe", "udupi", "udipi", "darshini", "aryas",
+            "indian coffee house", "paragon", "rahmath", "thalappakatti", "paradise biryani",
+            "meghana foods", "empire restaurant", "bawarchi", "pista house", "al-baik", "al baik",
+            "barbeque nation", "wow momo", "taco bell", "baskin robbins", "naturals ice", "ibaco",
+            "polar bear", "corner house", "keventers", "belgian waffle", "theobroma",
+            "karachi bakery", "monginis", "mio amore", "just bake", "smoor", "sri krishna sweets",
+            "dhaba", "bhojanalaya", "thali", "food court", "momos", "rolls", "kathi", "frankie",
+            "chaat", "pani puri", "samosas?", "puttu", "thattukada", "tapri", "lassi", "shakes?", "milkshakes?", "smoothies?",
+            "sweets", "mithai", "namkeen", "farsan", "snacks", "restobar", "pub", "brewery",
+            "kebab", "tandoori", "chicken", "mutton", "ice\\s*cream", "icecream", "kulfi", "falooda", "meals", "bhavan",
+            "food", "foods", "eats", "refreshments?", "bites"
+        ),
         "Groceries" to createRegex(
             "blinkit", "zepto", "instamart", "swiggy instamart", "bigbasket", "bbnow", "bb daily",
             "dmart", "d-mart", "avenue supermarts", "grofers", "spencer", "spencers", "supermarket",
@@ -73,29 +106,10 @@ object CategoryClassifier {
             "mother dairy", "amul", "nandini", "milma", "aavin", "verka", "country delight",
             "akshayakalpa", "licious", "freshtohome", "tender cuts", "zappfresh", "star bazaar",
             "spar hypermarket", "kirana", "provisions?", "minimart", "general store",
-            "departmental store", "dairy", "milk", "butcher", "fish market", "poultry", "atta chakki",
+            "departmental store", "dairy", "milk", "curd", "dahi", "paneer", "butter", "cheese", "ghee",
+            "rice", "wheat", "atta", "flour", "dals?", "pulses", "oil", "cooking\\s+oil", "spices", "masala", "salt", "sugar",
+            "eggs?", "butcher", "fish market", "poultry", "atta chakki", "bread", "biscuits?", "maggi", "cereals?", "oats",
             "ma mart", "super mart", "fresh mart", "supermarket"
-        ),
-        "Food & Dining" to createRegex(
-            "starbucks", "swiggy", "zomato", "dineout", "eazy diner", "magicpin", "eatsure",
-            "rebel foods", "faasos", "behrouz", "oven story", "lunchbox", "mcdonalds?", "kfc",
-            "burger", "burger king", "cafe", "restaurant", "pizza", "pizza hut", "subway",
-            "dominos?", "tea", "coffee", "bistro", "bakery", "bakers", "hotel", "shawarma",
-            "biryani", "broast", "shawaya", "mandhi", "kuzhimanthi", "alfaham", "canteen", "mess",
-            "coolbar", "bakes", "juice", "chai", "chaayos", "chai point", "chai sutta",
-            "third wave", "blue tokai", "ccd", "cafe coffee day", "diner", "tiffin", "eatery",
-            "kitchen", "grill", "haldirams?", "bikanervala", "a2b", "adyar ananda",
-            "saravana bhavan", "rameshwaram cafe", "udupi", "udipi", "darshini", "aryas",
-            "indian coffee house", "paragon", "rahmath", "thalappakatti", "paradise biryani",
-            "meghana foods", "empire restaurant", "bawarchi", "pista house", "al-baik", "al baik",
-            "barbeque nation", "wow momo", "taco bell", "baskin robbins", "naturals ice", "ibaco",
-            "polar bear", "corner house", "keventers", "belgian waffle", "waffles?", "theobroma",
-            "karachi bakery", "monginis", "mio amore", "just bake", "smoor", "sri krishna sweets",
-            "dhaba", "bhojanalaya", "thali", "food court", "momos", "rolls", "kathi", "frankie",
-            "chaat", "pani puri", "samosa", "vada pav", "misal", "pav bhaji", "dosa", "idli",
-            "parotta", "porotta", "puttu", "thattukada", "tapri", "lassi", "shake", "smoothie",
-            "sweets", "mithai", "namkeen", "farsan", "snacks", "restobar", "pub", "brewery",
-            "kebab", "tandoori", "chicken", "mutton", "ice cream", "icecream", "kulfi", "falooda", "meals", "bhavan"
         ),
         "Fuel & Fastag" to createRegex(
             "hpcl", "hindustan petroleum", "hp pay", "bpcl", "bharat petroleum", "smartdrive",
@@ -181,13 +195,15 @@ object CategoryClassifier {
             "et prime", "moneycontrol pro"
         ),
         "Entertainment" to createRegex(
+            "book\\s*my\\s*show", "bookmyshow", "bigtree\\s*(?:entertainment)?", "bigtree", "bms",
             "pvr", "inox", "pvr inox", "cinepolis", "miraj cinemas", "carnival cinemas",
-            "ags cinemas", "sathyam cinemas", "spi cinemas", "bookmyshow", "paytm insider",
-            "district", "steam", "playstation", "psn", "xbox", "epic games", "nintendo",
+            "ags cinemas", "sathyam cinemas", "spi cinemas", "paytm insider", "ticketnew",
+            "insider\\.in", "district", "steam", "playstation", "psn", "xbox", "epic games", "nintendo",
             "riot games", "krafton", "bgmi", "wonderla", "imagicaa", "esselworld", "ramoji",
             "snow world", "veega land", "smaash", "timezone", "funcity", "amoeba", "bowling",
             "go karting", "laser tag", "playo", "hudle", "turf", "badminton court", "box cricket",
-            "futsal", "gaming", "cinema", "movies", "theatre", "multiplex", "concert"
+            "futsal", "gaming", "cinema", "movies?", "theatre", "multiplex", "concert",
+            "movie\\s*tickets?", "cinema\\s*tickets?", "theatre\\s*tickets?", "concert\\s*tickets?", "show\\s*tickets?"
         ),
         "Personal Care" to createRegex(
             "nykaa", "purplle", "tira", "sephora", "mac cosmetics", "sugar cosmetics",
@@ -199,17 +215,28 @@ object CategoryClassifier {
             "facial", "manicure", "pedicure", "cosmetics", "skincare"
         ),
         "Education" to createRegex(
-            "physicswallah", "pw live", "allen career", "aakash institute", "resonance",
+            "pens?", "ball\\s*pens?", "gel\\s*pens?", "fountain\\s*pens?", "ink\\s*pens?", "pilot\\s*pens?", "sketch\\s*pens?",
+            "pencils?", "lead\\s*pencils?", "colour\\s*pencils?", "color\\s*pencils?",
+            "stationery", "stationary", "staionery", "stationers?", "stationery\\s*mart", "stationery\\s*shop", "stationery\\s*store",
+            "notebooks?", "notepads?", "registers?", "erasers?", "sharpeners?", "rulers?", "geometry\\s*box", "compass",
+            "highlighters?", "markers?", "whiteboard\\s*markers?", "staplers?", "staple\\s*pins?", "fevicol", "glue\\s*stick", "paper\\s*clips?",
+            "chart\\s*papers?", "a4\\s*sheets?", "a4\\s*papers?", "printer\\s*papers?", "drawing\\s*books?", "craft\\s*papers?",
+            "classmate", "camlin", "kokuyo", "doms", "apsara", "nataraj", "reynolds", "flair\\s*(?:pen)?", "luxor", "uniball", "staedtler", "faber\\s*castell", "parker\\s*(?:pen)?",
+            "xerox", "photostat", "printouts?", "spiral\\s*binding", "lamination", "photocopy",
+            "bookstore", "book\\s*store", "book\\s*depot", "book\\s*stall", "book\\s*shop", "crossword\\s*bookstores?", "sapna\\s*book", "dc\\s*books", "mathrubhumi\\s*books", "higginbothams",
+            "crossword", "scholastic",
+            "physicswallah", "pw\\b", "pw live", "allen career", "aakash institute", "resonance",
             "fiitjee", "motion education", "narayana group", "sri chaitanya", "brilliant pala",
             "xylem learning", "eduport", "entri app", "adda247", "testbook", "oliveboard",
             "byjus", "byju's", "unacademy", "vedantu", "toppr", "extramarks", "doubtnut",
             "upgrad", "scaler", "great learning", "simplilearn", "masai school", "nxtwave",
             "coding ninjas", "coursera", "udemy", "edx", "pluralsight", "skillshare", "datacamp",
-            "leetcode", "duolingo", "sapna book", "dc books", "mathrubhumi books", "higginbothams",
-            "crossword", "scholastic", "nta exam", "upsc", "ssc fee", "ibps", "gate exam",
-            "cat exam", "icai", "school fee", "college fee", "university fee", "tuition",
-            "coaching", "academy", "institute", "semester fee", "exam fee", "admission fee",
-            "bookstore", "book stall", "stationery", "xerox", "photocopy"
+            "leetcode", "duolingo", "nta exam", "upsc", "ssc fee", "ibps", "gate exam",
+            "cat exam", "icai", "school\\s*fees?", "college\\s*fees?", "university\\s*fees?", "tuition", "tution",
+            "coaching", "academy", "institute", "semester\\s*fees?", "exam\\s*fees?", "admission\\s*fees?",
+            "hostel\\s*fees?", "library\\s*fees?", "course\\s*fees?", "training\\s*fees?", "education", "schools?",
+            "colleges?", "university", "vidyalaya", "gurukul", "preschool", "kindergarten",
+            "daycare", "creche"
         ),
         "Shopping" to createRegex(
             "amazon", "amzn", "flipkart", "myntra", "meesho", "ajio", "zara", "h&m", "uniqlo",
@@ -336,14 +363,36 @@ object CategoryClassifier {
             "microsoft 365", "chatgpt", "openai", "claude", "anthropic", "canva", "adobe"
         ),
         "Entertainment" to createRegex(
-            "pvr inox", "cinepolis", "bookmyshow", "steam", "playstation", "wonderla"
+            "book\\s*my\\s*show", "bookmyshow", "bigtree\\s*(?:entertainment)?", "bms", "ticketnew",
+            "paytm\\s*insider", "insider\\.in", "district", "pvr", "inox", "pvr\\s*inox", "cinepolis",
+            "miraj\\s*cinemas?", "carnival\\s*cinemas?", "wave\\s*cinemas?", "imax", "cinemas?",
+            "theatres?", "multiplex", "movie\\s*tickets?", "cinema\\s*tickets?", "theatre\\s*tickets?",
+            "concert\\s*tickets?", "show\\s*tickets?", "movies?", "wonderla", "imagicaa?", "essel\\s*world",
+            "smaaash", "play\\s*arena", "timezone", "mystery\\s*rooms", "trampoline\\s*park",
+            "steam", "playstation", "sony\\s*interactive", "xbox", "nintendo", "epic\\s*games",
+            "riot\\s*games", "blizzard", "ubisoft", "ea\\s*games", "krafton", "bgmi", "supercell",
+            "roblox", "discord", "gaming\\s*zone", "arcade", "snooker", "bowling", "standup\\s*comedy"
         ),
         "Personal Care" to createRegex(
-            "nykaa", "purplle", "sephora", "mamaearth", "minimalist", "lakme salon", "naturals salon"
+            "nykaa", "purplle", "sephora", "mamaearth", "minimalist", "lakme\\s*salon", "naturals\\s*salon", "enrich\\s*salon", "jawed\\s*habib",
+            "salon", "saloon", "parlour", "parlor", "haircut", "barber", "spa", "grooming", "facial", "massage", "shave", "skincare", "cosmetics"
         ),
         "Education" to createRegex(
-            "physicswallah", "allen career", "aakash institute", "brilliant pala", "xylem learning",
-            "eduport", "entri app", "adda247", "testbook", "unacademy", "coursera", "udemy", "dc books"
+            "pens?", "ball\\s*pens?", "gel\\s*pens?", "fountain\\s*pens?", "ink\\s*pens?", "pilot\\s*pens?", "sketch\\s*pens?",
+            "pencils?", "lead\\s*pencils?", "colour\\s*pencils?", "color\\s*pencils?",
+            "stationery", "stationary", "staionery", "stationers?", "stationery\\s*mart", "stationery\\s*shop", "stationery\\s*store",
+            "notebooks?", "notepads?", "registers?", "erasers?", "sharpeners?", "rulers?", "geometry\\s*box", "compass",
+            "highlighters?", "markers?", "whiteboard\\s*markers?", "staplers?", "staple\\s*pins?", "fevicol", "glue\\s*stick", "paper\\s*clips?",
+            "chart\\s*papers?", "a4\\s*sheets?", "a4\\s*papers?", "printer\\s*papers?", "drawing\\s*books?", "craft\\s*papers?",
+            "book\\s*store", "book\\s*depot", "book\\s*stall", "book\\s*shop", "crossword\\s*bookstores?", "sapna\\s*book\\s*house", "higginbothams", "dc\\s*books",
+            "xerox", "photostat", "printouts?", "spiral\\s*binding", "lamination",
+            "classmate", "camlin", "kokuyo", "doms", "apsara", "nataraj", "reynolds", "flair\\s*(?:pen)?", "luxor", "uniball", "staedtler", "faber\\s*castell", "parker\\s*(?:pen)?",
+            "tuition", "tution", "coaching", "academy", "vidyalaya", "vidyapeeth", "gurukul", "schools?", "colleges?", "university", "preschool", "kindergarten", "daycare",
+            "school\\s*fees?", "college\\s*fees?", "tuition\\s*fees?", "tution\\s*fees?", "coaching\\s*fees?", "exam\\s*fees?", "admission\\s*fees?", "semester\\s*fees?", "hostel\\s*fees?",
+            "physicswallah", "pw\\b", "allen\\s*(?:career)?", "aakash\\s*(?:institute)?", "fiitjee", "resonance", "pace\\s*iit", "sri\\s*chaitanya", "narayana\\s*educational",
+            "brilliant\\s*pala", "xylem\\s*learning", "eduport", "entri\\s*app", "adda247", "testbook", "unacademy", "byjus?", "vedantu",
+            "coursera", "udemy", "edx", "skillshare", "upgrad", "simplilearn", "great\\s*learning", "scaler\\s*academy", "coding\\s*ninjas", "geeksforgeeks", "leetcode",
+            "upsc", "neet", "jee\\s*(?:main|advanced)", "gate\\s*exam", "cat\\s*exam", "clat", "ielts", "toefl", "gre\\s*exam", "gmat", "textbooks?", "study\\s*materials?"
         ),
         "Shopping" to createRegex(
             "amazon", "flipkart", "myntra", "meesho", "ajio", "zara", "uniqlo", "decathlon",
@@ -354,14 +403,16 @@ object CategoryClassifier {
             "firstcry", "kalyan silks", "jayalakshmi", "seemas", "pulimoottil"
         ),
         "Health" to createRegex(
-            "apollo pharmacy", "apollo hospitals", "pharmeasy", "tata 1mg", "netmeds", "medplus",
-            "lal pathlabs", "thyrocare", "ddrc", "manipal hospital", "fortis", "amrita hospital",
-            "rajagiri", "lakeshore", "baby memorial", "cultfit", "healthkart", "muscleblaze"
+            "apollo\\s*pharmacy", "apollo\\s*hospitals?", "pharmeasy", "tata\\s*1mg", "1mg", "netmeds", "medplus",
+            "lal\\s*pathlabs", "thyrocare", "ddrc", "manipal\\s*hospital", "fortis", "amrita\\s*hospital",
+            "rajagiri", "lakeshore", "baby\\s*memorial", "cultfit", "healthkart", "muscleblaze",
+            "pharmacy", "medicals?", "medicine", "medicines", "tablets?", "syrup", "clinic", "hospital", "doctor",
+            "dentist", "dental", "pathology", "diagnostics", "blood\\s*test", "lab\\s*test", "opticals?", "eye\\s*care", "scans?"
         ),
         "Investments" to createRegex(
-            "zerodha", "groww", "upstox", "angel one", "paytm money", "indmoney", "kuvera",
-            "smallcase", "geojit", "cams", "kfintech", "sbi mf", "hdfc mf", "parag parikh",
-            "jar app", "gullak", "safegold", "ksfe"
+            "zerodha", "groww", "upstox", "angel\\s*one", "paytm\\s*money", "indmoney", "kuvera",
+            "smallcase", "geojit", "cams", "kfintech", "sbi\\s*mf", "hdfc\\s*mf", "parag\\s*parikh",
+            "jar\\s*app", "gullak", "safegold", "ksfe", "mutual\\s*funds?", "sip", "stocks?", "shares?", "demat"
         ),
         "Gifts & Festivals" to createRegex(
             "ferns n petals", "floweraura", "guruvayur", "sabarimala", "travancore devaswom",
@@ -374,42 +425,26 @@ object CategoryClassifier {
         return Regex("(?i)\\b($pattern)\\b")
     }
 
-    fun classifySync(payee: String, rawContent: String): String {
-        val cleanPayee = payee.trim()
-        val generic = isGenericPayee(cleanPayee)
+    data class Decision(
+        val category: String,
+        val confidence: Float,
+        val source: DecisionSource,
+        val explanation: String
+    )
 
-        // 0. Check VPA memory first
-        if (!generic) {
-            SmsPatternLearner.lookupVpa(cleanPayee)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
-                return it
-            }
-        }
-        SmsPatternLearner.lookupVpa(rawContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
-            return it
-        }
-
-        if (!generic) {
-            // Fold spelling variants first so "Biriyani" / "Cofee" / "Super Market" hit the same keyword rules.
-            val canonical = PayeeHeuristics.canonicalize(cleanPayee)
-            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(canonical)) {
-                    return category
-                }
-            }
-        }
-
-        if (rawContent.isNotBlank() && rawContent != cleanPayee) {
-            for ((category, regex) in RAW_CONTENT_CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(rawContent)) {
-                    return category
-                }
-            }
-        }
-
-        // Last: generic shop-type words and one-letter typos ("... Foods", "... Medicals", "Restorent").
-        if (!generic) PayeeHeuristics.categoryHint(cleanPayee)?.let { return it }
-
-        return "Uncategorized"
+    enum class DecisionSource {
+        USER_LEARNED_RULE,
+        VPA_MEMORY,
+        USER_NOTE,
+        MCC_CODE,
+        MCC_GATEWAY,
+        MERCHANT_ENTITY,
+        CONTEXTUAL_BEHAVIORAL,
+        SEMANTIC_VECTOR,
+        NAIVE_BAYES_ML,
+        RAW_CONTENT_MATCH,
+        SHOP_HEURISTIC,
+        FALLBACK_UNSPECIFIED
     }
 
     private val categoryCache = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -419,62 +454,280 @@ object CategoryClassifier {
         NaiveBayesCategorizer.invalidate()
     }
 
-    suspend fun classify(
+    /**
+     * Unified multi-factor decision engine combining:
+     * 1. User note & remarks (highest intent)
+     * 2. User-learned rules & VPA memory
+     * 3. ISO 18245 MCC code detection
+     * 4. Commercial payment gateway handle decoding
+     * 5. Known merchant entity matching
+     * 6. Contextual & behavioral signals (amount, time of day, day of week, telco tiers, rent window)
+     * 7. Machine Learning (Naive Bayes generalization from taught rules)
+     * 8. Offline semantic vector centroid matching (cosine similarity)
+     * 9. Raw narration scanning
+     * 10. Generic shop-type and typo heuristics
+     */
+    /**
+     * Synchronous decision engine combining:
+     * 1. User note & remarks (highest intent)
+     * 2. VPA memory
+     * 3. ISO 18245 MCC code detection
+     * 4. Commercial payment gateway handle decoding
+     * 5. Known merchant entity matching
+     * 6. Contextual & behavioral signals (amount, time of day, day of week, telco tiers, rent window)
+     * 7. Offline semantic vector centroid matching (cosine similarity)
+     * 8. Raw narration scanning
+     * 9. Generic shop-type and typo heuristics
+     */
+    fun classifyDetailedSync(
         payee: String,
-        rawContent: String,
-        ruleDao: CategoryRuleDao
-    ): String {
-        val cleanPayee = payee.trim().lowercase(Locale.ROOT)
+        rawContent: String = "",
+        note: String? = null,
+        itemsSummary: String? = null,
+        amountPaise: Long? = null,
+        timestamp: Long? = null
+    ): Decision {
+        val (basePayee, inlineNote) = PayeeHeuristics.splitPayeeAndInlineNote(payee)
+        val cleanPayee = basePayee.replace('_', ' ').replace('/', ' ').trim()
         val generic = isGenericPayee(cleanPayee)
+        val cleanContent = rawContent.replace('_', ' ').replace('/', ' ').trim()
 
-        // 0. Check VPA memory
+        // 1. SMART LAYER: Evaluate user-written transaction note, inline payee note, or items summary first.
+        val combinedNote = listOfNotNull(
+            note?.takeIf { it.isNotBlank() },
+            inlineNote?.takeIf { it.isNotBlank() },
+            itemsSummary?.takeIf { it.isNotBlank() && it != note && it != inlineNote }
+        ).joinToString(" ").trim()
+
+        if (combinedNote.isNotBlank()) {
+            val cleanNote = combinedNote.replace('_', ' ').replace('/', ' ').trim()
+            val canonicalNote = PayeeHeuristics.canonicalize(cleanNote)
+            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
+                if (regex.containsMatchIn(canonicalNote)) {
+                    return Decision(category, 0.95f, DecisionSource.USER_NOTE, "Matched user note keyword: $cleanNote")
+                }
+            }
+            PayeeHeuristics.categoryHint(cleanNote)?.let {
+                return Decision(it, 0.88f, DecisionSource.USER_NOTE, "Shop/spelling hint on user note: $cleanNote")
+            }
+            SemanticCentroidClassifier.classifySemantic(cleanNote)?.let {
+                return Decision(it.category, it.similarity, DecisionSource.SEMANTIC_VECTOR, "Semantic match on user note: ${it.explanation}")
+            }
+        }
+
+        // 2. VPA memory lookup
         if (!generic) {
-            SmsPatternLearner.lookupVpa(cleanPayee)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
-                return it
+            SmsPatternLearner.lookupVpa(cleanPayee)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }?.let {
+                return Decision(it, 0.95f, DecisionSource.VPA_MEMORY, "Learned VPA memory for payee $cleanPayee")
             }
         }
-        SmsPatternLearner.lookupVpa(rawContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) }?.let {
-            return it
+        if (cleanContent.isNotBlank()) {
+            SmsPatternLearner.lookupVpa(cleanContent)?.category?.takeIf { !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }?.let {
+                return Decision(it, 0.92f, DecisionSource.VPA_MEMORY, "Learned VPA memory in raw narration")
+            }
         }
 
-        if (cleanPayee.isNotBlank() && !generic) {
-            categoryCache[cleanPayee]?.let { return it }
+        // 3. ISO 18245 MCC Code Detection in narration
+        MccAndGatewayClassifier.extractMccMatch(rawContent)?.let {
+            return Decision(it.category, 0.98f, DecisionSource.MCC_CODE, "ISO 18245 MCC ${it.mccCode} (${it.description})")
+        }
 
-            // 1. Exact or substring learned rule (never query for generic fallback payees)
-            val learned = ruleDao.findMatchingCategory(cleanPayee)
-            if (!learned.isNullOrBlank() && !learned.equals("Uncategorized", ignoreCase = true)) {
-                categoryCache[cleanPayee] = learned
-                return learned
+        // 4. Commercial Payment Gateway Handle Decoding (e.g. bookmyshow@razorpay -> bookmyshow)
+        val vpaCandidates = listOfNotNull(
+            cleanPayee.takeIf { it.contains("@") },
+            cleanContent.split(Regex("\\s+")).firstOrNull { it.contains("@") }
+        )
+        for (vpa in vpaCandidates) {
+            val gw = MccAndGatewayClassifier.parseGatewayVpa(vpa)
+            if (gw != null && gw.second) { // isGateway = true
+                val gwHandle = PayeeHeuristics.canonicalize(gw.first)
+                for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
+                    if (regex.containsMatchIn(gwHandle)) {
+                        return Decision(category, 0.90f, DecisionSource.MCC_GATEWAY, "Decoded commercial gateway handle @${gw.first}")
+                    }
+                }
             }
+        }
 
-            // 2. Known-merchant regex on the payee (spelling variants folded first)
+        // 5. Known Merchant / Entity Regex on Payee
+        val isPerson = !generic && PayeeHeuristics.looksLikePerson(cleanPayee)
+        if (!generic) {
             val canonical = PayeeHeuristics.canonicalize(cleanPayee)
             for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
                 if (regex.containsMatchIn(canonical)) {
-                    categoryCache[cleanPayee] = category
-                    return category
+                    return Decision(category, 0.90f, DecisionSource.MERCHANT_ENTITY, "Known merchant entity match: $cleanPayee")
                 }
             }
+        }
 
-            // 3. Subword 3-gram + word token + bigram Naive Bayes generalization from taught rules
-            NaiveBayesCategorizer.predict(cleanPayee, ruleDao)?.let {
-                categoryCache[cleanPayee] = it.category
-                return it.category
-            }
-
-            // 3b. Generic shop-type words and typos. Below anything the user taught, above raw SMS text.
+        // 6. Generic Shop-Type Words & Typo Heuristics on Payee (e.g. "Mahalakshmi Stores", "City Medicals", "Jk Foods")
+        if (!generic && !isPerson) {
             PayeeHeuristics.categoryHint(cleanPayee)?.let {
-                categoryCache[cleanPayee] = it
-                return it
+                return Decision(it, 0.88f, DecisionSource.SHOP_HEURISTIC, "Generic shop type hint on payee: $cleanPayee")
             }
         }
 
-        // 4. Last resort: scan the raw SMS/notification text for unambiguous brand names only
-        if (rawContent.isNotBlank()) {
-            for ((category, regex) in RAW_CONTENT_CATEGORY_REGEX_MAP) {
-                if (regex.containsMatchIn(rawContent)) return category
+        // 7. Contextual & Behavioral Signals (Amount, Time, Day, Telco plans, Rent window)
+        ContextualClassifier.evaluate(
+            amountPaise = amountPaise,
+            timestamp = timestamp,
+            payee = cleanPayee,
+            note = note,
+            rawContent = rawContent
+        )?.let {
+            return Decision(it.category, it.confidence, DecisionSource.CONTEXTUAL_BEHAVIORAL, it.explanation)
+        }
+
+        // 8. Semantic Subword Centroid Embedding (only if not a recognized personal name)
+        val textToEmbed = listOfNotNull(
+            cleanPayee.takeIf { !generic && !isPerson },
+            cleanContent.takeIf { it.isNotBlank() && it != cleanPayee && (!isPerson || it.contains("@") || it.contains("/")) }
+        ).joinToString(" ")
+        if (textToEmbed.isNotBlank()) {
+            SemanticCentroidClassifier.classifySemantic(textToEmbed)?.let {
+                return Decision(it.category, it.similarity, DecisionSource.SEMANTIC_VECTOR, it.explanation)
             }
         }
-        return "Uncategorized"
+
+        // 9. Raw Narration / Content Scan for unambiguous brand names
+        if (cleanContent.isNotBlank() && cleanContent != cleanPayee) {
+            val canonicalContent = PayeeHeuristics.canonicalize(cleanContent)
+            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
+                if (regex.containsMatchIn(canonicalContent)) {
+                    return Decision(category, 0.85f, DecisionSource.RAW_CONTENT_MATCH, "Narration keyword match")
+                }
+            }
+            PayeeHeuristics.categoryHint(cleanContent)?.let {
+                return Decision(it, 0.70f, DecisionSource.SHOP_HEURISTIC, "Generic shop type hint on narration")
+            }
+        }
+
+        return Decision("Uncategorized", 0.0f, DecisionSource.FALLBACK_UNSPECIFIED, "No confident match found")
+    }
+
+    /**
+     * Asynchronous full decision engine including learned database rules and Naive Bayes ML.
+     */
+    suspend fun classifyDetailed(
+        payee: String,
+        rawContent: String = "",
+        note: String? = null,
+        itemsSummary: String? = null,
+        amountPaise: Long? = null,
+        timestamp: Long? = null,
+        ruleDao: CategoryRuleDao? = null
+    ): Decision {
+        val (basePayee, inlineNote) = PayeeHeuristics.splitPayeeAndInlineNote(payee)
+        val cleanPayee = basePayee.replace('_', ' ').replace('/', ' ').trim()
+        val generic = isGenericPayee(cleanPayee)
+        val isPerson = !generic && PayeeHeuristics.looksLikePerson(cleanPayee)
+
+        // 1. STRICT REMARKS / NOTES PRIORITY:
+        // Remarks from bank statements or user notes reflect specific transaction intent and strictly override payee rules.
+        val combinedNote = listOfNotNull(
+            note?.takeIf { it.isNotBlank() },
+            inlineNote?.takeIf { it.isNotBlank() },
+            itemsSummary?.takeIf { it.isNotBlank() && it != note && it != inlineNote }
+        ).joinToString(" ").trim()
+
+        if (combinedNote.isNotBlank()) {
+            val cleanNote = combinedNote.replace('_', ' ').replace('/', ' ').trim()
+            val canonicalNote = PayeeHeuristics.canonicalize(cleanNote)
+            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
+                if (regex.containsMatchIn(canonicalNote)) {
+                    return Decision(category, 0.95f, DecisionSource.USER_NOTE, "Matched remark keyword: $cleanNote")
+                }
+            }
+            PayeeHeuristics.categoryHint(cleanNote)?.let {
+                return Decision(it, 0.88f, DecisionSource.USER_NOTE, "Shop/spelling hint on remark: $cleanNote")
+            }
+            SemanticCentroidClassifier.classifySemantic(cleanNote)?.let {
+                return Decision(it.category, it.similarity, DecisionSource.SEMANTIC_VECTOR, "Semantic match on remark: ${it.explanation}")
+            }
+        }
+
+        // 2. User Learned Rule: strictly applied to merchants, NEVER to individual contacts/persons!
+        if (cleanPayee.isNotBlank() && !generic && !isPerson && ruleDao != null) {
+            val learned = ruleDao.findMatchingCategory(cleanPayee.lowercase(Locale.ROOT))
+            if (!learned.isNullOrBlank() && !learned.equals("Uncategorized", ignoreCase = true) && !learned.equals("Unspecified", ignoreCase = true)) {
+                return Decision(learned, 1.0f, DecisionSource.USER_LEARNED_RULE, "Exact user-taught rule for $cleanPayee")
+            }
+        }
+
+        // 3. Synchronous pipeline (MCC, gateway, regex, contextual, semantic, shop heuristics)
+        val syncDecision = classifyDetailedSync(
+            payee = payee,
+            rawContent = rawContent,
+            note = note,
+            itemsSummary = itemsSummary,
+            amountPaise = amountPaise,
+            timestamp = timestamp
+        )
+        if (syncDecision.category != "Uncategorized" && syncDecision.category != "Unspecified") {
+            return syncDecision
+        }
+
+        // 4. Machine Learning (Naive Bayes generalization from user-taught rules): only for merchants
+        if (!generic && !isPerson && ruleDao != null) {
+            NaiveBayesCategorizer.predict(cleanPayee.lowercase(Locale.ROOT), ruleDao)?.let {
+                return Decision(it.category, it.confidence.toFloat(), DecisionSource.NAIVE_BAYES_ML, "Naive Bayes subword generalization")
+            }
+        }
+
+        return syncDecision
+    }
+
+    fun classifySync(
+        payee: String,
+        rawContent: String = "",
+        note: String? = null,
+        itemsSummary: String? = null,
+        amountPaise: Long? = null,
+        timestamp: Long? = null
+    ): String {
+        return classifyDetailedSync(
+            payee = payee,
+            rawContent = rawContent,
+            note = note,
+            itemsSummary = itemsSummary,
+            amountPaise = amountPaise,
+            timestamp = timestamp
+        ).category
+    }
+
+    suspend fun classify(
+        payee: String,
+        rawContent: String = "",
+        ruleDao: CategoryRuleDao? = null,
+        note: String? = null,
+        itemsSummary: String? = null,
+        amountPaise: Long? = null,
+        timestamp: Long? = null
+    ): String {
+        val (basePayee, inlineNote) = PayeeHeuristics.splitPayeeAndInlineNote(payee)
+        val cleanPayee = basePayee.replace('_', ' ').replace('/', ' ').trim().lowercase(Locale.ROOT)
+        val hasSpecificNote = !note.isNullOrBlank() || !inlineNote.isNullOrBlank() || !itemsSummary.isNullOrBlank()
+        val isPerson = !isGenericPayee(cleanPayee) && PayeeHeuristics.looksLikePerson(cleanPayee)
+
+        val canUseCache = cleanPayee.isNotBlank() && !isGenericPayee(cleanPayee) && !hasSpecificNote && !isPerson
+        if (canUseCache) {
+            categoryCache[cleanPayee]?.let { return it }
+        }
+
+        val decision = classifyDetailed(
+            payee = payee,
+            rawContent = rawContent,
+            note = note,
+            itemsSummary = itemsSummary,
+            amountPaise = amountPaise,
+            timestamp = timestamp,
+            ruleDao = ruleDao
+        )
+
+        if (canUseCache && decision.category != "Uncategorized" && decision.category != "Unspecified") {
+            categoryCache[cleanPayee] = decision.category
+        }
+
+        return decision.category
     }
 }

@@ -45,7 +45,7 @@ fun DashboardTopBar(
     onSettings: () -> Unit
 ) {
     val dividerAlpha by animateFloatAsState(if (isScrolled) 1f else 0f, tween(180), label = "headerDivider")
-    val captureHealthy = isManualModePreferred || ((hasSmsPermission || hasNotificationPermission) && isIgnoringBatteryOptimizations)
+    val captureHealthy = isManualModePreferred || hasSmsPermission || hasNotificationPermission
     val statusColor = if (captureHealthy) AppColors.positive else AppColors.warning
 
     Column(
@@ -90,7 +90,7 @@ fun DashboardTopBar(
                 }
             } else {
                 DashboardHeader(
-                    monthLabel = if (previousCycleLabel != null) "Previous cycle" else currentMonthName,
+                    monthLabel = currentMonthName,
                     cycleLabel = previousCycleLabel ?: com.expensetracker.offline.util.BillingCycleHelper.getCycleLabel(startDayOfMonth),
                     statusColor = statusColor,
                     searchActive = searchOpen || searchQuery.isNotEmpty(),

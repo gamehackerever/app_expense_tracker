@@ -28,4 +28,83 @@ class PayeeHeuristicsTest {
             assertFalse(n, PayeeHeuristics.looksLikePerson(n))
         }
     }
+
+    @Test fun smartLayer_noteWithPuff_classifiedAsFoodAndDining() {
+        // Even when paying an individual person ("Ramesh Kumar"), note "puff" makes it Food & Dining!
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Ramesh Kumar", "UPI/412345/Ramesh", note = "puff"))
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Suresh", "Paid to Suresh", note = "egg puff and chai"))
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("UPI Payment", "Paid 50", note = "veg puff"))
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Raju", "Paid 80", note = "egg roll"))
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Anand", "Paid 120", note = "egg fried rice"))
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Hotel", "Paid 50", note = "omelet"))
+        assertEquals("Groceries", CategoryClassifier.classifySync("Vendor", "Paid 60", note = "eggs"))
+        assertEquals("Groceries", CategoryClassifier.classifySync("Farm Fresh", "Paid 180", note = "tray of eggs"))
+    }
+
+    @Test fun smartLayer_noteClassifiesVariousExpenseCategories() {
+        assertEquals("Fuel & Fastag", CategoryClassifier.classifySync("UPI Payment", "Paid 200", note = "petrol"))
+        assertEquals("Personal Care", CategoryClassifier.classifySync("Anil Kumar", "Paid to Anil", note = "hair cut"))
+        assertEquals("Health", CategoryClassifier.classifySync("Mohan", "Paid to Mohan", note = "paracetamol medicine"))
+        assertEquals("Groceries", CategoryClassifier.classifySync("Kirana Vendor", "Paid 500", note = "groceries and milk"))
+        assertEquals("Recharge & Telecom", CategoryClassifier.classifySync("UPI Payment", "Paid 299", note = "mobile recharge"))
+        assertEquals("Rent & Housing", CategoryClassifier.classifySync("Landlord Sharma", "Paid 15000", note = "house rent"))
+        assertEquals("Education", CategoryClassifier.classifySync("Ravi Sir", "Paid 2000", note = "tuition fees"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Deepak", "Paid 400", note = "movie tickets"))
+    }
+
+    @Test fun smartLayer_payeeWithPuffEntity_classifiedAsFoodAndDining() {
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Puff Corner", "UPI/123/PUFF_CORNER/CNRB"))
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Bangalore Puffs & Bakes", "Bangalore Puffs & Bakes"))
+    }
+
+    @Test fun smartLayer_bookMyShow_classifiedAsEntertainment() {
+        assertEquals("Entertainment", CategoryClassifier.classifySync("BookMyShow", "UPI/412345/BOOKMYSHOW/CNRB"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Book My Show", "UPI/412345/BOOK_MY_SHOW/CNRB"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Bigtree Entertainment", "POS 412345 BIGTREE ENTERTAINMENT MUMBAI"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Bigtree", "INB/BIGTREE/412345"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("BMS", "UPI/412345/BMS/ICIC"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Raju", "Paid to Raju", note = "BookMyShow"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Raju", "Paid to Raju", note = "book my show"))
+        assertEquals("Entertainment", CategoryClassifier.classifySync("Deepak", "Paid to Deepak", note = "movie tickets"))
+    }
+
+    @Test fun smartLayer_penAndStationery_classifiedAsEducation() {
+        assertEquals("Education", CategoryClassifier.classifySync("Raju", "UPI/412345/DR/RAJU/CNRB/raju@okaxis/pen", note = "pen"))
+        assertEquals("Education", CategoryClassifier.classifySync("Vendor", "Paid 20", note = "pens"))
+        assertEquals("Education", CategoryClassifier.classifySync("Shop", "Paid 50", note = "pencils"))
+        assertEquals("Education", CategoryClassifier.classifySync("Store", "Paid 100", note = "notebook"))
+        assertEquals("Education", CategoryClassifier.classifySync("Sri Krishna Stationery", "UPI/412345/SRI_KRISHNA_STATIONERY"))
+        assertEquals("Education", CategoryClassifier.classifySync("Apsara Pen House", "POS 412345 APSARA PEN HOUSE"))
+        assertEquals("Education", CategoryClassifier.classifySync("Vendor", "Paid 80", note = "staionery"))
+        assertEquals("Education", CategoryClassifier.classifySync("Vendor", "Paid 80", note = "stationery"))
+        assertEquals("Education", CategoryClassifier.classifySync("Student Xerox", "UPI/412345/STUDENT_XEROX"))
+        assertEquals("Education", CategoryClassifier.classifySync("Vendor", "Paid 30", note = "xerox and printout"))
+    }
+
+    @Test fun smartLayer_unclassifiablePersonWithoutNote_staysUncategorized() {
+        assertEquals("Uncategorized", CategoryClassifier.classifySync("Ramesh Kumar", "UPI/412345/Ramesh/CNRB", note = null))
+        assertEquals("Uncategorized", CategoryClassifier.classifySync("Pradeep", "Paid 500 to Pradeep", note = null))
+    }
+
+    @Test fun testPradeepSingleWordPersonAndInlineNote() {
+        // "Pradeep" is recognized as a person
+        assertTrue(PayeeHeuristics.looksLikePerson("Pradeep"))
+        assertTrue(PayeeHeuristics.looksLikePerson("Rahul"))
+        assertTrue(PayeeHeuristics.looksLikePerson("Deepak"))
+        assertTrue(PayeeHeuristics.looksLikePerson("Suresh"))
+        assertTrue(PayeeHeuristics.looksLikePerson("Ramesh"))
+
+        // Without remarks, person payees remain Uncategorized
+        assertEquals("Uncategorized", CategoryClassifier.classifySync("Pradeep", "Paid to Pradeep"))
+
+        // Compound payee with inline note "Pradeep - pen" extracts "pen" as Education
+        assertEquals("Education", CategoryClassifier.classifySync("Pradeep - pen", "Paid to Pradeep"))
+        assertEquals("Education", CategoryClassifier.classifySync("Pradeep : pen", "Paid to Pradeep"))
+        assertEquals("Education", CategoryClassifier.classifySync("Pradeep / pen", "Paid to Pradeep"))
+
+        // Remarks strictly override payee: paying Pradeep for pen -> Education; paying Pradeep for lunch -> Food & Dining
+        assertEquals("Education", CategoryClassifier.classifySync("Pradeep", "Paid 20 to Pradeep", note = "pen"))
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Pradeep", "Paid 250 to Pradeep", note = "lunch"))
+        assertEquals("Rent & Housing", CategoryClassifier.classifySync("Pradeep", "Paid 12000 to Pradeep", note = "rent"))
+    }
 }

@@ -59,6 +59,25 @@ object BillingCycleHelper {
     }
 
     /**
+     * Returns Pair(startMillis, endMillis) for a calendar year shifted by [yearOffset]
+     * (0 = current year, -1 = last year, etc.).
+     */
+    fun getYearRangeForOffset(
+        yearOffset: Int,
+        referenceDate: LocalDate = LocalDate.now()
+    ): Pair<Long, Long> {
+        val targetYear = referenceDate.year + yearOffset
+        val start = LocalDate.of(targetYear, 1, 1)
+        val end = LocalDate.of(targetYear, 12, 31)
+        val zone = ZoneId.systemDefault()
+
+        val startMillis = start.atStartOfDay(zone).toInstant().toEpochMilli()
+        val endMillis = end.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1L
+
+        return Pair(startMillis, endMillis)
+    }
+
+    /**
      * The calendar month that "owns" a billing cycle: the month containing most of its days.
      * A cycle of 27 Oct - 26 Nov has 5 days in Oct and 26 in Nov, so it belongs to November.
      * [cycleOffset] shifts whole cycles (0 = current, 1 = next, -1 = previous).
@@ -90,10 +109,20 @@ object BillingCycleHelper {
     }
 
     fun getCycleLabel(startDay: Int, referenceDate: LocalDate = LocalDate.now()): String {
-        val (cycleStart, cycleEnd) = getCycleDates(startDay, referenceDate)
+        return getCycleLabelForOffset(startDay, cycleOffset = 0, referenceDate = referenceDate)
+    }
+
+    fun getCycleLabelForOffset(
+        startDay: Int,
+        cycleOffset: Int,
+        referenceDate: LocalDate = LocalDate.now()
+    ): String {
+        val (baseStart, _) = getCycleDates(startDay, referenceDate)
+        val shiftedStart = if (cycleOffset == 0) baseStart else baseStart.plusMonths(cycleOffset.toLong())
+        val shiftedEnd = shiftedStart.plusMonths(1).minusDays(1)
         val formatter = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
-        val s = cycleStart.format(formatter)
-        val e = cycleEnd.format(formatter)
+        val s = shiftedStart.format(formatter)
+        val e = shiftedEnd.format(formatter)
         return "$s – $e"
     }
 

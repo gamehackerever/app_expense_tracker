@@ -9,6 +9,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
@@ -21,7 +22,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import com.expensetracker.offline.ui.insights.MoneyHero
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -47,11 +50,13 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Handshake
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.Tune
@@ -74,6 +79,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -369,6 +375,8 @@ fun DashboardScreen(
         }
     }
     var selectedTimeRange by rememberSaveable { mutableStateOf(TimeRange.THIS_MONTH) }
+    var selectedCycleOffset by rememberSaveable { mutableIntStateOf(0) }
+    var showCycleSelectorSheet by rememberSaveable { mutableStateOf(false) }
 
     var isSelectionMode by rememberSaveable { mutableStateOf(false) }
     var selectedTxnIds by remember { mutableStateOf(emptySet<Long>()) }
@@ -476,6 +484,7 @@ fun DashboardScreen(
     }
 
     var hasNotificationPermission by remember { mutableStateOf(isNotificationPermissionGranted(context)) }
+    var isUpiNotifBannerDismissed by remember { mutableStateOf(false) }
 
     val powerManager = remember { context.getSystemService(Context.POWER_SERVICE) as PowerManager }
     var isIgnoringBatteryOptimizations by remember { mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName)) }
@@ -553,21 +562,18 @@ fun DashboardScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val previousCycleLabel = remember(selectedTimeRange, startDayOfMonth) {
-        if (selectedTimeRange != TimeRange.LAST_MONTH) null
-        else {
-            val fmt = SimpleDateFormat("d MMM", Locale.getDefault())
-            "${fmt.format(Date(startMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))} – " +
-                fmt.format(Date(endMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))
-        }
+    val currentMonthName = remember(startDayOfMonth, selectedCycleOffset) {
+        BillingCycleHelper.getCycleMonthName(startDayOfMonth, selectedCycleOffset)
+    }
+    val currentCycleRangeLabel = remember(startDayOfMonth, selectedCycleOffset) {
+        BillingCycleHelper.getCycleLabelForOffset(startDayOfMonth, selectedCycleOffset)
+    }
+    val previousCycleLabel = remember(selectedTimeRange, startDayOfMonth, selectedCycleOffset) {
+        if (selectedCycleOffset == 0 && selectedTimeRange != TimeRange.LAST_MONTH) null
+        else currentCycleRangeLabel
     }
     val lastCycleDateLabel = remember(startDayOfMonth) {
-        val fmt = SimpleDateFormat("d MMM", Locale.getDefault())
-        "${fmt.format(Date(startMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))} – " +
-            fmt.format(Date(endMillisFor(TimeRange.LAST_MONTH, startDayOfMonth)))
-    }
-    val currentMonthName = remember(startDayOfMonth, java.time.LocalDate.now()) {
-        BillingCycleHelper.getCycleMonthName(startDayOfMonth)
+        BillingCycleHelper.getCycleLabelForOffset(startDayOfMonth, -1)
     }
     val allAvailableCategories by produceState(
         initialValue = (CategoryClassifier.PREDEFINED_CATEGORIES + customCategories).distinct(),
@@ -590,7 +596,7 @@ fun DashboardScreen(
         }
     }
 
-    val timeBoundaries = remember(selectedTimeRange, startDayOfMonth) {
+    val timeBoundaries = remember(selectedTimeRange, startDayOfMonth, selectedCycleOffset) {
         val startOfDay = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
@@ -598,12 +604,12 @@ fun DashboardScreen(
             set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
-        val startOfCycle = BillingCycleHelper.getCycleRange(startDayOfMonth).first
+        val (startOfCycle, endOfCycle) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, selectedCycleOffset)
         val startOfYear = Calendar.getInstance().apply {
             set(Calendar.DAY_OF_YEAR, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
-        val startOfLastCycle = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -1).first
-        listOf(startOfDay, startOfWeek, startOfCycle, startOfYear, startOfLastCycle)
+        val (startOfLastCycle, _) = BillingCycleHelper.getCycleRangeForOffset(startDayOfMonth, -1)
+        listOf(startOfDay, startOfWeek, startOfCycle, startOfYear, startOfLastCycle, endOfCycle)
     }
 
     // ── Spend breakdown (leave categories out / single them out) ──
@@ -617,11 +623,11 @@ fun DashboardScreen(
     var budgetsStartInForm by rememberSaveable { mutableStateOf(false) }
     // The budget chosen in the Add sheet for the transaction being created (reset after saving).
     var pendingBudgetId by remember { mutableStateOf<String?>(null) }
-    val lensCategories = remember(transactionsWithDebts, selectedTimeRange, startDayOfMonth, pendingDeleteIds) {
+    val lensCategories = remember(transactionsWithDebts, selectedTimeRange, startDayOfMonth, pendingDeleteIds, selectedCycleOffset) {
         val net = computeCycleCategoryNetSpend(
             transactions = transactionsWithDebts,
-            cycleStart = startMillisFor(selectedTimeRange, startDayOfMonth),
-            cycleEnd = endMillisFor(selectedTimeRange, startDayOfMonth),
+            cycleStart = startMillisFor(selectedTimeRange, startDayOfMonth, selectedCycleOffset),
+            cycleEnd = endMillisFor(selectedTimeRange, startDayOfMonth, selectedCycleOffset),
             pendingDeleteIds = pendingDeleteIds.keys
         )
         val names = HashMap<String, String>()
@@ -639,7 +645,7 @@ fun DashboardScreen(
     }
 
     val filteredTransactions = remember(
-        transactionsWithDebts, debouncedSearchQuery, selectedFilterCategory, selectedTimeRange, selectedAccount, timeBoundaries, selectedSort
+        transactionsWithDebts, debouncedSearchQuery, selectedFilterCategory, selectedTimeRange, selectedAccount, timeBoundaries, selectedSort, selectedCycleOffset
     ) {
         val query = debouncedSearchQuery
         val categoryFilter = selectedFilterCategory
@@ -654,16 +660,16 @@ fun DashboardScreen(
             TimeRange.ALL_TIME -> Long.MIN_VALUE
             TimeRange.LAST_MONTH -> timeBoundaries[4]
         }
-        val maxTimestamp = if (range == TimeRange.LAST_MONTH) timeBoundaries[2] - 1L else Long.MAX_VALUE
-        val isDesc = transactionsWithDebts.size < 2 ||
-                transactionsWithDebts.first().transaction.timestamp >= transactionsWithDebts.last().transaction.timestamp
+        val maxTimestamp = when (range) {
+            TimeRange.THIS_MONTH -> if (selectedCycleOffset != 0) timeBoundaries[5] else Long.MAX_VALUE
+            TimeRange.LAST_MONTH -> timeBoundaries[2] - 1L
+            else -> Long.MAX_VALUE
+        }
         val out = ArrayList<TransactionWithDebts>()
         for (txnWithDebts in transactionsWithDebts) {
             val txn = txnWithDebts.transaction
             if (txn.timestamp > maxTimestamp) continue
-            if (txn.timestamp < minTimestamp) {
-                if (isDesc) break else continue
-            }
+            if (txn.timestamp < minTimestamp) continue
             if (!matchesAccountFilter(txn, currentAccount)) continue
 
             val matchesCategory = when (categoryFilter) {
@@ -690,7 +696,7 @@ fun DashboardScreen(
     }
 
     var visibleTransactionCount by rememberSaveable { mutableIntStateOf(50) }
-    LaunchedEffect(debouncedSearchQuery, selectedFilterCategory, selectedTimeRange, selectedAccount, selectedSort) {
+    LaunchedEffect(debouncedSearchQuery, selectedFilterCategory, selectedTimeRange, selectedAccount, selectedSort, selectedCycleOffset) {
         visibleTransactionCount = 50
         if (isSelectionMode) { isSelectionMode = false; selectedTxnIds = emptySet() }
     }
@@ -698,20 +704,17 @@ fun DashboardScreen(
 
     val splitLinkInfo by viewModel.splitLinkInfo.collectAsStateWithLifecycle()
 
-    val periodSpent = remember(transactionsWithDebts, selectedTimeRange, pendingDeleteIds, startDayOfMonth) {
-        val start = startMillisFor(selectedTimeRange, startDayOfMonth)
-        val end = endMillisFor(selectedTimeRange, startDayOfMonth)
-        val isDesc = transactionsWithDebts.size < 2 ||
-                transactionsWithDebts.first().transaction.timestamp >= transactionsWithDebts.last().transaction.timestamp
+    val periodSpent = remember(transactionsWithDebts, selectedTimeRange, selectedAccount, pendingDeleteIds, startDayOfMonth, selectedCycleOffset) {
+        val start = startMillisFor(selectedTimeRange, startDayOfMonth, selectedCycleOffset)
+        val end = endMillisFor(selectedTimeRange, startDayOfMonth, selectedCycleOffset)
         var gross = 0L
         var refunds = 0L
         for (item in transactionsWithDebts) {
             val txn = item.transaction
             if (txn.timestamp > end) continue
-            if (txn.timestamp < start) {
-                if (isDesc) break else continue
-            }
+            if (txn.timestamp < start) continue
             if (txn.id in pendingDeleteIds) continue
+            if (!matchesAccountFilter(txn, selectedAccount)) continue
             if (txn.countsAsSpend()) {
                 gross += mySpendShare(item)
             } else if (isRefundCredit(txn)) {
@@ -1387,6 +1390,31 @@ fun DashboardScreen(
         )
     }
 
+    if (showCycleSelectorSheet) {
+        val oldestTimestamp = remember(transactionsWithDebts) {
+            transactionsWithDebts.minOfOrNull { it.transaction.timestamp } ?: System.currentTimeMillis()
+        }
+        val monthsBack = remember(oldestTimestamp, startDayOfMonth) {
+            val now = java.time.LocalDate.now()
+            val oldest = java.time.Instant.ofEpochMilli(oldestTimestamp).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+            val diff = java.time.temporal.ChronoUnit.MONTHS.between(oldest.withDayOfMonth(1), now.withDayOfMonth(1)).toInt()
+            diff.coerceIn(12, 36)
+        }
+        CycleSelectorSheet(
+            startDayOfMonth = startDayOfMonth,
+            selectedOffset = selectedCycleOffset,
+            cycleCount = monthsBack,
+            onSelectOffset = { offset ->
+                selectedCycleOffset = offset
+                selectedTimeRange = TimeRange.THIS_MONTH
+            },
+            onConfigureStartDay = {
+                showStartDayDialog = true
+            },
+            onDismiss = { showCycleSelectorSheet = false }
+        )
+    }
+
     if (showStartDayDialog) {
         BillingCycleDialog(
             currentDay = startDayOfMonth,
@@ -1547,7 +1575,7 @@ fun DashboardScreen(
         AccountsDialog(
             accountBalances = accountBalances,
             selectedAccount = selectedAccount,
-            contextLabel = selectedAccount?.bankName ?: "All Accounts",
+            contextLabel = selectedAccount?.bankName ?: accountBalances.firstOrNull()?.bankName ?: "Primary",
             contextBalance = effectiveBalance,
             safeToSpendBreakdown = safeToSpendBreakdown,
             transactions = transactions,
@@ -1954,8 +1982,52 @@ fun DashboardScreen(
         )
     }
 
+    val density = LocalDensity.current
+    val swipeThresholdPx = remember(density) { with(density) { 56.dp.toPx() } }
+    val flingVelocityThresholdPx = remember(density) { with(density) { 500.dp.toPx() } }
+
+    val isSwipeToInsightsEnabled = !isAppLocked &&
+        !searchOpen &&
+        !isSelectionMode &&
+        !showAccountsDialog &&
+        !showAddExpenseSheet &&
+        !showStartDayDialog &&
+        !showBulkDeleteConfirm
+
+    val swipeModifier = if (isSwipeToInsightsEnabled) {
+        Modifier.pointerInput(isSwipeToInsightsEnabled) {
+            var totalDragX = 0f
+            var dragStartTime = 0L
+            detectHorizontalDragGestures(
+                onDragStart = {
+                    totalDragX = 0f
+                    dragStartTime = SystemClock.uptimeMillis()
+                },
+                onDragEnd = {
+                    val durationMs = (SystemClock.uptimeMillis() - dragStartTime).coerceAtLeast(1)
+                    val velocityX = (totalDragX / durationMs) * 1000f
+                    // Swipe to the left: user drags towards left (negative X displacement)
+                    if (totalDragX < -swipeThresholdPx || (velocityX < -flingVelocityThresholdPx && totalDragX < -with(density) { 20.dp.toPx() })) {
+                        haptic.tap()
+                        onNavigateToInsights()
+                    }
+                    totalDragX = 0f
+                },
+                onDragCancel = {
+                    totalDragX = 0f
+                },
+                onHorizontalDrag = { _, dragAmount ->
+                    totalDragX += dragAmount
+                }
+            )
+        }
+    } else Modifier
+
     CompositionLocalProvider(com.expensetracker.offline.ui.insights.LocalAnimationReady provides isAnimationTriggered) {
     Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(swipeModifier),
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = {
             SnackbarHost(hostState = snackbarHostState) { data ->
@@ -2024,7 +2096,7 @@ fun DashboardScreen(
                     selectedTxnIds = emptySet()
                 },
                 onBulkDelete = { showBulkDeleteConfirm = true },
-                onCycleClick = { showStartDayDialog = true },
+                onCycleClick = { showCycleSelectorSheet = true },
                 onSearchToggle = {
                     searchOpen = !searchOpen
                     if (!searchOpen) { searchQuery = ""; debouncedSearchQuery = "" }
@@ -2078,7 +2150,7 @@ fun DashboardScreen(
                         isSetupFirstTxnDone
                     ).count { it }
 
-                    val hasMissingAutoCapture = !(hasSmsPermission || hasNotificationPermission) || !isIgnoringBatteryOptimizations
+                    val hasMissingAutoCapture = !(hasSmsPermission || hasNotificationPermission)
 
                     if (!isManualModePreferred && !isAutoCaptureBannerDismissed && hasMissingAutoCapture) {
                         Surface(
@@ -2133,6 +2205,77 @@ fun DashboardScreen(
                                         contentDescription = "Dismiss auto-capture warning",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (!isManualModePreferred && !hasNotificationPermission && !isUpiNotifBannerDismissed && !hasMissingAutoCapture) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                                .clip(RoundedCornerShape(AppRadius.medium))
+                                .quietClickable {
+                                    haptic.tap()
+                                    runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+                                },
+                            shape = RoundedCornerShape(AppRadius.medium),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.NotificationsActive,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Enable UPI Notification Tracking",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Allow notification access so GPay, PhonePe & Paytm transactions track automatically without SMS.",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        lineHeight = 14.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Button(
+                                    onClick = {
+                                        haptic.tap()
+                                        runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(AppRadius.pill),
+                                    modifier = Modifier.height(30.dp)
+                                ) {
+                                    Text("Enable", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                                IconButton(
+                                    onClick = {
+                                        haptic.tap()
+                                        isUpiNotifBannerDismissed = true
+                                    },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Dismiss",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(14.dp)
                                     )
                                 }
                             }
@@ -2347,6 +2490,9 @@ fun DashboardScreen(
                                             onClick = {
                                                 if (selectedTimeRange != range) haptic.tap()
                                                 selectedTimeRange = range
+                                                if (range != TimeRange.THIS_MONTH) {
+                                                    selectedCycleOffset = 0
+                                                }
                                             }
                                         ),
                                     contentAlignment = Alignment.Center
@@ -2364,40 +2510,53 @@ fun DashboardScreen(
                         }
                     }
 
-                    if (selectedTimeRange == TimeRange.THIS_MONTH || selectedTimeRange == TimeRange.LAST_MONTH) {
-                        val viewingLast = selectedTimeRange == TimeRange.LAST_MONTH
-                        OutlinedButton(
-                            onClick = {
-                                haptic.tap()
-                                selectedTimeRange = if (viewingLast) TimeRange.THIS_MONTH else TimeRange.LAST_MONTH
-                            },
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 52.dp),
+                    if (selectedCycleOffset != 0) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .clip(RoundedCornerShape(AppRadius.medium))
+                                .quietClickable {
+                                    haptic.tap()
+                                    selectedCycleOffset = 0
+                                    selectedTimeRange = TimeRange.THIS_MONTH
+                                },
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
                             shape = RoundedCornerShape(AppRadius.medium),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
                         ) {
-                            Icon(
-                                imageVector = if (viewingLast) Icons.AutoMirrored.Filled.ArrowForward else Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            Text(
-                                if (viewingLast) "Return to current cycle" else "View previous cycle",
-                                modifier = Modifier.weight(1f),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                if (viewingLast) currentMonthName else lastCycleDateLabel,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                ) {
+                                    Icon(
+                                        Icons.Default.History,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        "Viewing past cycle ($currentMonthName)",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Text(
+                                    "Return to current \u2192",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                     }
                     Spacer(modifier = Modifier.height(4.dp))
@@ -2713,8 +2872,8 @@ fun DashboardScreen(
                                     }
                                 }
                             } else if (!isMonthlyView) {
-                                val periodStart = remember(selectedTimeRange, startDayOfMonth) {
-                                    startMillisFor(selectedTimeRange, startDayOfMonth)
+                                val periodStart = remember(selectedTimeRange, startDayOfMonth, selectedCycleOffset) {
+                                    startMillisFor(selectedTimeRange, startDayOfMonth, selectedCycleOffset)
                                 }
                                 val periodCount = remember(transactionsWithDebts, periodStart, pendingDeleteIds) {
                                     transactionsWithDebts.count {
@@ -2730,30 +2889,6 @@ fun DashboardScreen(
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                            } else if (monthlyBudget <= 0 && transactions.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(AppRadius.small),
-                                    color = Color.Transparent,
-                                    // Premium dashed border look for empty states
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(12.dp),
-                                        horizontalArrangement = Arrangement.Center,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface)
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "Set a monthly budget",
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
                             }
                         }
                     }
@@ -3120,9 +3255,9 @@ fun DashboardScreen(
                         }
                     }
 
-                    val showCategoryFilterChips = visibleCount >= 4 || searchOpen || searchQuery.isNotBlank() || selectedFilterCategory != "All" || selectedSort != "NEWEST"
-                    val showAccountFilterChips = linkedAccounts.size > 1 || selectedAccount != null
-                    if (showCategoryFilterChips || showAccountFilterChips) {
+                    val showCategoryFilterChips = false
+                    val showAccountFilterChips = linkedAccounts.size > 1
+                    if (searchOpen || searchQuery.isNotBlank() || showAccountFilterChips) {
                         val hasUnspecified = remember(transactions) {
                             transactions.asSequence().take(1000).any { it.bankName == null }
                         }

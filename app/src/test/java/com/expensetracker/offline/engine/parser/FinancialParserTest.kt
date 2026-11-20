@@ -205,4 +205,108 @@ class FinancialParserTest {
         assertEquals(TransactionType.DEBIT, afterLearning.type)
         assertEquals("Suresh", afterLearning.payee)
     }
+
+    @Test
+    fun googlePayNotification_paidToMerchant_extractsCleanPayeeAndAmount() {
+        val p = notif("Paid to Starbucks ₹250.00 using State Bank of India ••••1234", "Paid to Starbucks")
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(25_000L, p.amount)
+        assertEquals("Starbucks", p.payee)
+        assertEquals("SBI", p.bankName)
+        assertEquals("1234", p.accountNumber)
+    }
+
+    @Test
+    fun phonePeNotification_paymentOfAmount_extractsCleanPayee() {
+        val p = notif("Payment of ₹350 to Swiggy was successful using Canara Bank - 1234", "Payment Successful")
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(35_000L, p.amount)
+        assertEquals("Swiggy", p.payee)
+        assertEquals("Canara Bank", p.bankName)
+        assertEquals("1234", p.accountNumber)
+    }
+
+    @Test
+    fun canaraAi1Notification_towardsUpiSlash_extractsPayeeName() {
+        val p = notif(
+            "Your A/C ending 1234 has been debited for INR 250.00 on 17-11-2026 towards UPI/432109876543/TEA_STALL/CNRB. Avl Bal: INR 12,345.00",
+            "Canara ai1"
+        )
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(25_000L, p.amount)
+        assertEquals("Tea Stall", p.payee)
+        assertEquals("Canara Bank", p.bankName)
+        assertEquals("1234", p.accountNumber)
+        assertEquals(1_234_500L, p.balance)
+    }
+
+    @Test
+    fun paytmNotification_moneySent_extractsPayee() {
+        val p = notif("Paid ₹120 to Chai Point from Paytm Payments Bank", "Money Sent")
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(12_000L, p.amount)
+        assertEquals("Chai Point", p.payee)
+    }
+
+    @Test
+    fun googlePayNotification_merchantAsTitle_amountUsingBank() {
+        val p = notif("₹250.00 using Canara Bank ••••1234", "Starbucks")
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(25_000L, p.amount)
+        assertEquals("Starbucks", p.payee)
+        assertEquals("Canara Bank", p.bankName)
+        assertEquals("1234", p.accountNumber)
+    }
+
+    @Test
+    fun googlePayNotification_personAsTitle_amountUsingBank() {
+        val p = notif("₹500.00 using SBI ••••5678", "Ramesh Kumar")
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(50_000L, p.amount)
+        assertEquals("Ramesh Kumar", p.payee)
+        assertEquals("SBI", p.bankName)
+        assertEquals("5678", p.accountNumber)
+    }
+
+    @Test
+    fun googlePayNotification_paymentToPayeeFormat() {
+        val p = notif("₹350.00 using Canara Bank ••••1234. UPI transaction ID: 412345678901", "Payment to Swiggy")
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(35_000L, p.amount)
+        assertEquals("Swiggy", p.payee)
+        assertEquals("Canara Bank", p.bankName)
+        assertEquals("1234", p.accountNumber)
+        assertEquals("412345678901", p.referenceId)
+    }
+
+    @Test
+    fun googlePayNotification_amountToMerchantFormat() {
+        val p = notif("₹450.00 to Domino's Pizza using Canara Bank ••••1234", "Google Pay")
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(45_000L, p.amount)
+        assertEquals("Domino's Pizza", p.payee)
+        assertEquals("Canara Bank", p.bankName)
+        assertEquals("1234", p.accountNumber)
+    }
+
+    @Test
+    fun canaraAi1_upiSlashWithNote_extractsPayeeAndNote() {
+        val p = notif(
+            "Debited Rs. 80.00 from A/c ...1234 on 18-Nov-2026 via UPI/413524123456/DR/RAJU/CNRB/raju@okaxis/egg puff. Avl Bal Rs 12,000.00",
+            "Canara ai1"
+        )
+        assertTrue(p.isFinancial)
+        assertEquals(TransactionType.DEBIT, p.type)
+        assertEquals(8_000L, p.amount)
+        assertEquals("Raju", p.payee)
+        assertEquals("egg puff", p.note)
+    }
 }

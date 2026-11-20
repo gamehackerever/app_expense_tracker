@@ -26,6 +26,7 @@ import com.expensetracker.offline.util.countsAsSpend
 import com.expensetracker.offline.util.NecessityFrequency
 import com.expensetracker.offline.util.NecessityItem
 import com.expensetracker.offline.util.NecessityManager
+import com.expensetracker.offline.util.AccountNormalizer
 import kotlinx.coroutines.flow.first
 import kotlin.math.ceil
 
@@ -280,11 +281,17 @@ internal fun isRefundCredit(txn: TransactionEntity): Boolean {
 internal fun matchesAccountFilter(txn: TransactionEntity, accountFilter: AccountInfo?): Boolean {
     if (accountFilter == null) return true
     if (accountFilter.bankName == "Unspecified") return txn.bankName == null
-    // Older rows may still carry a " CC" suffix on the bank name; treat them as the same account.
-    val bank = txn.bankName
-    val sameBank = bank == accountFilter.bankName ||
-        bank?.removeSuffix(" CC")?.removeSuffix(" cc")?.trim() == accountFilter.bankName
-    return sameBank && txn.accountNumber == accountFilter.accountNumber
+    val cBankTxn = AccountNormalizer.canonicalBankName(txn.bankName)
+    val cBankFilter = AccountNormalizer.canonicalBankName(accountFilter.bankName)
+    val sameBank = txn.bankName.equals(accountFilter.bankName, ignoreCase = true) ||
+        (cBankTxn != null && cBankTxn == cBankFilter) ||
+        txn.bankName?.removeSuffix(" CC")?.removeSuffix(" cc")?.trim() == accountFilter.bankName
+    if (!sameBank) return false
+
+    val filterAcc = AccountNormalizer.accountNumber(accountFilter.accountNumber)
+    val txnAcc = AccountNormalizer.accountNumber(txn.accountNumber)
+    if (filterAcc == null || txnAcc == null) return true
+    return filterAcc == txnAcc || filterAcc.endsWith(txnAcc) || txnAcc.endsWith(filterAcc)
 }
 
 /**

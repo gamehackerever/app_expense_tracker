@@ -2,6 +2,7 @@ package com.expensetracker.offline.data.repository
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.expensetracker.offline.data.local.dao.AccountInfo
 import java.util.Locale
 
 data class CreditCardConfig(
@@ -33,16 +34,58 @@ class SettingsRepository(context: Context) {
         }
         set(value) = prefs.edit().putFloat(KEY_LOW_BALANCE_THRESHOLD, value).apply()
 
+    var primaryAccountBank: String
+        get() {
+            val stored = prefs.getString(KEY_PRIMARY_ACCOUNT_BANK, null)?.trim()?.ifBlank { null }
+            return if (stored == null || stored.equals("Canara Bank", ignoreCase = true) || stored.equals("Bank", ignoreCase = true)) {
+                "Primary"
+            } else {
+                stored
+            }
+        }
+        set(value) {
+            val clean = value.trim().ifBlank { "Primary" }
+            prefs.edit().putString(KEY_PRIMARY_ACCOUNT_BANK, clean).apply()
+        }
+
+    var primaryAccountNumber: String?
+        get() = prefs.getString(KEY_PRIMARY_ACCOUNT_NUMBER, null)?.trim()?.ifBlank { null }
+        set(value) {
+            val clean = com.expensetracker.offline.util.AccountNormalizer.accountNumber(value)
+            prefs.edit().putString(KEY_PRIMARY_ACCOUNT_NUMBER, clean).apply()
+        }
+
+    fun getPrimaryAccount(): AccountInfo = AccountInfo(primaryAccountBank, primaryAccountNumber)
+
+    fun setPrimaryAccount(bankName: String, accountNumber: String?) {
+        val cleanBank = bankName.trim().ifBlank { "Primary" }
+        val cleanAcc = com.expensetracker.offline.util.AccountNormalizer.accountNumber(accountNumber)
+        prefs.edit()
+            .putString(KEY_PRIMARY_ACCOUNT_BANK, cleanBank)
+            .putString(KEY_PRIMARY_ACCOUNT_NUMBER, cleanAcc)
+            .apply()
+    }
+
+    var isBudgetEnabled: Boolean
+        get() = prefs.getBoolean(KEY_BUDGET_ENABLED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_BUDGET_ENABLED, value).apply()
+            if (!value) {
+                setCurrentCycleBudgetOverride(null)
+            }
+        }
+
     var monthlyBudget: Long
         get() {
+            if (!isBudgetEnabled) return 0L
             val raw = try {
                 prefs.getString(KEY_MONTHLY_BUDGET_V2, null)
             } catch (_: ClassCastException) {
                 try {
-                    prefs.getLong(KEY_MONTHLY_BUDGET_V2, -1L).takeIf { it > 0 }?.toString()
+                    prefs.getLong(KEY_MONTHLY_BUDGET_V2, -1L).takeIf { it >= 0 }?.toString()
                 } catch (_: ClassCastException) {
                     try {
-                        prefs.getFloat(KEY_MONTHLY_BUDGET_V2, -1f).takeIf { it > 0 }?.toLong()?.toString()
+                        prefs.getFloat(KEY_MONTHLY_BUDGET_V2, -1f).takeIf { it >= 0 }?.toLong()?.toString()
                     } catch (_: ClassCastException) {
                         null
                     }
@@ -50,27 +93,15 @@ class SettingsRepository(context: Context) {
             }
             if (raw != null) {
                 val parsed = raw.replace("L", "", ignoreCase = true).trim().toLongOrNull()
-                if (parsed != null && parsed > 0) return parsed
+                if (parsed != null && parsed >= 0) return parsed
             }
 
-            val legacyValue = try {
-                prefs.getFloat(KEY_MONTHLY_BUDGET_LEGACY, 15000f).toLong()
-            } catch (_: ClassCastException) {
-                try {
-                    prefs.getLong(KEY_MONTHLY_BUDGET_LEGACY, 15000L)
-                } catch (_: ClassCastException) {
-                    15000L
-                }
-            }
-            prefs.edit().putString(KEY_MONTHLY_BUDGET_V2, legacyValue.toString()).apply()
-            if (!prefs.contains(KEY_BUDGET_EXPLICITLY_SET)) {
-                isBudgetExplicitlySet = (legacyValue != 15000L)
-            }
-            return legacyValue
+            return 0L
         }
         set(value) {
             prefs.edit().putString(KEY_MONTHLY_BUDGET_V2, value.toString()).apply()
             isBudgetExplicitlySet = true
+            prefs.edit().putBoolean(KEY_BUDGET_ENABLED, value > 0L).apply()
         }
 
     var isBudgetExplicitlySet: Boolean
@@ -99,7 +130,7 @@ class SettingsRepository(context: Context) {
         set(value) = prefs.edit().putLong(KEY_NECESSITY_CHUNK, value).apply()
 
     var skipReviewQueue: Boolean
-        get() = prefs.getBoolean(KEY_SKIP_REVIEW_QUEUE, false)
+        get() = prefs.getBoolean(KEY_SKIP_REVIEW_QUEUE, true)
         set(value) = prefs.edit().putBoolean(KEY_SKIP_REVIEW_QUEUE, value).apply()
 
     var fallbackPayee: String
@@ -676,7 +707,10 @@ class SettingsRepository(context: Context) {
 
     /** What the dashboard should measure against: this cycle's one-off budget, else the usual monthly budget. */
     val effectiveMonthlyBudget: Long
-        get() = currentCycleBudgetOverride() ?: monthlyBudget
+        get() {
+            if (!isBudgetEnabled) return 0L
+            return currentCycleBudgetOverride() ?: monthlyBudget
+        }
 
     /** Latest "Avl Lmt" seen in an SMS for a card (paise + SMS time). Older SMS never overwrite newer ones. */
     fun recordCardAvailableLimit(bankName: String, accountNumber: String?, limitPaise: Long, timestamp: Long) {
@@ -704,10 +738,13 @@ class SettingsRepository(context: Context) {
 
     companion object {
         const val PREFS_NAME = "expense_tracker_prefs"
+        const val KEY_PRIMARY_ACCOUNT_BANK = "key_primary_account_bank"
+        const val KEY_PRIMARY_ACCOUNT_NUMBER = "key_primary_account_number"
         const val KEY_LOW_BALANCE_ALERT_ENABLED = "key_low_balance_alert_enabled"
         const val KEY_LOW_BALANCE_THRESHOLD = "key_low_balance_threshold"
         const val KEY_MONTHLY_BUDGET_V2 = "key_monthly_budget_v2"
         const val KEY_MONTHLY_BUDGET_LEGACY = "key_monthly_budget"
+        const val KEY_BUDGET_ENABLED = "key_budget_enabled"
         const val KEY_BUDGET_EXPLICITLY_SET = "key_budget_explicitly_set"
         const val KEY_CATEGORY_BUDGETS_JSON = "key_category_budgets_json"
         const val KEY_CATEGORY_BUDGET_SETUP_DISMISSED = "key_category_budget_setup_dismissed"

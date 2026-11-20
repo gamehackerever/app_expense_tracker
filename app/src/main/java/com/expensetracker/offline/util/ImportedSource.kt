@@ -10,17 +10,29 @@ import java.util.Calendar
 object ImportedSource {
     private const val PREFIX = "Imported from "
 
-    fun isImported(rawContent: String?): Boolean =
-        rawContent?.trimStart()?.startsWith(PREFIX, ignoreCase = true) == true
+    fun isImported(rawContent: String?): Boolean {
+        val trimmed = rawContent?.trimStart() ?: return false
+        return trimmed.startsWith(PREFIX, ignoreCase = true) ||
+               trimmed.startsWith("Imported statement", ignoreCase = true) ||
+               trimmed.startsWith("Imported CSV", ignoreCase = true) ||
+               trimmed.startsWith("Imported PDF", ignoreCase = true)
+    }
 
     /** Short tag for the row, or null when the transaction was not imported from a statement. */
     fun shortLabel(rawContent: String?): String? {
         if (!isImported(rawContent)) return null
-        val body = rawContent!!.trimStart().substring(PREFIX.length).lowercase()
+        val trimmed = rawContent!!.trimStart()
+        val body = if (trimmed.startsWith(PREFIX, ignoreCase = true)) {
+            trimmed.substring(PREFIX.length).lowercase()
+        } else {
+            trimmed.lowercase()
+        }
         return when {
             body.contains("phonepe") -> "PhonePe"
-            body.contains("google") -> "Google Pay"
-            body.contains("csv") || body.contains("bank") -> "Bank file"
+            body.contains("google") || body.contains("gpay") -> "Google Pay"
+            body.contains("paytm") -> "Paytm"
+            body.contains("csv") -> "CSV"
+            body.contains("pdf") || body.contains("statement") || body.contains("bank") -> "Statement"
             else -> "Statement"
         }
     }

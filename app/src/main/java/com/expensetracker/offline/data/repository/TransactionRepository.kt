@@ -39,6 +39,10 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import java.io.File
 import java.util.Locale
+import android.util.Log
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.firstOrNull
+import com.expensetracker.offline.util.AccountNormalizer
 
 private val LEGACY_SUCCESSFUL_PAYMENT_TITLE =
     Regex("(?i)^payment\\s+to\\s+.+?\\s+(?:was\\s+)?successful(?:ly)?[.!]?$")
@@ -225,7 +229,8 @@ class TransactionRepository(
         return transactionDao.searchAndFilterTransactionsFlow(escaped, category, startTime, limit)
     }
 
-    suspend fun updateTransaction(transaction: TransactionEntity) {
+    suspend fun updateTransaction(transaction: TransactionEntity, propagateToUnspecified: Boolean = true): Int {
+        var propagatedCount = 0
         database.withTransaction {
             val before = transactionDao.getTransactionById(transaction.id)
             // Recompute the derived account balance from the pre-update contribution so edits
@@ -238,6 +243,21 @@ class TransactionRepository(
             } else transaction
             transactionDao.updateTransaction(effectiveTxn)
             setOfNotNull(before?.linkedDebtId, transaction.linkedDebtId).forEach { reconcileDebt(it) }
+
+            // Active learning cluster propagation: update other unclassified transactions to this payee.
+            // Strictly exclude personal payees and transactions with specific remarks so notes don't pollute contacts.
+            val isPerson = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(transaction.payee)
+            val hasNote = !transaction.note.isNullOrBlank() || !transaction.itemsSummary.isNullOrBlank()
+            if (propagateToUnspecified &&
+                !isPerson &&
+                !hasNote &&
+                !CategoryClassifier.isGenericPayee(transaction.payee) &&
+                !transaction.category.equals("Unspecified", ignoreCase = true) &&
+                !transaction.category.equals("Uncategorized", ignoreCase = true) &&
+                !transaction.category.equals("Transfer", ignoreCase = true)
+            ) {
+                propagatedCount = transactionDao.categorizeUnspecifiedByPayee(transaction.payee, transaction.category)
+            }
         }
         if (transaction.rawContent.isNotBlank() && transaction.rawContent != "Manual Entry") {
             SmsPatternLearner.learnApprovedReview(
@@ -249,29 +269,83 @@ class TransactionRepository(
                 resolvedBankName = transaction.bankName
             )
         }
+        val isPersonPayee = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(transaction.payee)
+        val hasTransactionNote = !transaction.note.isNullOrBlank() || !transaction.itemsSummary.isNullOrBlank()
+        if (!isPersonPayee && !hasTransactionNote) {
+            learnCategoryRule(transaction.payee, transaction.category)
+        }
         refreshWidget()
+        return propagatedCount
+    }
+
+    /**
+     * Propagates a category to all other unclassified transactions matching the same payee,
+     * learns the rule in the database, invalidates the classifier cache, and updates the widget.
+     * Returns the count of transactions upgraded.
+     */
+    suspend fun propagateCategoryToUnspecified(payee: String, category: String): Int = withContext(Dispatchers.IO) {
+        if (com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(payee) ||
+            CategoryClassifier.isGenericPayee(payee) ||
+            category.equals("Unspecified", ignoreCase = true) ||
+            category.equals("Uncategorized", ignoreCase = true)
+        ) {
+            return@withContext 0
+        }
+        val count = transactionDao.categorizeUnspecifiedByPayee(payee, category)
+        learnCategoryRule(payee, category)
+        if (count > 0) refreshWidget()
+        count
+    }
+
+    suspend fun enforceSingleAccountMode() {
+        runCatching {
+            val primaryBank = settingsRepo?.primaryAccountBank ?: "Primary"
+            val transactions = transactionDao.getRecentTransactions(200)
+            val existingAccPref = settingsRepo?.primaryAccountNumber
+
+            val accCandidates = transactions.mapNotNull { it.accountNumber }.filter { it.isNotBlank() }
+            val bestAcc = existingAccPref ?: accCandidates.groupingBy { com.expensetracker.offline.util.AccountNormalizer.accountNumber(it) }
+                .eachCount().maxByOrNull { it.value }?.key
+
+            settingsRepo?.setPrimaryAccount(primaryBank, bestAcc)
+            transactionDao.unifyAllTransactionsToSingleAccount(primaryBank, bestAcc)
+            refreshWidget()
+        }
+    }
+
+    suspend fun normalizeExistingBankNames() {
+        runCatching {
+            transactionDao.normalizeSbiBankNames()
+            transactionDao.normalizeHdfcBankNames()
+            transactionDao.normalizeIciciBankNames()
+            transactionDao.normalizeAxisBankNames()
+            enforceSingleAccountMode()
+        }
     }
 
     suspend fun insertTransaction(transaction: TransactionEntity): Long {
+        val primaryBank = settingsRepo?.primaryAccountBank ?: "Primary"
+        val primaryAcc = settingsRepo?.primaryAccountNumber
+        val canonicalAcc = com.expensetracker.offline.util.AccountNormalizer.accountNumber(transaction.accountNumber) ?: primaryAcc
+        val normalizedTxn = transaction.copy(bankName = primaryBank, accountNumber = canonicalAcc)
+
         var derivedBalance: Long? = null
         val id = database.withTransaction {
-            val effectiveTxn = if (transaction.balance == null && transaction.bankName != null) {
-                val prevBalance = transactionDao.getLatestBalanceForAccountSync(transaction.bankName, transaction.accountNumber)
+            val effectiveTxn = if (normalizedTxn.balance == null && normalizedTxn.bankName != null) {
+                val prevBalance = transactionDao.getLatestBalanceForAccountSync(normalizedTxn.bankName, normalizedTxn.accountNumber)
                 val latestBalanceTimestamp = transactionDao.getLatestBalanceTimestampForAccountSync(
-                    transaction.bankName,
-                    transaction.accountNumber
+                    normalizedTxn.bankName,
+                    normalizedTxn.accountNumber
                 )
-                // A backdated transaction cannot be applied on top of today's balance. Doing so
-                // would make the derived balance look current and corrupt future account totals.
                 if (prevBalance != null &&
-                    (latestBalanceTimestamp == null || transaction.timestamp >= latestBalanceTimestamp)
+                    (latestBalanceTimestamp == null || normalizedTxn.timestamp >= latestBalanceTimestamp)
                 ) {
-                    val delta = if (transaction.type == TransactionType.DEBIT) -transaction.amount else transaction.amount
+                    val delta = if (normalizedTxn.type == TransactionType.DEBIT) -normalizedTxn.amount else normalizedTxn.amount
                     val nextBal = prevBalance + delta
                     derivedBalance = nextBal
-                    transaction.copy(balance = nextBal)
-                } else transaction
-            } else transaction
+                    normalizedTxn.copy(balance = nextBal)
+                } else normalizedTxn
+            } else normalizedTxn
 
             val newId = transactionDao.insertTransaction(effectiveTxn)
             effectiveTxn.linkedDebtId?.let { reconcileDebt(it) }
@@ -281,10 +355,10 @@ class TransactionRepository(
             context?.let { ctx ->
                 BalanceCache.updateIfNewer(
                     BalanceCache.prefs(ctx),
-                    transaction.bankName,
-                    transaction.accountNumber,
+                    primaryBank,
+                    canonicalAcc,
                     balance,
-                    transaction.timestamp
+                    normalizedTxn.timestamp
                 )
             }
         }
@@ -384,9 +458,11 @@ class TransactionRepository(
     }
 
     suspend fun learnCategoryRule(payee: String, category: String) {
+        if (com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(payee)) return
         if (CategoryClassifier.isGenericPayee(payee)) return
         val pattern = payee.trim().lowercase(Locale.ROOT).replace("%", "\\%").replace("_", "\\_")
         if (pattern.length >= 3 &&
+            !com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(pattern) &&
             !CategoryClassifier.isGenericPayee(pattern) &&
             !category.equals("Uncategorized", ignoreCase = true) &&
             !category.equals("Transfer", ignoreCase = true) &&
@@ -417,11 +493,11 @@ class TransactionRepository(
             SmsPatternLearner.sanitizePoisonedPatterns()
             categoryRuleDao.deleteGenericOrShortRules(CategoryClassifier.GENERIC_FALLBACK_PAYEES.toList())
 
-            // Clean any poisoned "Travel" rules in category_rules where the merchant pattern is not actually Travel
+            // Clean any poisoned rules in category_rules (generic, too short, personal names, or false Travel rules)
             val allRules = categoryRuleDao.getAllRules()
             for (rule in allRules) {
                 val pat = rule.merchantPattern.trim()
-                if (CategoryClassifier.isGenericPayee(pat) || pat.length < 3) {
+                if (CategoryClassifier.isGenericPayee(pat) || pat.length < 3 || com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(pat)) {
                     categoryRuleDao.deleteRuleByPattern(rule.merchantPattern)
                 } else if (rule.category.equals("Travel", ignoreCase = true)) {
                     val syncCat = CategoryClassifier.classifySync(pat, pat)
@@ -473,9 +549,8 @@ class TransactionRepository(
                 for (txn in recentAll) {
                     val currentPayee = txn.payee.trim()
                     val isCurrentGeneric = CategoryClassifier.isGenericPayee(currentPayee)
-                    if (!fullPass && !isCurrentGeneric && txn.timestamp < healCutoff &&
-                        !txn.category.equals("Uncategorized", ignoreCase = true)
-                    ) continue
+                    val isCurrentUnspecified = txn.category.equals("Unspecified", ignoreCase = true) || txn.category.equals("Uncategorized", ignoreCase = true)
+                    if (!fullPass && !isCurrentGeneric && !isCurrentUnspecified && txn.timestamp < healCutoff) continue
 
                     // Check if a generic SMS row ("UPI Payment" / "Bank Transfer") is a duplicate of a named transaction
                     if (isCurrentGeneric && txn.source == TransactionSource.SMS) {
@@ -510,14 +585,33 @@ class TransactionRepository(
                         }
                     }
 
-                    if (txn.source == TransactionSource.MANUAL || txn.rawContent.isBlank() || txn.rawContent == "Manual Entry") {
-                        // Still upgrade "Uncategorized" on named manual/restored entries if a known merchant keyword matches
-                        if (!isCurrentGeneric && txn.type == TransactionType.DEBIT && txn.category.equals("Uncategorized", ignoreCase = true)) {
-                            val trueCat = CategoryClassifier.classifySync(currentPayee, currentPayee)
-                            if (trueCat != "Uncategorized") {
-                                transactionDao.updateTransaction(txn.copy(category = trueCat))
+                    if (txn.source == TransactionSource.MANUAL || txn.rawContent.isBlank() || txn.rawContent == "Manual Entry" || txn.rawContent.startsWith("Imported statement:")) {
+                        // Upgrade "Unspecified" / "Uncategorized" on manual/restored/imported entries if merchant keyword or note matches
+                        val isPerson = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(currentPayee)
+                        val extractedNote = if (txn.note.isNullOrBlank() && txn.rawContent.startsWith("Imported statement:")) {
+                            com.expensetracker.offline.util.SbiPdfParserUtil.extractNoteFromRawLine(txn.rawContent)
+                        } else {
+                            txn.note
+                        }
+                        val trueCat = CategoryClassifier.classifySync(
+                            payee = currentPayee,
+                            rawContent = txn.rawContent,
+                            note = extractedNote ?: txn.itemsSummary,
+                            amountPaise = txn.amount,
+                            timestamp = txn.timestamp
+                        )
+                        if (txn.type == TransactionType.DEBIT && isCurrentUnspecified) {
+                            if (trueCat != "Uncategorized" && trueCat != "Unspecified") {
+                                transactionDao.updateTransaction(txn.copy(category = trueCat, note = extractedNote ?: txn.note))
+                                anyHealed = true
+                            } else if (extractedNote != null && txn.note == null) {
+                                transactionDao.updateTransaction(txn.copy(note = extractedNote))
                                 anyHealed = true
                             }
+                        } else if (isPerson && txn.category.equals("Education", ignoreCase = true) && extractedNote == null && (trueCat.equals("Unspecified", ignoreCase = true) || trueCat.equals("Uncategorized", ignoreCase = true))) {
+                            // Healing: Revert mistakenly propagated "Education" on person transfers without any education note
+                            transactionDao.updateTransaction(txn.copy(category = "Unspecified"))
+                            anyHealed = true
                         }
                         continue
                     }
@@ -538,13 +632,24 @@ class TransactionRepository(
                     }
 
                     val currentCat = txn.category.trim()
-                    val trueCat = CategoryClassifier.classifySync(healedPayee, txn.rawContent)
+                    val trueCat = CategoryClassifier.classifySync(
+                        payee = healedPayee,
+                        rawContent = txn.rawContent,
+                        note = txn.note ?: txn.itemsSummary,
+                        amountPaise = txn.amount,
+                        timestamp = txn.timestamp
+                    )
 
+                    val isPerson = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(healedPayee)
                     val healedCat = when {
                         currentCat.equals("Transfer", ignoreCase = true) || currentCat == "Split Settlement" -> currentCat
                         parsed.isTransfer -> "Transfer"
                         txn.type == TransactionType.CREDIT -> "Uncategorized"
-                        currentCat.equals("Uncategorized", ignoreCase = true) && trueCat != "Uncategorized" -> {
+                        isPerson && currentCat.equals("Education", ignoreCase = true) && txn.note.isNullOrBlank() && txn.itemsSummary.isNullOrBlank() && (trueCat.equals("Unspecified", ignoreCase = true) || trueCat.equals("Uncategorized", ignoreCase = true)) -> {
+                            "Unspecified"
+                        }
+                        (currentCat.equals("Uncategorized", ignoreCase = true) || currentCat.equals("Unspecified", ignoreCase = true)) &&
+                            trueCat != "Uncategorized" && trueCat != "Unspecified" -> {
                             trueCat
                         }
                         else -> currentCat // Always preserve existing user/restored categories
@@ -652,7 +757,9 @@ class TransactionRepository(
         rawContent: String,
         amountPaise: Long? = null,
         timestampMillis: Long = System.currentTimeMillis(),
-        type: TransactionType = TransactionType.DEBIT
+        type: TransactionType = TransactionType.DEBIT,
+        note: String? = null,
+        itemsSummary: String? = null
     ): String {
         if (type == TransactionType.CREDIT) {
             return "Uncategorized"
@@ -660,13 +767,17 @@ class TransactionRepository(
         val primary = CategoryClassifier.classify(
             payee = payee,
             rawContent = rawContent,
-            ruleDao = categoryRuleDao
+            ruleDao = categoryRuleDao,
+            note = note,
+            itemsSummary = itemsSummary,
+            amountPaise = amountPaise,
+            timestamp = timestampMillis
         )
-        if (primary != "Uncategorized") return primary
-        if (CategoryClassifier.isGenericPayee(payee)) return "Uncategorized"
+        if (primary != "Uncategorized" && primary != "Unspecified") return primary
+        if (CategoryClassifier.isGenericPayee(payee) && note.isNullOrBlank() && itemsSummary.isNullOrBlank()) return "Unspecified"
         val recent = transactionDao.getRecentTransactions(300)
         val rules = categoryRuleDao.getAllRules()
-        return SmartExpenseEngine.predictCategoryContextual(
+        val contextual = SmartExpenseEngine.predictCategoryContextual(
             payee = payee,
             amountPaise = amountPaise,
             timestampMillis = timestampMillis,
@@ -674,6 +785,7 @@ class TransactionRepository(
             learnedRules = rules,
             rawContent = rawContent
         )
+        return if (contextual.isBlank() || contextual == "Uncategorized") "Unspecified" else contextual
     }
 
     fun recurringPaymentsFlow(): Flow<List<RecurringPayment>> =
@@ -899,7 +1011,13 @@ class TransactionRepository(
                 }
 
                 if (freshPairs.isNotEmpty()) {
-                    val insertedIds = transactionDao.insertTransactions(freshPairs.map { it.second })
+                    val normalizedTxns = freshPairs.map { (_, t) ->
+                        t.copy(
+                            bankName = com.expensetracker.offline.util.AccountNormalizer.canonicalBankName(t.bankName),
+                            accountNumber = com.expensetracker.offline.util.AccountNormalizer.accountNumber(t.accountNumber)
+                        )
+                    }
+                    val insertedIds = transactionDao.insertTransactions(normalizedTxns)
                     val allDebts = mutableListOf<SplitDebtEntity>()
                     freshPairs.forEachIndexed { i, (origIdx, _) ->
                         val newTxnId = insertedIds.getOrNull(i) ?: 0L
@@ -1045,8 +1163,6 @@ class TransactionRepository(
 
                 when {
                     bothRefs && !sameRef -> Unit
-                    sameRef || existingMatch.rawContent.contains(parsed.rawText) ->
-                        return@withTransaction IngestResult.Duplicate
                     (existingMatch.source == TransactionSource.SMS && source == TransactionSource.NOTIFICATION) ||
                     (existingMatch.source == TransactionSource.NOTIFICATION && source == TransactionSource.SMS) -> {
                         val bestPayee = if (source == TransactionSource.NOTIFICATION && !parsed.payee.isNullOrBlank()) {
@@ -1056,8 +1172,14 @@ class TransactionRepository(
                         } else {
                             parsed.payee ?: existingMatch.payee
                         }
+                        val bestCategory = if (bestPayee != existingMatch.payee) {
+                            CategoryClassifier.classifySync(bestPayee, "${existingMatch.rawContent} ${parsed.rawText}")
+                        } else {
+                            existingMatch.category
+                        }
                         val mergedTxn = existingMatch.copy(
                             payee = bestPayee,
+                            category = bestCategory,
                             source = TransactionSource.MERGED,
                             referenceId = parsed.referenceId ?: existingMatch.referenceId,
                             balance = parsed.balance ?: existingMatch.balance,
@@ -1068,6 +1190,34 @@ class TransactionRepository(
                         transactionDao.updateTransaction(mergedTxn)
                         return@withTransaction IngestResult.Merged(mergedTxn.id)
                     }
+                    (existingMatch.source == TransactionSource.NOTIFICATION && source == TransactionSource.NOTIFICATION) -> {
+                        // An updated notification for the same transaction (e.g. GPay status completion, bank details added)
+                        val bestPayee = if (!parsed.payee.isNullOrBlank() && (existingMatch.payee.isBlank() || CategoryClassifier.isGenericPayee(existingMatch.payee))) {
+                            parsed.payee
+                        } else if (!parsed.payee.isNullOrBlank() && parsed.payee != existingMatch.payee && existingMatch.payee.length < parsed.payee.length) {
+                            parsed.payee
+                        } else {
+                            existingMatch.payee
+                        }
+                        val bestCategory = if (bestPayee != existingMatch.payee) {
+                            CategoryClassifier.classifySync(bestPayee, "${existingMatch.rawContent} ${parsed.rawText}")
+                        } else {
+                            existingMatch.category
+                        }
+                        val updatedTxn = existingMatch.copy(
+                            payee = bestPayee,
+                            category = bestCategory,
+                            referenceId = parsed.referenceId ?: existingMatch.referenceId,
+                            balance = parsed.balance ?: existingMatch.balance,
+                            bankName = parsed.bankName ?: existingMatch.bankName,
+                            accountNumber = parsed.accountNumber ?: existingMatch.accountNumber,
+                            rawContent = if (existingMatch.rawContent.contains(parsed.rawText)) existingMatch.rawContent else "${existingMatch.rawContent} | [UPDATED]: ${parsed.rawText}".take(600)
+                        )
+                        transactionDao.updateTransaction(updatedTxn)
+                        return@withTransaction IngestResult.Merged(updatedTxn.id)
+                    }
+                    sameRef || existingMatch.rawContent.contains(parsed.rawText) ->
+                        return@withTransaction IngestResult.Duplicate
                     else -> Unit
                 }
             }
@@ -1085,27 +1235,6 @@ class TransactionRepository(
                     currentAccount = parsed.accountNumber
                 )
             } else null
-
-            val monitorPayee = parsed.payee?.takeIf { it.isNotBlank() } ?: learnedEval.inferredPayee
-            if (source != TransactionSource.MANUAL && !parsed.isTransfer && oppositeLeg == null && !monitorPayee.isNullOrBlank()) {
-                val recentComparableTransactions = transactionDao.getRecentComparableTransactions(
-                    payee = monitorPayee,
-                    type = type,
-                    sinceTimestamp = timestamp - 400L * 24 * 60 * 60 * 1000,
-                    beforeTimestamp = timestamp
-                )
-                val reviewReason = TransactionIntegrityMonitor.assess(
-                    amount = amount,
-                    payee = monitorPayee,
-                    type = type,
-                    source = source,
-                    timestamp = timestamp,
-                    recentTransactions = recentComparableTransactions
-                )
-                if (reviewReason != null) {
-                    return@withTransaction queueForReview(parsed, sender, timestamp, source, reviewReason)
-                }
-            }
 
             if (oppositeLeg != null && !oppositeLeg.excludeFromSpend) {
                 transactionDao.updateTransaction(
@@ -1136,17 +1265,6 @@ class TransactionRepository(
                 ?: learnedEval.inferredPayee
 
             val isAutoTransfer = parsed.isTransfer || oppositeLeg != null || cardBillBankLeg
-            val isMissingPayee = (effectivePayee.isNullOrBlank() || effectivePayee.equals("Unknown", ignoreCase = true) || effectivePayee.matches(NUMERIC_PAYEE_REGEX)) && !isAutoTransfer
-            // If user already approved this template structure, don't force high-value items back into Review Queue
-            val isHighValue = type == TransactionType.DEBIT && amount > reviewThreshold && !isAutoTransfer && !learnedEval.isConfirmedTransaction
-
-            if (!skipReview && (isHighValue || isMissingPayee)) {
-                val reason = when {
-                    isMissingPayee -> "Merchant could not be identified confidently."
-                    else -> "This is a high-value debit. Verify the amount and merchant."
-                }
-                return@withTransaction queueForReview(parsed, sender, timestamp, source, reason)
-            }
 
             val resolvedPayee = when {
                 cardBillBankLeg -> "Credit Card Bill"
@@ -1160,25 +1278,117 @@ class TransactionRepository(
                 isAutoTransfer -> "Transfer"
                 type == TransactionType.CREDIT -> "Uncategorized"
                 else -> {
-                    learnedEval.inferredCategory?.takeIf { it.isNotBlank() && !it.equals("Uncategorized", ignoreCase = true) }
-                        ?: classifyCategory(aliasedPayee, parsed.rawText, amount, timestamp, type)
+                    val rawCat = learnedEval.inferredCategory?.takeIf { it.isNotBlank() && !it.equals("Uncategorized", ignoreCase = true) && !it.equals("Unspecified", ignoreCase = true) }
+                        ?: classifyCategory(
+                            payee = aliasedPayee,
+                            rawContent = parsed.rawText,
+                            amountPaise = amount,
+                            timestampMillis = timestamp,
+                            type = type,
+                            note = parsed.note
+                        )
+                    if (rawCat.isBlank() || rawCat.equals("Transfer", ignoreCase = true) || rawCat.equals("Uncategorized", ignoreCase = true)) {
+                        "Unspecified"
+                    } else {
+                        rawCat
+                    }
                 }
             }
+
+            val primaryBank = settingsRepo?.primaryAccountBank ?: "Primary"
+            val primaryAcc = settingsRepo?.primaryAccountNumber
+            val finalBankName = primaryBank
+            val finalAccountNumber = AccountNormalizer.accountNumber(parsed.accountNumber) ?: primaryAcc
 
             val id = transactionDao.insertTransaction(
                 TransactionEntity(
                     amount = amount, payee = aliasedPayee, timestamp = timestamp, type = type,
                     source = source, referenceId = parsed.referenceId, rawContent = parsed.rawText,
                     category = category, note = parsed.note ?: if (oppositeLeg != null) "Self-transfer (${oppositeLeg.bankName})" else null,
-                    balance = parsed.balance, bankName = parsed.bankName ?: learnedEval.inferredBankName,
-                    accountNumber = parsed.accountNumber, excludeFromSpend = parsed.excludeFromSpend || isAutoTransfer,
-                    accountType = resolveAccountType(parsed.bankName ?: learnedEval.inferredBankName, parsed.accountNumber, parsed.accountType)
+                    balance = parsed.balance, bankName = finalBankName,
+                    accountNumber = finalAccountNumber, excludeFromSpend = parsed.excludeFromSpend || isAutoTransfer,
+                    accountType = resolveAccountType(finalBankName, finalAccountNumber, parsed.accountType)
                 )
             )
+            if (parsed.balance != null) {
+                context?.let { ctx ->
+                    BalanceCache.updateIfNewer(
+                        BalanceCache.prefs(ctx),
+                        finalBankName,
+                        finalAccountNumber,
+                        parsed.balance,
+                        timestamp
+                    )
+                }
+            }
             IngestResult.Inserted(id)
         }
         if (result is IngestResult.Inserted || result is IngestResult.Merged) refreshWidget()
         return result
+    }
+
+    /**
+     * Drains any pending transactions from the review queue and inserts them directly into transactions table.
+     */
+    suspend fun autoDrainPendingReviews() = withContext(Dispatchers.IO) {
+        try {
+            val pending = reviewItemDao.getPendingReviewItemsFlow().firstOrNull() ?: emptyList()
+            if (pending.isEmpty()) return@withContext
+            val toInsert = mutableListOf<TransactionEntity>()
+            val resolvedIds = mutableListOf<Long>()
+            for (item in pending) {
+                val amount = item.extractedPartialAmount ?: continue
+                if (amount <= 0L) continue
+                val type = item.type ?: TransactionType.DEBIT
+
+                val existing = transactionDao.findMatchingTransaction(
+                    amount = amount,
+                    type = type,
+                    startTime = item.timestamp - DEDUPE_WINDOW_MS,
+                    endTime = item.timestamp + DEDUPE_WINDOW_MS,
+                    targetTime = item.timestamp,
+                    bankName = item.bankName,
+                    accountNumber = item.accountNumber
+                )
+                if (existing == null) {
+                    val payee = item.extractedPartialPayee?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
+                        ?: if (type == TransactionType.DEBIT) "UPI Payment" else "UPI Received"
+                    val rawCategory = CategoryClassifier.classifySync(payee, item.rawContent)
+                    val category = if (type == TransactionType.DEBIT && (rawCategory.isBlank() || rawCategory.equals("Transfer", ignoreCase = true) || rawCategory.equals("Uncategorized", ignoreCase = true))) {
+                        "Unspecified"
+                    } else rawCategory
+
+                    val cBank = AccountNormalizer.canonicalBankName(item.bankName)
+                    val cAcc = AccountNormalizer.accountNumber(item.accountNumber)
+
+                    toInsert.add(
+                        TransactionEntity(
+                            amount = amount,
+                            payee = payee,
+                            timestamp = item.timestamp,
+                            type = type,
+                            source = item.source,
+                            referenceId = item.referenceId,
+                            rawContent = item.rawContent,
+                            category = category,
+                            balance = item.balance,
+                            bankName = cBank,
+                            accountNumber = cAcc
+                        )
+                    )
+                }
+                resolvedIds.add(item.id)
+            }
+            if (toInsert.isNotEmpty()) {
+                transactionDao.insertTransactions(toInsert)
+                refreshWidget()
+            }
+            for (id in resolvedIds) {
+                reviewItemDao.updateStatus(id, ReviewStatus.RESOLVED)
+            }
+        } catch (e: Exception) {
+            Log.e("TransactionRepo", "Error auto-draining reviews", e)
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -1231,10 +1441,47 @@ class TransactionRepository(
         refreshWidget()
     }
 
+    /**
+     * Smart layer pass: scans transactions with category "Unspecified" or "Uncategorized"
+     * and upgrades them if the entity or transaction note matches a category rule or keyword.
+     */
+    suspend fun reclassifyUnspecifiedTransactions(): Int = withContext(Dispatchers.IO) {
+        var count = 0
+        val recentAll = transactionDao.getRecentTransactions(5000)
+        database.withTransaction {
+            for (txn in recentAll) {
+                if (txn.type != TransactionType.DEBIT) continue
+                val isUnspecified = txn.category.equals("Unspecified", ignoreCase = true) || txn.category.equals("Uncategorized", ignoreCase = true)
+                if (!isUnspecified) continue
+
+                val extractedNote = if (txn.note.isNullOrBlank() && txn.rawContent.startsWith("Imported statement:")) {
+                    com.expensetracker.offline.util.SbiPdfParserUtil.extractNoteFromRawLine(txn.rawContent)
+                } else {
+                    txn.note
+                }
+
+                val smartCat = CategoryClassifier.classifySync(
+                    payee = txn.payee,
+                    rawContent = txn.rawContent,
+                    note = extractedNote ?: txn.itemsSummary,
+                    amountPaise = txn.amount,
+                    timestamp = txn.timestamp
+                )
+                if (smartCat != "Uncategorized" && smartCat != "Unspecified") {
+                    transactionDao.updateTransaction(txn.copy(category = smartCat, note = extractedNote ?: txn.note))
+                    count++
+                } else if (extractedNote != null && txn.note == null) {
+                    transactionDao.updateTransaction(txn.copy(note = extractedNote))
+                }
+            }
+        }
+        if (count > 0) refreshWidget()
+        count
+    }
 
     companion object {
         /** Bump when the parser/categoriser changes so the next launch repairs old rows once. */
-        private const val HEAL_VERSION = 2
+        private const val HEAL_VERSION = 4
         private const val HEAL_INTERVAL_MS = 20L * 60_000L
 
         const val REVIEW_THRESHOLD_PAISE = 100_000L

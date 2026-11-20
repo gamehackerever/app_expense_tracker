@@ -9,6 +9,7 @@ import com.expensetracker.offline.engine.interceptor.NotificationCaptureService
 import com.expensetracker.offline.engine.ml.SmsPatternLearner
 import com.expensetracker.offline.engine.notification.DailyDigestWorker
 import com.expensetracker.offline.engine.notification.DailySummaryReceiver
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,6 +42,8 @@ class ExpenseTrackerApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        PDFBoxResourceLoader.init(applicationContext)
+
         // Loads learned templates from disk, so keep it off the main thread. Anything that parses
         // messages calls initialize() itself first (it is idempotent and synchronized).
         appScope.launch { runCatching { SmsPatternLearner.initialize(this@ExpenseTrackerApp) } }

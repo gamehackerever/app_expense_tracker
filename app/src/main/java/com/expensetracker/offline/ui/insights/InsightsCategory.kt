@@ -2,6 +2,11 @@
 
 package com.expensetracker.offline.ui.insights
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import com.expensetracker.offline.ui.components.quietClickable
 import com.expensetracker.offline.util.tap
 import androidx.compose.animation.AnimatedContent
@@ -99,6 +104,152 @@ internal fun CategoryGlyphBox(
 
 // ─────────────────────────────── Category breakdown ───────────────────────────────
 
+@Composable
+internal fun CategoryPieChart(
+    categories: List<CategoryInsight>,
+    grandTotal: Long,
+    selectedCategory: String?,
+    onSelectCategory: (String?) -> Unit,
+    onCategoryClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (categories.isEmpty() || grandTotal <= 0L) return
+
+    val animatedProgress by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+        label = "pieChartAnimation"
+    )
+
+    val highlightedCat = categories.firstOrNull { it.category == selectedCategory }
+    val centerTitle = highlightedCat?.category ?: "Total Spending"
+    val centerAmount = highlightedCat?.totalSpent ?: grandTotal
+
+    val trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(220.dp)
+                .padding(12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val strokeWidth = 30.dp.toPx()
+                val diameter = size.minDimension - strokeWidth
+                val topLeft = Offset(
+                    (size.width - diameter) / 2f,
+                    (size.height - diameter) / 2f
+                )
+                val arcSize = Size(diameter, diameter)
+
+                // Background track for donut depth
+                drawArc(
+                    color = trackColor,
+                    startAngle = 0f,
+                    sweepAngle = 360f,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(
+                        width = strokeWidth,
+                        cap = StrokeCap.Round
+                    )
+                )
+
+                var currentAngle = -90f
+                val totalSlices = categories.size
+                val gapAngle = if (totalSlices > 1) 2.5f else 0f
+
+                categories.forEach { cat ->
+                    val fraction = (cat.totalSpent.toFloat() / grandTotal.toFloat())
+                    val rawSweep = fraction * 360f * animatedProgress
+                    val sweep = (rawSweep - gapAngle).coerceAtLeast(0.5f)
+                    val isSelected = selectedCategory == null || selectedCategory == cat.category
+                    val sliceAlpha = if (isSelected) 1f else 0.35f
+                    val baseColor = getCategoryColor(cat.category)
+
+                    drawArc(
+                        color = baseColor.copy(alpha = sliceAlpha),
+                        startAngle = currentAngle + (gapAngle / 2f),
+                        sweepAngle = sweep,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = Stroke(
+                            width = if (selectedCategory == cat.category) strokeWidth * 1.15f else strokeWidth,
+                            cap = StrokeCap.Round
+                        )
+                    )
+                    currentAngle += rawSweep
+                }
+            }
+
+            // Center details inside donut
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable {
+                        if (highlightedCat != null) {
+                            onCategoryClick(highlightedCat.category)
+                        } else {
+                            onSelectCategory(null)
+                        }
+                    }
+                    .padding(8.dp)
+            ) {
+                Text(
+                    text = centerTitle,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = com.expensetracker.offline.ui.components.CurrencyFormat.withSymbol(centerAmount, 0),
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (highlightedCat != null) {
+                    val pct = (highlightedCat.totalSpent.toDouble() / grandTotal.toDouble() * 100.0).roundToInt()
+                    Text(
+                        text = "$pct% of total",
+                        fontSize = 11.sp,
+                        color = getCategoryColor(highlightedCat.category),
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${highlightedCat.transactionCount} ${if (highlightedCat.transactionCount == 1) "txn" else "txns"}",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        text = "${categories.size} categories",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}
+
+enum class CategorySortOrder(val label: String) {
+    AMOUNT("Spend"),
+    COUNT("Txns"),
+    NAME("A–Z")
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun CategoryBreakdownCard(
@@ -111,6 +262,8 @@ internal fun CategoryBreakdownCard(
     haptic: HapticFeedback
 ) {
     var showAll by rememberSaveable { mutableStateOf(false) }
+    var selectedCategoryForPie by remember { mutableStateOf<String?>(null) }
+    var sortOrder by rememberSaveable { mutableStateOf(CategorySortOrder.AMOUNT) }
 
     val reveal by rememberAnimatedValue(
         target = if (isAnimating) 1f else 0f,
@@ -119,6 +272,13 @@ internal fun CategoryBreakdownCard(
     )
 
     val positiveCategories = remember(categories) { categories.filter { it.totalSpent > 0L } }
+    val sortedCategories = remember(categories, sortOrder) {
+        when (sortOrder) {
+            CategorySortOrder.AMOUNT -> categories.sortedByDescending { it.totalSpent }
+            CategorySortOrder.COUNT -> categories.sortedByDescending { it.transactionCount }
+            CategorySortOrder.NAME -> categories.sortedBy { it.category.lowercase(Locale.ROOT) }
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -131,6 +291,17 @@ internal fun CategoryBreakdownCard(
                 .padding(horizontal = AppSpacing.cardPadding, vertical = 16.dp)
         ) {
             if (positiveCategories.isNotEmpty() && grandTotal > 0L) {
+                // Interactive Category Pie / Donut Chart
+                CategoryPieChart(
+                    categories = positiveCategories,
+                    grandTotal = grandTotal,
+                    selectedCategory = selectedCategoryForPie,
+                    onSelectCategory = { selectedCategoryForPie = it },
+                    onCategoryClick = onCategoryClick
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 // Stacked distribution bar showing all positive categories in their true colors
                 Box(
                     modifier = Modifier
@@ -166,16 +337,18 @@ internal fun CategoryBreakdownCard(
                 ) {
                     positiveCategories.forEach { cat ->
                         val rawPct = cat.totalSpent.toDouble() / grandTotal.toDouble() * 100.0
-                        val pctLabel = if (rawPct >= 1.0) "${rawPct.roundToInt()}%" else "<1%" 
+                        val pctLabel = if (rawPct >= 1.0) "${rawPct.roundToInt()}%" else "<1%"
+                        val isSelected = selectedCategoryForPie == cat.category
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(AppRadius.pill))
+                                .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
                                 .quietClickable {
                                     haptic.tap()
-                                    onCategoryClick(cat.category)
+                                    selectedCategoryForPie = if (selectedCategoryForPie == cat.category) null else cat.category
                                 }
-                                .padding(vertical = 2.dp)
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Box(
                                 modifier = Modifier
@@ -186,8 +359,8 @@ internal fun CategoryBreakdownCard(
                             Text(
                                 "${cat.category} $pctLabel",
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.widthIn(max = 176.dp)
@@ -200,7 +373,52 @@ internal fun CategoryBreakdownCard(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
             }
 
-            categories.forEachIndexed { index, cat ->
+            // Category Sort & Count Bar
+            if (sortedCategories.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "CATEGORIES (${sortedCategories.size})",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CategorySortOrder.entries.forEach { order ->
+                            val isSelected = sortOrder == order
+                            Surface(
+                                shape = RoundedCornerShape(AppRadius.pill),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent,
+                                border = if (isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)) else null,
+                                modifier = Modifier.quietClickable {
+                                    haptic.tap()
+                                    sortOrder = order
+                                }
+                            ) {
+                                Text(
+                                    text = order.label,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+            }
+
+            sortedCategories.forEachIndexed { index, cat ->
                 AnimatedVisibility(
                     visible = showAll || index < TOP_N_BY_DEFAULT,
                     enter = expandVertically(spring(stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
@@ -232,11 +450,11 @@ internal fun CategoryBreakdownCard(
                 }
             }
 
-            if (categories.size > TOP_N_BY_DEFAULT) {
+            if (sortedCategories.size > TOP_N_BY_DEFAULT) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                 Spacer(modifier = Modifier.height(4.dp))
                 ShowMoreToggle(
-                    text = if (showAll) "Show less" else "Show all ${categories.size}",
+                    text = if (showAll) "Show less" else "Show all ${sortedCategories.size}",
                     expanded = showAll,
                     onClick = {
                         haptic.tap()
@@ -300,12 +518,19 @@ internal fun CategoryRow(
                     fontSize = 15.sp,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                Text(
-                    "${String.format(Locale.getDefault(), "%.1f", percentage)}%",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Surface(
+                    color = categoryColor.copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(AppRadius.pill)
+                ) {
+                    Text(
+                        "${String.format(Locale.getDefault(), "%.1f", percentage)}%",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = categoryColor,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
             }
         }
 
@@ -384,12 +609,19 @@ internal fun CategoryRowWithBudget(
                     fontSize = 15.sp,
                     color = if (isOver) AppColors.negative else MaterialTheme.colorScheme.onSurface
                 )
-                Text(
-                    "of ${formatRupees(budgetPaise)} · ${(pct * 100).roundToInt()}%",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Surface(
+                    color = (if (isOver) AppColors.negative else categoryColor).copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(AppRadius.pill)
+                ) {
+                    Text(
+                        "${(pct * 100).roundToInt()}% of ${formatRupees(budgetPaise)}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isOver) AppColors.negative else categoryColor,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
             }
         }
 

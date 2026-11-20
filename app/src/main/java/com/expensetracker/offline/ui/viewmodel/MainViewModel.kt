@@ -2,6 +2,7 @@ package com.expensetracker.offline.ui.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -13,12 +14,15 @@ import com.expensetracker.offline.data.local.entity.SplitDebtEntity
 import com.expensetracker.offline.data.local.entity.TransactionEntity
 import com.expensetracker.offline.data.local.entity.TransactionSource
 import com.expensetracker.offline.data.local.entity.TransactionType
+import com.expensetracker.offline.util.SbiImportResult
+import com.expensetracker.offline.util.SbiPdfParserUtil
 import com.expensetracker.offline.data.repository.CreditCardConfig
 import com.expensetracker.offline.data.repository.SettingsRepository
 import com.expensetracker.offline.engine.parser.FinancialParser
 import com.expensetracker.offline.engine.recurring.RecurringPayment
 import com.expensetracker.offline.engine.recurring.RecurringPaymentDetector
 import com.expensetracker.offline.ui.dashboard.SplitLinkInfo
+import com.expensetracker.offline.util.AccountNormalizer
 import com.expensetracker.offline.util.BalanceCache
 import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.NecessityItem
@@ -52,6 +56,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsRepo = SettingsRepository(application.applicationContext)
 
     /** Budget the dashboard measures against: this cycle's one-off budget if set, else the usual one. */
+    val isBudgetEnabled = MutableStateFlow(settingsRepo.isBudgetEnabled)
     val monthlyBudget = MutableStateFlow(settingsRepo.effectiveMonthlyBudget)
     /** The usual (every-month) budget, shown and edited in Settings. */
     val baseMonthlyBudget = MutableStateFlow(settingsRepo.monthlyBudget)
@@ -89,6 +94,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dismissedCategoryWarnings.value = levels.keys
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { repository.syncCategoryRulesFromHistory() }
+            runCatching { repository.normalizeExistingBankNames() }
+            runCatching { repository.autoDrainPendingReviews() }
         }
         loadRolloverState()
     }
@@ -131,23 +138,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** @param clearOverride true when the user says "every month": a leftover one-off must not hide the new number. */
     fun updateMonthlyBudget(newBudget: Long, clearOverride: Boolean = false) {
+        val enabled = newBudget > 0L
         viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.isBudgetEnabled = enabled
             settingsRepo.monthlyBudget = newBudget
-            if (clearOverride) settingsRepo.setCurrentCycleBudgetOverride(null)
+            if (clearOverride || !enabled) settingsRepo.setCurrentCycleBudgetOverride(null)
         }
+        isBudgetEnabled.value = enabled
         baseMonthlyBudget.value = newBudget
-        if (clearOverride) cycleBudgetOverride.value = null
-        monthlyBudget.value = cycleBudgetOverride.value ?: newBudget
+        if (clearOverride || !enabled) cycleBudgetOverride.value = null
+        monthlyBudget.value = if (enabled) (cycleBudgetOverride.value ?: newBudget) else 0L
         isBudgetExplicitlySet.value = true
     }
 
     /** Unforeseen month: change this cycle's budget only. The usual budget returns automatically next cycle. */
     fun setBudgetForThisCycle(rupees: Long) {
+        val enabled = rupees > 0L
         viewModelScope.launch(Dispatchers.IO) {
-            settingsRepo.setCurrentCycleBudgetOverride(rupees)
+            if (enabled) {
+                settingsRepo.isBudgetEnabled = true
+                settingsRepo.setCurrentCycleBudgetOverride(rupees)
+            } else {
+                settingsRepo.setCurrentCycleBudgetOverride(null)
+            }
         }
-        cycleBudgetOverride.value = rupees
-        monthlyBudget.value = rupees
+        if (enabled) isBudgetEnabled.value = true
+        cycleBudgetOverride.value = if (enabled) rupees else null
+        monthlyBudget.value = if (isBudgetEnabled.value) (cycleBudgetOverride.value ?: baseMonthlyBudget.value) else 0L
         isBudgetExplicitlySet.value = true
     }
 
@@ -156,12 +173,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             settingsRepo.setCurrentCycleBudgetOverride(null)
         }
         cycleBudgetOverride.value = null
-        monthlyBudget.value = baseMonthlyBudget.value
+        monthlyBudget.value = if (isBudgetEnabled.value) baseMonthlyBudget.value else 0L
     }
 
     fun refreshSettings() {
+        isBudgetEnabled.value = settingsRepo.isBudgetEnabled
         baseMonthlyBudget.value = settingsRepo.monthlyBudget
-        cycleBudgetOverride.value = settingsRepo.currentCycleBudgetOverride()
+        cycleBudgetOverride.value = if (settingsRepo.isBudgetEnabled) settingsRepo.currentCycleBudgetOverride() else null
         monthlyBudget.value = settingsRepo.effectiveMonthlyBudget
         startDayOfMonth.value = settingsRepo.startDayOfMonth
         necessityChunkLimit.value = settingsRepo.necessityChunkLimit
@@ -300,6 +318,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dbEpoch.value += 1
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { repository.syncCategoryRulesFromHistory() }
+            runCatching { repository.normalizeExistingBankNames() }
+            runCatching { repository.autoDrainPendingReviews() }
         }
     }
 
@@ -386,75 +406,82 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _manualSyncBalance = MutableStateFlow<Long?>(null)
     val manualSyncBalance: StateFlow<Long?> = _manualSyncBalance
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val linkedAccounts: StateFlow<List<AccountInfo>> = dbEpoch.flatMapLatest { repository.getLinkedAccountsFlow() }
-        .map { list ->
-            val normalized = list.map { acc ->
-                val cleanBank = acc.bankName.removeSuffix(" CC").removeSuffix(" cc").trim()
-                val cleanAcc = acc.accountNumber?.trim()?.takeLast(4)?.takeIf { it.isNotEmpty() }
-                AccountInfo(cleanBank, cleanAcc)
-            }
-            val byBank = normalized.groupBy { it.bankName.lowercase(Locale.ROOT) }
-            byBank.flatMap { (_, group) ->
-                val withAcc = group.filter { it.accountNumber != null }.distinctBy { it.accountNumber }
-                when {
-                    withAcc.isEmpty() -> listOf(group.first())
-                    group.first().bankName.equals("South Indian Bank", ignoreCase = true) -> listOf(withAcc.first())
-                    else -> withAcc
-                }
-            }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val accountBalances: StateFlow<List<AccountBalanceInsight>> = dbEpoch.flatMapLatest { repository.getLatestBalancesForAllAccountsFlow() }
-        .map { list ->
-            val normalized = list.map { item ->
-                val cleanBank = item.bankName.removeSuffix(" CC").removeSuffix(" cc").trim()
-                val cleanAcc = item.accountNumber?.trim()?.takeLast(4)?.takeIf { it.isNotEmpty() }
-                item.copy(bankName = cleanBank, accountNumber = cleanAcc)
-            }
-            val byBank = normalized.groupBy { it.bankName.lowercase(Locale.ROOT) }
-            byBank.flatMap { (_, bankGroup) ->
-                val primaryAcc = bankGroup.mapNotNull { it.accountNumber }.firstOrNull()
-                val unifiedGroup = if (bankGroup.first().bankName.equals("South Indian Bank", ignoreCase = true) && primaryAcc != null) {
-                    bankGroup.map { it.copy(accountNumber = primaryAcc) }
-                } else {
-                    bankGroup.map { if (it.accountNumber == null && primaryAcc != null) it.copy(accountNumber = primaryAcc) else it }
-                }
-                unifiedGroup
-                    .groupBy { "${it.bankName.lowercase(Locale.ROOT)}|${it.accountNumber ?: ""}" }
-                    .map { (_, g) ->
-                        val newestWithBal = g.filter { it.latestBalance != null }.maxByOrNull { it.lastUpdated }
-                        val newestOverall = g.maxByOrNull { it.lastUpdated } ?: g.first()
-                        newestOverall.copy(latestBalance = newestWithBal?.latestBalance ?: newestOverall.latestBalance)
-                    }
-            }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
     val selectedAccount = MutableStateFlow<AccountInfo?>(null)
 
     private val _pendingDeleteIds = MutableStateFlow<Map<Long, Long>>(emptyMap())
     val pendingDeleteIds: StateFlow<Map<Long, Long>> = _pendingDeleteIds
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val latestBalance: StateFlow<Long?> = combine(selectedAccount, dbEpoch) { account, _ -> account }.flatMapLatest { account ->
-        if (account != null) {
-            repository.getLatestBalanceForAccountFlow(account.bankName, account.accountNumber)
+    val allTransactionsWithDebts = dbEpoch.flatMapLatest { repository.allTransactionsWithDebts }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private fun computeLiveAccountBalances(
+        txnsWithDebts: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts>
+    ): List<AccountBalanceInsight> {
+        if (txnsWithDebts.isEmpty()) return emptyList()
+
+        val primaryBank = settingsRepo.primaryAccountBank
+        val primaryAcc = settingsRepo.primaryAccountNumber
+
+        val sorted = txnsWithDebts.map { it.transaction }.sortedWith(
+            compareBy<TransactionEntity> { it.timestamp }.thenBy { it.id }
+        )
+
+        val lastExplicitIdx = sorted.indexOfLast { it.balance != null }
+        val (baseBalance, lastExplicitTs) = if (lastExplicitIdx >= 0) {
+            val explicitTxn = sorted[lastExplicitIdx]
+            (explicitTxn.balance ?: 0L) to explicitTxn.timestamp
         } else {
-            repository.latestBalance
+            val cached = BalanceCache.baselineOf(settingsRepo.prefs, primaryBank, primaryAcc)
+            val cachedTs = BalanceCache.timestampOf(settingsRepo.prefs, primaryBank, primaryAcc)
+            (cached ?: 0L) to cachedTs
         }
+
+        val lastUpdated = sorted.lastOrNull()?.timestamp ?: System.currentTimeMillis()
+
+        val liveBalance = if (lastExplicitIdx >= 0 || baseBalance > 0L) {
+            val subsequent = if (lastExplicitIdx >= 0) sorted.subList(lastExplicitIdx + 1, sorted.size) else sorted
+            var running = baseBalance
+            for (t in subsequent) {
+                if (t.timestamp >= lastExplicitTs) {
+                    if (t.type == TransactionType.DEBIT) {
+                        running -= t.amount
+                    } else if (t.type == TransactionType.CREDIT) {
+                        running += t.amount
+                    }
+                }
+            }
+            running
+        } else {
+            null
+        }
+
+        return listOf(
+            AccountBalanceInsight(
+                bankName = primaryBank,
+                accountNumber = primaryAcc,
+                latestBalance = liveBalance,
+                lastUpdated = lastUpdated
+            )
+        )
+    }
+
+    val accountBalances: StateFlow<List<AccountBalanceInsight>> = allTransactionsWithDebts.map { txns ->
+        computeLiveAccountBalances(txns)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val linkedAccounts: StateFlow<List<AccountInfo>> = accountBalances.map { list ->
+        list.map { AccountInfo(it.bankName, it.accountNumber) }.distinct()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val latestBalance: StateFlow<Long?> = accountBalances.map { accounts ->
+        accounts.firstOrNull()?.latestBalance
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val totalCreditCardDebt: StateFlow<Long> = dbEpoch.flatMapLatest {
         repository.getTotalCreditCardDebtFlow()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val allTransactionsWithDebts = dbEpoch.flatMapLatest { repository.allTransactionsWithDebts }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val splitLinkInfo: StateFlow<SplitLinkInfo> = allTransactionsWithDebts.map { list: List<com.expensetracker.offline.data.local.dao.TransactionWithDebts> ->
         val creditsWithLinks = ArrayList<TransactionEntity>()
@@ -702,7 +729,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 budgetId = budget?.id
             )
             val newId = repository.insertTransaction(entity)
-            if (newId > 0L && !excludeFromSpend) {
+            if (newId > 0L && !excludeFromSpend &&
+                !com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(payee) &&
+                itemsSummary.isNullOrBlank()
+            ) {
                 repository.learnCategoryRule(payee, category)
             }
             if (newId > 0L && splitParticipants.isNotEmpty() && type == TransactionType.DEBIT) {
@@ -793,10 +823,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateTransaction(transaction: TransactionEntity, learnRule: Boolean = true) {
+    fun updateTransaction(transaction: TransactionEntity, learnRule: Boolean = true, propagateToUnspecified: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.updateTransaction(transaction)
-            if (learnRule) {
+            val isPerson = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(transaction.payee)
+            val hasNote = !transaction.note.isNullOrBlank() || !transaction.itemsSummary.isNullOrBlank()
+            val shouldPropagate = propagateToUnspecified && !isPerson && !hasNote
+            val propagated = repository.updateTransaction(transaction, propagateToUnspecified = shouldPropagate)
+            if (learnRule && !isPerson && !hasNote) {
                 repository.learnCategoryRule(transaction.payee, transaction.category)
             }
         }
@@ -805,7 +838,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updatePayeeAndCategoryForAll(oldPayee: String, newPayee: String, newCategory: String) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.updatePayeeAndCategoryBulk(oldPayee, newPayee, newCategory)
-            repository.learnCategoryRule(newPayee, newCategory)
+            if (!com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(newPayee)) {
+                repository.learnCategoryRule(newPayee, newCategory)
+            }
         }
     }
 
@@ -893,7 +928,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 accountType = settingsRepo.resolveAccountType(bank, account, parsed?.accountType)
             )
             repository.approveReviewItem(newTransaction, reviewItem.id)
-            repository.learnCategoryRule(payee, category)
+            if (!com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(payee) && parsed?.note.isNullOrBlank()) {
+                repository.learnCategoryRule(payee, category)
+            }
 
             balance?.let {
                 val context = getApplication<Application>().applicationContext
@@ -1022,5 +1059,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.undoRepayment(creditTxn)
         }
+    }
+
+    fun updatePrimaryAccount(bankName: String, accountNumber: String?) {
+        val cleanBank = bankName.trim().ifBlank { "Primary" }
+        val cleanAcc = AccountNormalizer.accountNumber(accountNumber)
+        settingsRepo.setPrimaryAccount(cleanBank, cleanAcc)
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.enforceSingleAccountMode()
+            dbEpoch.value += 1
+        }
+    }
+
+    suspend fun importSbiPdfStatement(
+        uri: Uri,
+        password: String
+    ): SbiImportResult = withContext(Dispatchers.IO) {
+        val rawText = SbiPdfParserUtil.extractTextFromPdf(getApplication(), uri, password)
+        val accountNum = SbiPdfParserUtil.extractAccountNumber(rawText)
+        val parsedRows = SbiPdfParserUtil.parseSbiStatementText(rawText)
+        val result = SbiPdfParserUtil.importParsedTransactions(
+            dao = app.database.transactionDao(),
+            rows = parsedRows,
+            accountNumber = accountNum,
+            bankNameOverride = "Primary"
+        )
+        val canonicalAcc = AccountNormalizer.accountNumber(accountNum)
+        settingsRepo.setPrimaryAccount("Primary", canonicalAcc)
+        repository.enforceSingleAccountMode()
+        dbEpoch.value += 1
+        result
     }
 }

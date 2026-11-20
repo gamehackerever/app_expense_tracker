@@ -201,7 +201,7 @@ fun AccountsDialog(
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        if (accountBalances.size <= 1) "Balance & Safe to Spend" else "Accounts & Safe to Spend",
+                        "Balance & Safe to Spend",
                         fontWeight = FontWeight.Bold, fontSize = 22.sp, letterSpacing = (-0.3).sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -263,7 +263,7 @@ fun AccountsDialog(
                     cardDebtPaise = totalCreditCardDebt
                 )
             }
-            if (manualAccounts.isNotEmpty() || totalCreditCardDebt > 0L || accountBalances.size > 1) {
+            if (manualAccounts.isNotEmpty() || totalCreditCardDebt > 0L) {
                 NetWorthStrip(netWorth)
                 Spacer(Modifier.height(14.dp))
             }
@@ -288,20 +288,7 @@ fun AccountsDialog(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("No accounts detected yet.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (onAddManualAccount != null) {
-                        OutlinedButton(
-                            onClick = {
-                                haptic.tap()
-                                showAddAccountDialog = true
-                            },
-                            shape = RoundedCornerShape(AppRadius.small)
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Add Offline Account", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                        }
-                    }
+                    Text("No transactions or statements detected yet.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 val single = accountBalances.size == 1
@@ -401,14 +388,6 @@ fun AccountsDialog(
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
-                            }
-                        }
-                        // With exactly one account the list below never shows, so the add button must live here too.
-                        if (onAddManualAccount != null) {
-                            Spacer(Modifier.height(12.dp))
-                            AddAccountButton {
-                                haptic.tap()
-                                showAddAccountDialog = true
                             }
                         }
                     } else {

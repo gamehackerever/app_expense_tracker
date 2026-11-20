@@ -53,6 +53,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.BatteryFull
@@ -78,6 +79,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.filled.HealthAndSafety
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.TableView
 import androidx.compose.material.icons.filled.Tune
@@ -85,6 +87,7 @@ import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -103,6 +106,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -160,6 +164,8 @@ import com.expensetracker.offline.util.BillingCycleHelper
 import com.expensetracker.offline.util.CsvEngine
 import com.expensetracker.offline.util.CsvResult
 import com.expensetracker.offline.util.RestoreResult
+import com.expensetracker.offline.util.SbiPdfParserUtil
+import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -287,7 +293,8 @@ fun SettingsScreen(
     val pendingDeleteIds by viewModel.pendingDeleteIds.collectAsStateWithLifecycle()
     val vmBaseBudget by viewModel.baseMonthlyBudget.collectAsStateWithLifecycle()
     val vmCycleOverride by viewModel.cycleBudgetOverride.collectAsStateWithLifecycle()
-    var budgetText by remember(vmBaseBudget) { mutableStateOf(vmBaseBudget.toString()) }
+    val isBudgetEnabled by viewModel.isBudgetEnabled.collectAsStateWithLifecycle()
+    var budgetText by remember(vmBaseBudget) { mutableStateOf(if (vmBaseBudget > 0L) vmBaseBudget.toString() else "25000") }
 
     var startDayOfMonth by remember { mutableIntStateOf(settingsRepo.startDayOfMonth) }
     val isManualModePreferred by viewModel.isManualModePreferred.collectAsStateWithLifecycle()
@@ -335,9 +342,11 @@ fun SettingsScreen(
                 if (pending != settingsRepo.myUpiVpa && isValidUpiVpa(pending)) {
                     settingsRepo.myUpiVpa = pending
                 }
-                val pendingBudget = budgetText.toLongOrNull()?.takeIf { it > 0L }
-                if (pendingBudget != null && pendingBudget != settingsRepo.monthlyBudget) {
-                    viewModel.updateMonthlyBudget(pendingBudget)
+                if (isBudgetEnabled) {
+                    val pendingBudget = budgetText.toLongOrNull()?.takeIf { it > 0L }
+                    if (pendingBudget != null && pendingBudget != settingsRepo.monthlyBudget) {
+                        viewModel.updateMonthlyBudget(pendingBudget)
+                    }
                 }
             }
         }
@@ -374,17 +383,21 @@ fun SettingsScreen(
     }
 
     fun commitBudget() {
+        if (!isBudgetEnabled) return
         val parsed = budgetText.toLongOrNull()?.takeIf { it > 0L }
         if (parsed != null && parsed != settingsRepo.monthlyBudget) {
             viewModel.updateMonthlyBudget(parsed)
             budgetText = parsed.toString()
             showSnack("Budget saved")
         } else {
-            budgetText = settingsRepo.monthlyBudget.toString()
+            budgetText = if (settingsRepo.monthlyBudget > 0L) settingsRepo.monthlyBudget.toString() else "25000"
         }
     }
 
     var showStartDayDialog by remember { mutableStateOf(false) }
+    var showEditAccountDialog by remember { mutableStateOf(false) }
+    var editBankName by remember(showEditAccountDialog) { mutableStateOf(settingsRepo.primaryAccountBank) }
+    var editAccountNumber by remember(showEditAccountDialog) { mutableStateOf(settingsRepo.primaryAccountNumber ?: "") }
     var showScanConfirmDialog by remember { mutableStateOf(false) }
     var showMissedSmsDialog by remember { mutableStateOf(false) }
     var statementBusy by remember { mutableStateOf(false) }
@@ -565,6 +578,24 @@ fun SettingsScreen(
         }
     }
 
+    var pendingSbiPdfUri by remember { mutableStateOf<Uri?>(null) }
+    var showSbiPasswordDialog by remember { mutableStateOf(false) }
+    var sbiPassword by remember { mutableStateOf("") }
+    var isSbiPasswordVisible by remember { mutableStateOf(false) }
+    var isSbiPdfBusy by remember { mutableStateOf(false) }
+
+    val sbiPdfPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            haptic.confirm()
+            pendingSbiPdfUri = uri
+            sbiPassword = ""
+            isSbiPasswordVisible = false
+            showSbiPasswordDialog = true
+        }
+    }
+
     LaunchedEffect(scrollToSection) {
         val target = scrollToSection ?: return@LaunchedEffect
         val page = settingsPageFor(target)
@@ -631,7 +662,7 @@ fun SettingsScreen(
         ) {
             Spacer(modifier = Modifier.height(4.dp))
 
-            val needsHealthFix = !isManualModePreferred && (!(hasNotificationPermission || hasSmsPermission) || !isIgnoringBatteryOptimizations)
+            val needsHealthFix = !isManualModePreferred && !(hasNotificationPermission || hasSmsPermission)
 
             if (needsHealthFix && (openPage == null || openPage == "health")) {
                 Surface(
@@ -660,27 +691,13 @@ fun SettingsScreen(
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
                             ) { Text("Allow notification access", fontSize = 14.sp, fontWeight = FontWeight.Medium) }
                         }
-                        if (!isIgnoringBatteryOptimizations) {
-                            OutlinedButton(
-                                onClick = {
-                                    val appInfo = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                        data = Uri.fromParts("package", context.packageName, null)
-                                    }
-                                    context.startActivitySafely(appInfo)
-                                },
-                                modifier = Modifier.fillMaxWidth().height(40.dp),
-                                shape = RoundedCornerShape(AppRadius.small),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
-                            ) { Text("Open app battery settings", fontSize = 14.sp, fontWeight = FontWeight.Medium) }
-                        }
                     }
                 }
             }
 
             if (openPage == null) {
             val healthIssues = if (isManualModePreferred) 0
-            else listOf(hasSmsPermission, hasNotificationPermission, isIgnoringBatteryOptimizations).count { !it }
+            else listOf(hasSmsPermission, hasNotificationPermission).count { !it }
             SettingsStatusStrip(
                 items = listOf(
                     SettingsStatus(
@@ -717,14 +734,62 @@ fun SettingsScreen(
                 onClick = { openSection(it) }
             )
 
+            SettingsSection(
+                title = "Account & Statements",
+                modifier = Modifier.trackSection("Statements", sectionPositions)
+            ) {
+                val primaryAcc = settingsRepo.primaryAccountNumber
+                val accountDesc = if (primaryAcc.isNullOrBlank()) "Single active account" else "•••• $primaryAcc · Single active account"
+
+                SettingsItem(
+                    icon = Icons.Default.AccountBalance,
+                    title = "Primary Account",
+                    subtitle = "$accountDesc\nTap to set account number",
+                    onClick = {
+                        haptic.tap()
+                        editAccountNumber = primaryAcc ?: ""
+                        showEditAccountDialog = true
+                    }
+                )
+
+                SettingsDivider()
+
+                SettingsItem(
+                    icon = Icons.Default.PictureAsPdf,
+                    title = "Upload PDF Statement",
+                    subtitle = "Import password-protected PDF e-statements into your Primary account",
+                    onClick = {
+                        haptic.tap()
+                        sbiPdfPickerLauncher.launch("application/pdf")
+                    }
+                )
+
+                SettingsDivider()
+
+                SettingsItem(
+                    icon = Icons.Default.AccountBalanceWallet,
+                    title = "Upload Payment Statement (CSV / Takeout)",
+                    subtitle = "Import PhonePe statement, Google Pay Takeout, or bank CSV",
+                    onClick = {
+                        haptic.tap()
+                        statementPicker.launch(arrayOf("*/*"))
+                    }
+                )
+            }
+
             SettingsHub(
                 groups = listOf(
                     "Money" to listOf(
                         SettingsHubEntry(Icons.Default.Savings, "Budget & Cycle", "Monthly limit, billing cycle, fixed costs", "budget"),
                         SettingsHubEntry(
                             Icons.Default.Bolt, "Capture & Import",
-                            if (isManualModePreferred) "Auto-capture is paused" else "Live SMS capture, inbox scan, statements",
+                            if (isManualModePreferred) "Auto-capture is paused" else "Live SMS capture, inbox scan",
                             "capture"
+                        ),
+                        SettingsHubEntry(
+                            Icons.Default.PictureAsPdf, "Bank Statements",
+                            "Upload bank PDF statements & CSV exports",
+                            "statements"
                         )
                     ),
                     "App" to listOf(
@@ -774,28 +839,50 @@ if (openPage == "budget") {
                 showTitle = false,
                 modifier = Modifier.trackSection("Cycle", sectionPositions)
             ) {
-                SettingsItem(
+                SettingsSwitchItem(
                     icon = Icons.Default.Savings,
-                    title = "Target Spending Limit",
-                    subtitle = vmCycleOverride?.let {
-                        "This month is set to ₹$it (one-off). The usual budget below returns next cycle."
-                    } ?: "Powers the monthly gauge on your dashboard"
+                    title = "Enable Monthly Budget",
+                    subtitle = if (isBudgetEnabled) "Active monthly spending cap" else "Optional spending limit (currently disabled)",
+                    checked = isBudgetEnabled,
+                    onCheckedChange = { enabled: Boolean ->
+                        haptic.tap()
+                        if (!enabled) {
+                            viewModel.updateMonthlyBudget(0L, clearOverride = true)
+                            budgetText = "25000"
+                            showSnack("Monthly budget disabled")
+                        } else {
+                            val defaultBudget = 25000L
+                            viewModel.updateMonthlyBudget(defaultBudget, clearOverride = true)
+                            budgetText = defaultBudget.toString()
+                            showSnack("Monthly budget enabled")
+                        }
+                    }
                 )
 
-                SettingsInset {
-                    SettingsTextField(
-                        value = budgetText,
-                        onValueChange = {
-                            budgetText = it.filter(Char::isDigit).take(9)
-                        },
-                        label = "Target Budget (₹)",
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Number,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-                        modifier = Modifier.onFocusLost { commitBudget() }
+                if (isBudgetEnabled) {
+                    SettingsItem(
+                        icon = Icons.Default.AccountBalanceWallet,
+                        title = "Target Spending Limit",
+                        subtitle = vmCycleOverride?.let {
+                            "This month is set to ₹$it (one-off). The usual budget below returns next cycle."
+                        } ?: "Powers the monthly gauge on your dashboard"
                     )
+
+                    SettingsInset {
+                        SettingsTextField(
+                            value = budgetText,
+                            onValueChange = {
+                                budgetText = it.filter(Char::isDigit).take(9)
+                            },
+                            label = "Target Budget (₹)",
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                            modifier = Modifier.onFocusLost { commitBudget() }
+                        )
+                    }
                 }
 
                 SettingsDivider()
@@ -1233,6 +1320,122 @@ if (openPage == "capture") {
                         }
                     }
                 }
+            }
+}
+
+            // ─────────────────────────────────────────────────────────────────
+            // 3b. Bank Statements
+            // ─────────────────────────────────────────────────────────────────
+if (openPage == "statements" || openPage == "capture") {
+            SettingsSection(
+                title = "Account & Statements",
+                isHighlighted = highlightedSection == "Statements",
+                showTitle = openPage == "capture",
+                modifier = Modifier.trackSection("Statements", sectionPositions)
+            ) {
+                val primaryAcc = settingsRepo.primaryAccountNumber
+                val accountDesc = if (primaryAcc.isNullOrBlank()) "Single active account" else "•••• $primaryAcc · Single active account"
+
+                SettingsItem(
+                    icon = Icons.Default.AccountBalance,
+                    title = "Primary Account",
+                    subtitle = "$accountDesc\nTap to set account number",
+                    onClick = {
+                        haptic.tap()
+                        editAccountNumber = primaryAcc ?: ""
+                        showEditAccountDialog = true
+                    }
+                )
+
+                SettingsDivider()
+
+                SettingsItem(
+                    icon = Icons.Default.PictureAsPdf,
+                    title = "Upload PDF Statement",
+                    subtitle = "Import password-protected PDF e-statements into your Primary account",
+                    onClick = {
+                        haptic.tap()
+                        sbiPdfPickerLauncher.launch("application/pdf")
+                    }
+                )
+
+                SettingsInset(start = 16.dp) {
+                    OutlinedButton(
+                        onClick = {
+                            haptic.tap()
+                            sbiPdfPickerLauncher.launch("application/pdf")
+                        },
+                        enabled = !isSbiPdfBusy,
+                        shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.PictureAsPdf,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Select PDF Statement",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                SettingsDivider()
+
+                SettingsItem(
+                    icon = Icons.Default.AccountBalanceWallet,
+                    title = "Upload Payment Statement (CSV / Takeout)",
+                    subtitle = "Import PhonePe statement, Google Pay Takeout activity, or bank CSV exports",
+                    onClick = {
+                        haptic.tap()
+                        statementPicker.launch(arrayOf("*/*"))
+                    }
+                )
+
+                SettingsInset(start = 16.dp) {
+                    OutlinedButton(
+                        onClick = {
+                            haptic.tap()
+                            statementPicker.launch(arrayOf("*/*"))
+                        },
+                        enabled = !statementBusy,
+                        shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.AccountBalanceWallet,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Select Statement File (CSV / Takeout)",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                SettingsDivider()
+
+                SettingsItem(
+                    icon = Icons.AutoMirrored.Filled.HelpOutline,
+                    title = "Password Help for PDF Statements",
+                    subtitle = "• 1st 4 letters of your name in CAPITAL LETTERS + DOB (DDMM)\n• Date of Birth (DDMMYY) + last 4 digits of registered mobile"
+                )
             }
 }
 
@@ -1697,6 +1900,46 @@ if (openPage == "data") {
                 SettingsDivider()
 
                 SettingsItem(
+                    icon = Icons.Default.PictureAsPdf,
+                    title = "PDF Statement",
+                    subtitle = "Import password-protected PDF e-statements into your Primary account"
+                )
+
+                SettingsInset(start = 16.dp) {
+                    OutlinedButton(
+                        onClick = {
+                            haptic.tap()
+                            sbiPdfPickerLauncher.launch("application/pdf")
+                        },
+                        enabled = !isSbiPdfBusy,
+                        shape = RoundedCornerShape(AppRadius.small),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.PictureAsPdf,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Import Bank PDF Statement",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                SettingsDivider()
+
+                SettingsItem(
                     icon = Icons.Default.AccountBalanceWallet,
                     title = "Import payment statement",
                     subtitle = "Fill gaps from a PhonePe statement, Google Pay (Takeout) activity or a bank CSV. Payments already in the app are skipped.",
@@ -2003,6 +2246,43 @@ if (openPage == "health") {
         )
     }
 
+    if (showEditAccountDialog) {
+        AppDialog(
+            title = "Primary Account",
+            onDismiss = {
+                haptic.tap()
+                showEditAccountDialog = false
+            },
+            confirmText = "Save",
+            confirmEnabled = true,
+            onConfirm = {
+                haptic.confirm()
+                viewModel.updatePrimaryAccount("Primary", editAccountNumber.trim().ifBlank { null })
+                showEditAccountDialog = false
+                showSnack("Primary Account details updated")
+            }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "The app strictly maintains a single Primary Account. All transactions and statements are tracked under this account.",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = editAccountNumber,
+                    onValueChange = { editAccountNumber = it.filter { c -> c.isDigit() }.take(4) },
+                    label = { Text("Account Number (Last 4 digits)") },
+                    placeholder = { Text("e.g. 1234 (optional)") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(AppRadius.small),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+
     if (showBackupPassphraseDialog) {
         val tooShort = tempPassphrase.isNotEmpty() && tempPassphrase.length < MIN_BACKUP_PASSPHRASE_LENGTH
         AppDialog(
@@ -2137,6 +2417,107 @@ if (openPage == "health") {
                 modifier = Modifier.fillMaxWidth()
             )
         }
+    }
+
+    if (showSbiPasswordDialog && pendingSbiPdfUri != null) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!isSbiPdfBusy) {
+                    showSbiPasswordDialog = false
+                    pendingSbiPdfUri = null
+                }
+            },
+            title = {
+                Text(
+                    "Enter Bank PDF Password",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "e-Statements are typically password protected by your bank.\n\nCommon password formats include:\n• 1st 4 letters of your name in CAPITAL LETTERS + DOB (DDMM)\n• Date of Birth (DDMMYY) + last 4 digits of registered mobile (DDMMYYXXXX)",
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = sbiPassword,
+                        onValueChange = { sbiPassword = it },
+                        label = { Text("PDF Password") },
+                        placeholder = { Text("e.g. RAHU1508 or 1508901234") },
+                        singleLine = true,
+                        enabled = !isSbiPdfBusy,
+                        visualTransformation = if (isSbiPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { isSbiPasswordVisible = !isSbiPasswordVisible }) {
+                                Icon(
+                                    if (isSbiPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = if (isSbiPasswordVisible) "Hide password" else "Show password"
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (isSbiPdfBusy) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Decrypting & importing...", fontSize = 13.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val uri = pendingSbiPdfUri ?: return@Button
+                        val pwd = sbiPassword.trim()
+                        if (pwd.isBlank()) return@Button
+                        isSbiPdfBusy = true
+                        coroutineScope.launch {
+                            try {
+                                val result = viewModel.importSbiPdfStatement(uri, pwd)
+                                if (result.totalParsed == 0) {
+                                    showSnack("No bank transactions recognized in this PDF.")
+                                } else {
+                                    showSnack(
+                                        "Statement Import: ${result.newlyInserted} added, ${result.duplicatesSkipped} duplicates skipped."
+                                    )
+                                }
+                                showSbiPasswordDialog = false
+                                pendingSbiPdfUri = null
+                            } catch (e: InvalidPasswordException) {
+                                showSnack("Wrong Password! Please check and try again.")
+                            } catch (e: Exception) {
+                                showSnack("PDF Import failed: ${e.message ?: "Unknown error"}")
+                            } finally {
+                                isSbiPdfBusy = false
+                            }
+                        }
+                    },
+                    enabled = sbiPassword.isNotBlank() && !isSbiPdfBusy
+                ) {
+                    Text("Unlock & Import")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showSbiPasswordDialog = false
+                        pendingSbiPdfUri = null
+                    },
+                    enabled = !isSbiPdfBusy
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     if (statementBusy) {

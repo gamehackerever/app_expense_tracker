@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
@@ -78,6 +79,7 @@ import com.expensetracker.offline.ui.theme.AppRadius
 import com.expensetracker.offline.ui.theme.getCategoryColor
 import com.expensetracker.offline.ui.theme.getCategoryIcon
 import com.expensetracker.offline.ui.theme.hasCategoryIcon
+import com.expensetracker.offline.util.TransactionModeHelper
 import com.expensetracker.offline.util.ImportedSource
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -253,10 +255,10 @@ fun DashboardTransactionCard(
             com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(transaction.payee)
     }
     val importedLabel = remember(transaction.rawContent) { ImportedSource.shortLabel(transaction.rawContent) }
-    val timeText = remember(transaction.timestamp, showDate, importedLabel) {
+    val noRealTime = remember(transaction.timestamp) { ImportedSource.hasNoRealTime(transaction.timestamp) }
+    val timeText = remember(transaction.timestamp, showDate, noRealTime) {
         val date = java.util.Date(transaction.timestamp)
-        // Statements that only carry a date are stored at midnight: don't show a made-up "00:00".
-        val noRealTime = importedLabel != null && ImportedSource.hasNoRealTime(transaction.timestamp)
+        // Statements that only carry a date are stored at midnight: don't show a made-up "12:00 AM".
         val time = if (noRealTime) "" else TimeFormatCache.get(context).format(date)
         when {
             showDate && time.isNotEmpty() -> TimeFormatCache.getDate().format(date) + " \u2022 " + time
@@ -316,8 +318,10 @@ fun DashboardTransactionCard(
     val showAutoMarker = sourceMarker == SourceMarker.AUTO && isAuto
 
     val showCategoryText = showCategory || isRepayment
+    val modeText = remember(transaction) { TransactionModeHelper.detectMode(transaction) }
     val tailParts = buildList {
         if (timeText.isNotEmpty()) add(timeText)
+        add(modeText)
         if (showBankBadge && bankText != null) add(bankText)
         if (importedLabel != null) add(importedLabel) else if (showManualMarker) add("Manual")
     }
@@ -522,7 +526,7 @@ fun DashboardTransactionCard(
                     if (detail != null) {
                         Spacer(Modifier.height(4.dp))
                         InlineMeta(
-                            icon = if (!transaction.itemsSummary.isNullOrBlank()) Icons.Default.ShoppingBasket else null,
+                            icon = if (!transaction.itemsSummary.isNullOrBlank()) Icons.Default.ShoppingBasket else Icons.AutoMirrored.Filled.Notes,
                             text = detail,
                             color = colors.onSurfaceVariant,
                             maxLines = DetailMaxLines

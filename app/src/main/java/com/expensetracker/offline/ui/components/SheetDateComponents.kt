@@ -83,7 +83,10 @@ fun SheetTimePill(millis: Long, onTimeSelected: (Long) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val haptic = LocalHapticFeedback.current
     val pill = RoundedCornerShape(AppRadius.pill)
-    val label = remember(millis) { DateFormat.getTimeFormat(context).format(Date(millis)) }
+    val hasNoRealTime = remember(millis) { com.expensetracker.offline.util.ImportedSource.hasNoRealTime(millis) }
+    val label = remember(millis, hasNoRealTime) {
+        if (hasNoRealTime) "+ Time" else DateFormat.getTimeFormat(context).format(Date(millis))
+    }
     var showPicker by rememberSaveable { mutableStateOf(false) }
 
     Surface(

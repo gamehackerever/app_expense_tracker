@@ -150,12 +150,17 @@ class StatementImporter(private val context: Context, private val database: AppD
         val rows = if (replaceEarlier) analysis.replaceRows else analysis.newRows
         if (rows.isEmpty()) return@withContext 0
         val settings = SettingsRepository(context)
+        val primaryBank = settings.primaryAccountBank
+        val primaryAcc = settings.primaryAccountNumber
         val ruleDao = database.categoryRuleDao()
         val label = analysis.format.label
         val entities = rows.map { row ->
             val payee = settings.getMerchantAlias(row.payee) ?: row.payee
             val type = if (row.isDebit) TransactionType.DEBIT else TransactionType.CREDIT
-            val category = if (!row.isDebit) "Uncategorized" else CategoryClassifier.classify(payee, payee, ruleDao)
+            val category = if (!row.isDebit) "Uncategorized" else {
+                val c = CategoryClassifier.classify(payee = payee, rawContent = payee, ruleDao = ruleDao, note = null)
+                if (c == "Uncategorized" || c.isBlank()) "Unspecified" else c
+            }
             TransactionEntity(
                 amount = row.amountPaise,
                 payee = payee,
@@ -166,13 +171,16 @@ class StatementImporter(private val context: Context, private val database: AppD
                 // Recognised by its rawContent prefix (see ImportedSource); no note, so the dashboard row stays clean.
                 rawContent = "Imported from $label",
                 category = category,
-                note = null
+                note = null,
+                bankName = primaryBank,
+                accountNumber = primaryAcc
             )
         }
         CaptureDispatcher.ingestMutex.withLock {
             database.withTransaction {
                 if (replaceEarlier) dao.deleteImportedBetween(analysis.rangeStart, analysis.rangeEnd)
                 dao.insertTransactions(entities)
+                dao.unifyAllTransactionsToSingleAccount(primaryBank, primaryAcc)
             }
         }
         // Paying a card bill from UPI is a transfer, not a new expense: pair it with the card's payment credit.
