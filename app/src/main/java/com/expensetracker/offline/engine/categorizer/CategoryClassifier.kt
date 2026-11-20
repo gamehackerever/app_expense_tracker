@@ -487,14 +487,16 @@ object CategoryClassifier {
         amountPaise: Long? = null,
         timestamp: Long? = null
     ): Decision {
-        val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim()
+        val (basePayee, inlineNote) = PayeeHeuristics.splitPayeeAndInlineNote(payee)
+        val cleanPayee = basePayee.replace('_', ' ').replace('/', ' ').trim()
         val generic = isGenericPayee(cleanPayee)
         val cleanContent = rawContent.replace('_', ' ').replace('/', ' ').trim()
 
-        // 1. SMART LAYER: Evaluate user-written transaction note or items summary first.
+        // 1. SMART LAYER: Evaluate user-written transaction note, inline payee note, or items summary first.
         val combinedNote = listOfNotNull(
             note?.takeIf { it.isNotBlank() },
-            itemsSummary?.takeIf { it.isNotBlank() && it != note }
+            inlineNote?.takeIf { it.isNotBlank() },
+            itemsSummary?.takeIf { it.isNotBlank() && it != note && it != inlineNote }
         ).joinToString(" ").trim()
 
         if (combinedNote.isNotBlank()) {
@@ -615,18 +617,44 @@ object CategoryClassifier {
         timestamp: Long? = null,
         ruleDao: CategoryRuleDao? = null
     ): Decision {
-        val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim()
+        val (basePayee, inlineNote) = PayeeHeuristics.splitPayeeAndInlineNote(payee)
+        val cleanPayee = basePayee.replace('_', ' ').replace('/', ' ').trim()
         val generic = isGenericPayee(cleanPayee)
+        val isPerson = !generic && PayeeHeuristics.looksLikePerson(cleanPayee)
 
-        // 1. User Learned Rule (Exact or Substring)
-        if (cleanPayee.isNotBlank() && !generic && ruleDao != null) {
+        // 1. STRICT REMARKS / NOTES PRIORITY:
+        // Remarks from bank statements or user notes reflect specific transaction intent and strictly override payee rules.
+        val combinedNote = listOfNotNull(
+            note?.takeIf { it.isNotBlank() },
+            inlineNote?.takeIf { it.isNotBlank() },
+            itemsSummary?.takeIf { it.isNotBlank() && it != note && it != inlineNote }
+        ).joinToString(" ").trim()
+
+        if (combinedNote.isNotBlank()) {
+            val cleanNote = combinedNote.replace('_', ' ').replace('/', ' ').trim()
+            val canonicalNote = PayeeHeuristics.canonicalize(cleanNote)
+            for ((category, regex) in PAYEE_CATEGORY_REGEX_MAP) {
+                if (regex.containsMatchIn(canonicalNote)) {
+                    return Decision(category, 0.95f, DecisionSource.USER_NOTE, "Matched remark keyword: $cleanNote")
+                }
+            }
+            PayeeHeuristics.categoryHint(cleanNote)?.let {
+                return Decision(it, 0.88f, DecisionSource.USER_NOTE, "Shop/spelling hint on remark: $cleanNote")
+            }
+            SemanticCentroidClassifier.classifySemantic(cleanNote)?.let {
+                return Decision(it.category, it.similarity, DecisionSource.SEMANTIC_VECTOR, "Semantic match on remark: ${it.explanation}")
+            }
+        }
+
+        // 2. User Learned Rule: strictly applied to merchants, NEVER to individual contacts/persons!
+        if (cleanPayee.isNotBlank() && !generic && !isPerson && ruleDao != null) {
             val learned = ruleDao.findMatchingCategory(cleanPayee.lowercase(Locale.ROOT))
             if (!learned.isNullOrBlank() && !learned.equals("Uncategorized", ignoreCase = true) && !learned.equals("Unspecified", ignoreCase = true)) {
                 return Decision(learned, 1.0f, DecisionSource.USER_LEARNED_RULE, "Exact user-taught rule for $cleanPayee")
             }
         }
 
-        // 2. Synchronous pipeline (notes, MCC, gateway, regex, contextual, semantic, shop heuristics)
+        // 3. Synchronous pipeline (MCC, gateway, regex, contextual, semantic, shop heuristics)
         val syncDecision = classifyDetailedSync(
             payee = payee,
             rawContent = rawContent,
@@ -639,8 +667,8 @@ object CategoryClassifier {
             return syncDecision
         }
 
-        // 3. Machine Learning (Naive Bayes generalization from user-taught rules)
-        if (!generic && ruleDao != null) {
+        // 4. Machine Learning (Naive Bayes generalization from user-taught rules): only for merchants
+        if (!generic && !isPerson && ruleDao != null) {
             NaiveBayesCategorizer.predict(cleanPayee.lowercase(Locale.ROOT), ruleDao)?.let {
                 return Decision(it.category, it.confidence.toFloat(), DecisionSource.NAIVE_BAYES_ML, "Naive Bayes subword generalization")
             }
@@ -676,8 +704,13 @@ object CategoryClassifier {
         amountPaise: Long? = null,
         timestamp: Long? = null
     ): String {
-        val cleanPayee = payee.replace('_', ' ').replace('/', ' ').trim().lowercase(Locale.ROOT)
-        if (cleanPayee.isNotBlank() && !isGenericPayee(cleanPayee)) {
+        val (basePayee, inlineNote) = PayeeHeuristics.splitPayeeAndInlineNote(payee)
+        val cleanPayee = basePayee.replace('_', ' ').replace('/', ' ').trim().lowercase(Locale.ROOT)
+        val hasSpecificNote = !note.isNullOrBlank() || !inlineNote.isNullOrBlank() || !itemsSummary.isNullOrBlank()
+        val isPerson = !isGenericPayee(cleanPayee) && PayeeHeuristics.looksLikePerson(cleanPayee)
+
+        val canUseCache = cleanPayee.isNotBlank() && !isGenericPayee(cleanPayee) && !hasSpecificNote && !isPerson
+        if (canUseCache) {
             categoryCache[cleanPayee]?.let { return it }
         }
 
@@ -691,7 +724,7 @@ object CategoryClassifier {
             ruleDao = ruleDao
         )
 
-        if (cleanPayee.isNotBlank() && !isGenericPayee(cleanPayee) && decision.category != "Uncategorized" && decision.category != "Unspecified") {
+        if (canUseCache && decision.category != "Uncategorized" && decision.category != "Unspecified") {
             categoryCache[cleanPayee] = decision.category
         }
 

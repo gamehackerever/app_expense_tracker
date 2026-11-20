@@ -147,8 +147,56 @@ object PayeeHeuristics {
     )
 
     /**
-     * True for a UPI payee that reads like an individual's name: two to four alphabetic words, at least one a real
-     * name-sized word, and none of the words say "shop". Initials are fine ("Vijeesh V", "Jeeshma M M").
+     * Common given names across Indian states to recognize single-token personal payees (e.g. "Pradeep", "Rahul").
+     */
+    private val COMMON_GIVEN_NAMES = setOf(
+        "pradeep", "rahul", "suresh", "ramesh", "deepak", "anand", "arun", "amit", "priya", "sunil",
+        "vijay", "rohit", "vikram", "sneha", "ajay", "rajesh", "manoj", "sachin", "sanjay", "naveen",
+        "kiran", "ashok", "gaurav", "nitin", "varun", "vikas", "harish", "manish", "praveen", "rakesh",
+        "sandeep", "vinod", "abhishek", "vivek", "mohit", "aditya", "akash", "kunal", "rohan", "kartik",
+        "shubham", "ankit", "alok", "akshay", "vishal", "chandan", "chetan", "dinesh", "girish", "jagdish",
+        "kamal", "kishore", "lalit", "mahesh", "mukesh", "naresh", "pankaj", "prashant", "rajendra", "ravindra",
+        "satish", "subhash", "umesh", "yogesh", "ashwin", "bharat", "bhupendra", "devendra", "dharmendra", "hemant",
+        "jitendra", "kuldeep", "mayank", "narendra", "pavan", "pramod", "prateek", "raghav", "rajat", "saurabh",
+        "shailendra", "shirish", "sourabh", "tarun", "tushar", "vipul", "yash", "srinand", "shrinand", "vijeesh",
+        "jeeshma", "anoop", "akhil", "arjun", "midhun", "sooraj", "sreejith", "sarath", "vishnu", "amal",
+        "anandu", "siddharth", "harikrishnan", "gokul", "karthik", "madhav", "keshav", "krishna", "balu", "vipin",
+        "jithin", "nikhil", "ashish", "sumit", "neeraj", "ayush", "aman", "utkarsh", "rishabh", "tanmay",
+        "shantanu", "chinmay", "chinmoy", "parth", "dev", "shaurya", "atharv", "aarav", "vihaan", "kabir",
+        "ananya", "aditi", "pooja", "puja", "kavita", "neha", "divya", "anjali", "swati", "deepika",
+        "priyanka", "shreya", "shweta", "ritu", "megha", "preeti", "sonal", "jyoti", "rekha", "sunita",
+        "anita", "geeta", "seema", "archana", "mamta", "vandana", "shilpa", "neetu", "sarita", "bhawna",
+        "komal", "monika", "pallavi", "richa", "sangeeta", "sudha", "asha", "usha", "lata", "vidya",
+        "nisha", "rani", "pushpa", "maya", "shanti", "parvati", "sita", "radha", "lakshmi", "durga",
+        "saraswati", "aarti", "bhavna", "tanu", "ishita", "tanvi", "simran", "muskan", "khushi", "sakshi",
+        "mansi", "riya", "diya", "shruti", "aarushi", "srishti", "arpita", "ankita", "smriti", "sonam",
+        "mona", "tanya", "prerna", "namrata", "avantika", "swetha", "revathi", "soumya", "sowmya", "gayatri",
+        "meera", "veena", "leela", "geetha", "bindu", "remya", "ramya", "athira", "anupama", "arathi",
+        "arya", "devika", "gopika", "malavika", "nandana", "nayana", "sruthi", "resmi", "reshma", "lakshmy"
+    )
+
+    /**
+     * Splits a compound payee string that embeds an inline note (e.g. "Pradeep - pen" -> Pair("Pradeep", "pen")).
+     */
+    fun splitPayeeAndInlineNote(text: String): Pair<String, String?> {
+        val trimmed = text.trim()
+        for (sep in listOf(" - ", " : ", " / ")) {
+            if (trimmed.contains(sep)) {
+                val parts = trimmed.split(sep, limit = 2)
+                val p = parts[0].trim()
+                val n = parts[1].trim()
+                if (p.isNotBlank() && n.isNotBlank()) {
+                    return Pair(p, n)
+                }
+            }
+        }
+        return Pair(trimmed, null)
+    }
+
+    /**
+     * True for a UPI payee that reads like an individual's name: single Indian given name or two to four
+     * alphabetic words, at least one a real name-sized word, and none of the words say "shop".
+     * Initials are fine ("Vijeesh V", "Jeeshma M M").
      */
     // Called for every visible row while scrolling, and each call runs ~25 regexes. Payees repeat a lot, so cache.
     private val personCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
@@ -159,15 +207,21 @@ object PayeeHeuristics {
     }
 
     private fun computeLooksLikePerson(payee: String): Boolean {
-        val cleaned = payee.trim()
+        val basePayee = splitPayeeAndInlineNote(payee).first
+        val cleaned = basePayee.trim()
         if (cleaned.isEmpty() || cleaned.any { it.isDigit() } || cleaned.contains('@')) return false
         val tokens = cleaned.split(Regex("[\\s.]+")).filter { it.isNotEmpty() }
-        if (tokens.size !in 2..4) return false
+        if (tokens.isEmpty()) return false
         if (!tokens.all { t -> t.all { it.isLetter() || it == '\'' || it == '-' } }) return false
         if (tokens.none { it.length >= 3 }) return false
         val canon = canonicalize(cleaned).split(Regex("[^a-z]+")).filter { it.isNotEmpty() }
         if (canon.any { it in BUSINESS_WORDS }) return false
         if (categoryHint(cleaned) != null) return false
-        return true
+
+        if (tokens.size == 1) {
+            val lower = tokens[0].lowercase(Locale.ROOT)
+            return lower in COMMON_GIVEN_NAMES
+        }
+        return tokens.size in 2..4
     }
 }

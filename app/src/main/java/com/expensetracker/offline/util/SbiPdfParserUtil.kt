@@ -415,9 +415,9 @@ object SbiPdfParserUtil {
             }
 
             // Extract candidate note/memo if present in UPI narration
-            val extractedNote = candidateSegments.firstOrNull { seg ->
-                seg != extractedName &&
-                seg != cleanPayee &&
+            val candidateNoteSeg = candidateSegments.firstOrNull { seg ->
+                !seg.equals(extractedName, ignoreCase = true) &&
+                !seg.equals(cleanPayee, ignoreCase = true) &&
                 !seg.equals("UPI TRANSFER", ignoreCase = true) &&
                 !seg.equals("NA", ignoreCase = true) &&
                 !seg.equals("NONE", ignoreCase = true) &&
@@ -427,7 +427,17 @@ object SbiPdfParserUtil {
                 !seg.startsWith("UPI", ignoreCase = true)
             }
 
-            return ParsedNarration(cleanPayee.take(45), refNo, extractedNote?.take(80))
+            val cleanedCandidateNote = candidateNoteSeg?.let { rawNote ->
+                var n = rawNote.trim()
+                for (p in listOfNotNull(cleanPayee, extractedName)) {
+                    if (n.startsWith(p, ignoreCase = true)) {
+                        n = n.substring(p.length).trim(' ', '-', ':', '/', ',', '.')
+                    }
+                }
+                n.ifBlank { null }
+            }
+
+            return ParsedNarration(cleanPayee.take(45), refNo, cleanedCandidateNote?.take(80))
         }
 
         var cleaned = normalized
@@ -442,19 +452,23 @@ object SbiPdfParserUtil {
         val refMatch = Regex("""\b(\d{12}|\d{6,18})\b""").find(cleaned)
         val refNo = refMatch?.value
 
+        // Check for inline remark delimiter (e.g. "PRADEEP - pen" or "PRADEEP : pen")
+        val (inlinePayee, inlineNote) = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.splitPayeeAndInlineNote(cleaned)
+        val candidateToMatch = inlinePayee.ifBlank { cleaned }
+
         val payee = when {
-            cleaned.contains("ATM WDL", ignoreCase = true) || cleaned.contains("ATM CASH", ignoreCase = true) -> "ATM Cash Withdrawal"
-            cleaned.contains("INT.PD", ignoreCase = true) || cleaned.contains("INTEREST", ignoreCase = true) -> "Interest Credit"
-            cleaned.contains("SALARY", ignoreCase = true) -> "Salary"
-            cleaned.contains("POS ", ignoreCase = true) -> {
-                cleaned.replace(Regex("(?i)^POS\\s+\\d+\\s*"), "").trim().ifBlank { "POS Spend" }
+            candidateToMatch.contains("ATM WDL", ignoreCase = true) || candidateToMatch.contains("ATM CASH", ignoreCase = true) -> "ATM Cash Withdrawal"
+            candidateToMatch.contains("INT.PD", ignoreCase = true) || candidateToMatch.contains("INTEREST", ignoreCase = true) -> "Interest Credit"
+            candidateToMatch.contains("SALARY", ignoreCase = true) -> "Salary"
+            candidateToMatch.contains("POS ", ignoreCase = true) -> {
+                candidateToMatch.replace(Regex("(?i)^POS\\s+\\d+\\s*"), "").trim().ifBlank { "POS Spend" }
             }
-            cleaned.contains("BIL/ONL", ignoreCase = true) || cleaned.contains("BIL/", ignoreCase = true) -> {
-                val billSegments = cleaned.split(Regex("[/\\-]")).filter { it.isNotBlank() && !it.all { c -> c.isDigit() } && !it.equals("BIL", ignoreCase = true) && !it.equals("ONL", ignoreCase = true) }
+            candidateToMatch.contains("BIL/ONL", ignoreCase = true) || candidateToMatch.contains("BIL/", ignoreCase = true) -> {
+                val billSegments = candidateToMatch.split(Regex("[/\\-]")).filter { it.isNotBlank() && !it.all { c -> c.isDigit() } && !it.equals("BIL", ignoreCase = true) && !it.equals("ONL", ignoreCase = true) }
                 billSegments.firstOrNull() ?: "Bill Payment"
             }
-            cleaned.contains("E-COM", ignoreCase = true) || cleaned.contains("INB/", ignoreCase = true) || cleaned.contains("MB/", ignoreCase = true) -> {
-                val ecomSegments = cleaned.split(Regex("[/\\-]")).filter {
+            candidateToMatch.contains("E-COM", ignoreCase = true) || candidateToMatch.contains("INB/", ignoreCase = true) || candidateToMatch.contains("MB/", ignoreCase = true) -> {
+                val ecomSegments = candidateToMatch.split(Regex("[/\\-]")).filter {
                     it.isNotBlank() && !it.all { c -> c.isDigit() } &&
                     !it.equals("E-COM", ignoreCase = true) &&
                     !it.equals("E-COMMERCE", ignoreCase = true) &&
@@ -465,19 +479,19 @@ object SbiPdfParserUtil {
                 }
                 ecomSegments.firstOrNull() ?: "Online Purchase"
             }
-            cleaned.contains("NEFT/", ignoreCase = true) -> {
-                val neftSegments = cleaned.split(Regex("[/\\-]")).filter { it.isNotBlank() && !it.all { c -> c.isDigit() } && !it.equals("NEFT", ignoreCase = true) && it.length > 4 }
+            candidateToMatch.contains("NEFT/", ignoreCase = true) -> {
+                val neftSegments = candidateToMatch.split(Regex("[/\\-]")).filter { it.isNotBlank() && !it.all { c -> c.isDigit() } && !it.equals("NEFT", ignoreCase = true) && it.length > 4 }
                 neftSegments.lastOrNull() ?: "NEFT Transfer"
             }
-            cleaned.contains("IMPS/", ignoreCase = true) -> {
-                val impsSegments = cleaned.split(Regex("[/\\-]")).filter { it.isNotBlank() && !it.all { c -> c.isDigit() } && !it.equals("IMPS", ignoreCase = true) && !it.equals("P2A", ignoreCase = true) && !it.equals("P2M", ignoreCase = true) }
+            candidateToMatch.contains("IMPS/", ignoreCase = true) -> {
+                val impsSegments = candidateToMatch.split(Regex("[/\\-]")).filter { it.isNotBlank() && !it.all { c -> c.isDigit() } && !it.equals("IMPS", ignoreCase = true) && !it.equals("P2A", ignoreCase = true) && !it.equals("P2M", ignoreCase = true) }
                 impsSegments.lastOrNull() ?: "IMPS Transfer"
             }
-            cleaned.isNotBlank() -> cleaned.take(45)
+            candidateToMatch.isNotBlank() -> candidateToMatch.take(45)
             else -> if (type == TransactionType.DEBIT) "Bank Debit" else "Bank Credit"
         }
 
-        return ParsedNarration(payee, refNo, null)
+        return ParsedNarration(payee, refNo, inlineNote?.take(80))
     }
 
     /**

@@ -244,8 +244,13 @@ class TransactionRepository(
             transactionDao.updateTransaction(effectiveTxn)
             setOfNotNull(before?.linkedDebtId, transaction.linkedDebtId).forEach { reconcileDebt(it) }
 
-            // Active learning cluster propagation: update other unclassified transactions to this payee
+            // Active learning cluster propagation: update other unclassified transactions to this payee.
+            // Strictly exclude personal payees and transactions with specific remarks so notes don't pollute contacts.
+            val isPerson = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(transaction.payee)
+            val hasNote = !transaction.note.isNullOrBlank() || !transaction.itemsSummary.isNullOrBlank()
             if (propagateToUnspecified &&
+                !isPerson &&
+                !hasNote &&
                 !CategoryClassifier.isGenericPayee(transaction.payee) &&
                 !transaction.category.equals("Unspecified", ignoreCase = true) &&
                 !transaction.category.equals("Uncategorized", ignoreCase = true) &&
@@ -264,7 +269,11 @@ class TransactionRepository(
                 resolvedBankName = transaction.bankName
             )
         }
-        learnCategoryRule(transaction.payee, transaction.category)
+        val isPersonPayee = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(transaction.payee)
+        val hasTransactionNote = !transaction.note.isNullOrBlank() || !transaction.itemsSummary.isNullOrBlank()
+        if (!isPersonPayee && !hasTransactionNote) {
+            learnCategoryRule(transaction.payee, transaction.category)
+        }
         refreshWidget()
         return propagatedCount
     }
@@ -275,7 +284,11 @@ class TransactionRepository(
      * Returns the count of transactions upgraded.
      */
     suspend fun propagateCategoryToUnspecified(payee: String, category: String): Int = withContext(Dispatchers.IO) {
-        if (CategoryClassifier.isGenericPayee(payee) || category.equals("Unspecified", ignoreCase = true) || category.equals("Uncategorized", ignoreCase = true)) {
+        if (com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(payee) ||
+            CategoryClassifier.isGenericPayee(payee) ||
+            category.equals("Unspecified", ignoreCase = true) ||
+            category.equals("Uncategorized", ignoreCase = true)
+        ) {
             return@withContext 0
         }
         val count = transactionDao.categorizeUnspecifiedByPayee(payee, category)
@@ -445,9 +458,11 @@ class TransactionRepository(
     }
 
     suspend fun learnCategoryRule(payee: String, category: String) {
+        if (com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(payee)) return
         if (CategoryClassifier.isGenericPayee(payee)) return
         val pattern = payee.trim().lowercase(Locale.ROOT).replace("%", "\\%").replace("_", "\\_")
         if (pattern.length >= 3 &&
+            !com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(pattern) &&
             !CategoryClassifier.isGenericPayee(pattern) &&
             !category.equals("Uncategorized", ignoreCase = true) &&
             !category.equals("Transfer", ignoreCase = true) &&
@@ -478,11 +493,11 @@ class TransactionRepository(
             SmsPatternLearner.sanitizePoisonedPatterns()
             categoryRuleDao.deleteGenericOrShortRules(CategoryClassifier.GENERIC_FALLBACK_PAYEES.toList())
 
-            // Clean any poisoned "Travel" rules in category_rules where the merchant pattern is not actually Travel
+            // Clean any poisoned rules in category_rules (generic, too short, personal names, or false Travel rules)
             val allRules = categoryRuleDao.getAllRules()
             for (rule in allRules) {
                 val pat = rule.merchantPattern.trim()
-                if (CategoryClassifier.isGenericPayee(pat) || pat.length < 3) {
+                if (CategoryClassifier.isGenericPayee(pat) || pat.length < 3 || com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(pat)) {
                     categoryRuleDao.deleteRuleByPattern(rule.merchantPattern)
                 } else if (rule.category.equals("Travel", ignoreCase = true)) {
                     val syncCat = CategoryClassifier.classifySync(pat, pat)
@@ -572,19 +587,20 @@ class TransactionRepository(
 
                     if (txn.source == TransactionSource.MANUAL || txn.rawContent.isBlank() || txn.rawContent == "Manual Entry" || txn.rawContent.startsWith("Imported statement:")) {
                         // Upgrade "Unspecified" / "Uncategorized" on manual/restored/imported entries if merchant keyword or note matches
+                        val isPerson = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(currentPayee)
+                        val extractedNote = if (txn.note.isNullOrBlank() && txn.rawContent.startsWith("Imported statement:")) {
+                            com.expensetracker.offline.util.SbiPdfParserUtil.extractNoteFromRawLine(txn.rawContent)
+                        } else {
+                            txn.note
+                        }
+                        val trueCat = CategoryClassifier.classifySync(
+                            payee = currentPayee,
+                            rawContent = txn.rawContent,
+                            note = extractedNote ?: txn.itemsSummary,
+                            amountPaise = txn.amount,
+                            timestamp = txn.timestamp
+                        )
                         if (txn.type == TransactionType.DEBIT && isCurrentUnspecified) {
-                            val extractedNote = if (txn.note.isNullOrBlank() && txn.rawContent.startsWith("Imported statement:")) {
-                                com.expensetracker.offline.util.SbiPdfParserUtil.extractNoteFromRawLine(txn.rawContent)
-                            } else {
-                                txn.note
-                            }
-                            val trueCat = CategoryClassifier.classifySync(
-                                payee = currentPayee,
-                                rawContent = txn.rawContent,
-                                note = extractedNote ?: txn.itemsSummary,
-                                amountPaise = txn.amount,
-                                timestamp = txn.timestamp
-                            )
                             if (trueCat != "Uncategorized" && trueCat != "Unspecified") {
                                 transactionDao.updateTransaction(txn.copy(category = trueCat, note = extractedNote ?: txn.note))
                                 anyHealed = true
@@ -592,6 +608,10 @@ class TransactionRepository(
                                 transactionDao.updateTransaction(txn.copy(note = extractedNote))
                                 anyHealed = true
                             }
+                        } else if (isPerson && txn.category.equals("Education", ignoreCase = true) && extractedNote == null && (trueCat.equals("Unspecified", ignoreCase = true) || trueCat.equals("Uncategorized", ignoreCase = true))) {
+                            // Healing: Revert mistakenly propagated "Education" on person transfers without any education note
+                            transactionDao.updateTransaction(txn.copy(category = "Unspecified"))
+                            anyHealed = true
                         }
                         continue
                     }
@@ -620,10 +640,14 @@ class TransactionRepository(
                         timestamp = txn.timestamp
                     )
 
+                    val isPerson = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(healedPayee)
                     val healedCat = when {
                         currentCat.equals("Transfer", ignoreCase = true) || currentCat == "Split Settlement" -> currentCat
                         parsed.isTransfer -> "Transfer"
                         txn.type == TransactionType.CREDIT -> "Uncategorized"
+                        isPerson && currentCat.equals("Education", ignoreCase = true) && txn.note.isNullOrBlank() && txn.itemsSummary.isNullOrBlank() && (trueCat.equals("Unspecified", ignoreCase = true) || trueCat.equals("Uncategorized", ignoreCase = true)) -> {
+                            "Unspecified"
+                        }
                         (currentCat.equals("Uncategorized", ignoreCase = true) || currentCat.equals("Unspecified", ignoreCase = true)) &&
                             trueCat != "Uncategorized" && trueCat != "Unspecified" -> {
                             trueCat

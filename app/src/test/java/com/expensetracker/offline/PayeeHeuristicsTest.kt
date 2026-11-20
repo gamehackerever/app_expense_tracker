@@ -83,5 +83,28 @@ class PayeeHeuristicsTest {
 
     @Test fun smartLayer_unclassifiablePersonWithoutNote_staysUncategorized() {
         assertEquals("Uncategorized", CategoryClassifier.classifySync("Ramesh Kumar", "UPI/412345/Ramesh/CNRB", note = null))
+        assertEquals("Uncategorized", CategoryClassifier.classifySync("Pradeep", "Paid 500 to Pradeep", note = null))
+    }
+
+    @Test fun testPradeepSingleWordPersonAndInlineNote() {
+        // "Pradeep" is recognized as a person
+        assertTrue(PayeeHeuristics.looksLikePerson("Pradeep"))
+        assertTrue(PayeeHeuristics.looksLikePerson("Rahul"))
+        assertTrue(PayeeHeuristics.looksLikePerson("Deepak"))
+        assertTrue(PayeeHeuristics.looksLikePerson("Suresh"))
+        assertTrue(PayeeHeuristics.looksLikePerson("Ramesh"))
+
+        // Without remarks, person payees remain Uncategorized
+        assertEquals("Uncategorized", CategoryClassifier.classifySync("Pradeep", "Paid to Pradeep"))
+
+        // Compound payee with inline note "Pradeep - pen" extracts "pen" as Education
+        assertEquals("Education", CategoryClassifier.classifySync("Pradeep - pen", "Paid to Pradeep"))
+        assertEquals("Education", CategoryClassifier.classifySync("Pradeep : pen", "Paid to Pradeep"))
+        assertEquals("Education", CategoryClassifier.classifySync("Pradeep / pen", "Paid to Pradeep"))
+
+        // Remarks strictly override payee: paying Pradeep for pen -> Education; paying Pradeep for lunch -> Food & Dining
+        assertEquals("Education", CategoryClassifier.classifySync("Pradeep", "Paid 20 to Pradeep", note = "pen"))
+        assertEquals("Food & Dining", CategoryClassifier.classifySync("Pradeep", "Paid 250 to Pradeep", note = "lunch"))
+        assertEquals("Rent & Housing", CategoryClassifier.classifySync("Pradeep", "Paid 12000 to Pradeep", note = "rent"))
     }
 }

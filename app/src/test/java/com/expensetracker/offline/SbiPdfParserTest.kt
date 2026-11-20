@@ -192,4 +192,44 @@ class SbiPdfParserTest {
         assertEquals("pen", SbiPdfParserUtil.extractNoteFromRawLine(rows[1].rawLine))
         assertEquals("tickets", SbiPdfParserUtil.extractNoteFromRawLine(rows[0].rawLine))
     }
+
+    @Test
+    fun testPradeepPenStatementCategorization() {
+        val statement = """
+            CANARA BANK
+            A/c No: 1234101012345
+            Date Description Ref No. Debit Credit Balance
+            19/05/2024 TO TRANSFER-PRADEEP - pen 50.00 10,326.00
+            20/05/2024 UPI/414231890123/DR/PRADEEP/CNRB/pradeep@okaxis/pen 25.00 10,301.00
+            21/05/2024 UPI/414231890124/DR/PRADEEP/CNRB/pradeep@okaxis/PRADEEP - pen 35.00 10,266.00
+            22/05/2024 UPI/414231890125/DR/PRADEEP/CNRB/pradeep@okaxis/ 500.00 9,766.00
+        """.trimIndent()
+
+        val rows = SbiPdfParserUtil.parseSbiStatementText(statement)
+        assertEquals(4, rows.size)
+
+        // Row 1: Direct transfer "PRADEEP - pen" -> payee PRADEEP, note pen, Education
+        assertEquals("PRADEEP", rows[0].payee)
+        assertEquals("pen", rows[0].note)
+        val cat1 = com.expensetracker.offline.engine.categorizer.CategoryClassifier.classifySync(rows[0].payee, rows[0].description, rows[0].note)
+        assertEquals("Education", cat1)
+
+        // Row 2: UPI transfer with pen -> payee PRADEEP, note pen, Education
+        assertEquals("PRADEEP", rows[1].payee)
+        assertEquals("pen", rows[1].note)
+        val cat2 = com.expensetracker.offline.engine.categorizer.CategoryClassifier.classifySync(rows[1].payee, rows[1].description, rows[1].note)
+        assertEquals("Education", cat2)
+
+        // Row 3: UPI with payee prefixed note "PRADEEP - pen" -> stripped to "pen"
+        assertEquals("PRADEEP", rows[2].payee)
+        assertEquals("pen", rows[2].note)
+        val cat4 = com.expensetracker.offline.engine.categorizer.CategoryClassifier.classifySync(rows[2].payee, rows[2].description, rows[2].note)
+        assertEquals("Education", cat4)
+
+        // Row 4: Plain transfer to PRADEEP without note -> payee PRADEEP, note null, Uncategorized
+        assertEquals("PRADEEP", rows[3].payee)
+        assertNull(rows[3].note)
+        val cat5 = com.expensetracker.offline.engine.categorizer.CategoryClassifier.classifySync(rows[3].payee, rows[3].description, rows[3].note)
+        assertEquals("Uncategorized", cat5)
+    }
 }

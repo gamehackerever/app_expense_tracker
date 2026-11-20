@@ -729,7 +729,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 budgetId = budget?.id
             )
             val newId = repository.insertTransaction(entity)
-            if (newId > 0L && !excludeFromSpend) {
+            if (newId > 0L && !excludeFromSpend &&
+                !com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(payee) &&
+                itemsSummary.isNullOrBlank()
+            ) {
                 repository.learnCategoryRule(payee, category)
             }
             if (newId > 0L && splitParticipants.isNotEmpty() && type == TransactionType.DEBIT) {
@@ -822,8 +825,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateTransaction(transaction: TransactionEntity, learnRule: Boolean = true, propagateToUnspecified: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
-            val propagated = repository.updateTransaction(transaction, propagateToUnspecified = propagateToUnspecified)
-            if (learnRule) {
+            val isPerson = com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(transaction.payee)
+            val hasNote = !transaction.note.isNullOrBlank() || !transaction.itemsSummary.isNullOrBlank()
+            val shouldPropagate = propagateToUnspecified && !isPerson && !hasNote
+            val propagated = repository.updateTransaction(transaction, propagateToUnspecified = shouldPropagate)
+            if (learnRule && !isPerson && !hasNote) {
                 repository.learnCategoryRule(transaction.payee, transaction.category)
             }
         }
@@ -832,7 +838,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updatePayeeAndCategoryForAll(oldPayee: String, newPayee: String, newCategory: String) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.updatePayeeAndCategoryBulk(oldPayee, newPayee, newCategory)
-            repository.learnCategoryRule(newPayee, newCategory)
+            if (!com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(newPayee)) {
+                repository.learnCategoryRule(newPayee, newCategory)
+            }
         }
     }
 
@@ -920,7 +928,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 accountType = settingsRepo.resolveAccountType(bank, account, parsed?.accountType)
             )
             repository.approveReviewItem(newTransaction, reviewItem.id)
-            repository.learnCategoryRule(payee, category)
+            if (!com.expensetracker.offline.engine.categorizer.PayeeHeuristics.looksLikePerson(payee) && parsed?.note.isNullOrBlank()) {
+                repository.learnCategoryRule(payee, category)
+            }
 
             balance?.let {
                 val context = getApplication<Application>().applicationContext
